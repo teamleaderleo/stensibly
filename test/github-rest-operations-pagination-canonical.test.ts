@@ -57,6 +57,55 @@ describe("GitHub branch tidy canonical pagination", () => {
     expect(requested.some((url) => url.includes("/repositories/1310091990/"))).toBe(false);
   });
 
+  test("stops branch collection after enough rows for the requested candidates", async () => {
+    const requested: string[] = [];
+    const adapter = new GitHubRestOperationsAdapter({
+      tokenProvider: tokens(),
+      apiBaseUrl,
+      now: () => Date.parse("2026-08-10T00:00:00.000Z"),
+      fetch: githubOperationRedirectFetch((async (input) => {
+        const url = String(input);
+        requested.push(url);
+        if (url.endsWith("/repos/teamleaderleo/stensibly/branches?per_page=100&page=1")) {
+          return json([
+            { name: "main", commit: { sha: sha("a") }, protected: true },
+            { name: "dogfood/first", commit: { sha: sha("b") }, protected: false },
+            ...Array.from({ length: 98 }, (_, index) => ({
+              name: `dogfood/extra-${index}`,
+              commit: { sha: sha("c") },
+              protected: false,
+            })),
+          ], {
+            link: '<https://api.github.test/repositories/1310091990/branches?per_page=100&page=2>; rel="next"',
+          });
+        }
+        if (url.endsWith("/repos/teamleaderleo/stensibly/pulls?state=open&per_page=100&page=1")) {
+          return json([]);
+        }
+        if (url.endsWith(`/repos/teamleaderleo/stensibly/compare/${sha("a")}...${sha("b")}`)) {
+          return json({ ahead_by: 0, behind_by: 2 });
+        }
+        if (url.endsWith(`/repos/teamleaderleo/stensibly/commits/${sha("b")}`)) {
+          return json({ commit: { committer: { date: "2026-07-01T00:00:00Z" } } });
+        }
+        throw new Error(`unexpected request ${url}`);
+      }) as typeof fetch),
+    });
+
+    const plan = await adapter.planBranchTidy({
+      repositoryFullName: repository,
+      defaultBranch: "main",
+      defaultBranchSha: sha("a"),
+      minimumAgeDays: 14,
+      maximumBranches: 1,
+    });
+
+    expect(plan.scannedBranchCount).toBe(2);
+    expect(plan.candidates).toHaveLength(1);
+    expect(plan.candidates[0]?.branch).toBe("dogfood/first");
+    expect(requested.some((url) => url.endsWith("/branches?per_page=100&page=2"))).toBe(false);
+  });
+
   test("leaves unsafe or unrelated Link drift for the strict pagination validator to reject", async () => {
     const links = [
       '<https://example.test/repositories/1310091990/branches?per_page=100&page=2>; rel="next"',
