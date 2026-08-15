@@ -43,6 +43,7 @@ describe("mail thread contract", () => {
       blocker: null,
       resolutionCondition: "Exact candidate is accepted or one repair is recorded.",
       threadState: "open" as const,
+      continuationRoute: "Gmail + GitHub only",
       references: [
         {
           label: "Issue",
@@ -91,20 +92,23 @@ describe("mail thread contract", () => {
       resolutionCondition: "Review verdict recorded.",
       threadState: "open" as const,
     };
-    const gmail = renderMailOutboundEnvelope(base);
-    const providerNeutral = renderMailOutboundEnvelope({
+    const providerNeutral = renderMailOutboundEnvelope(base);
+    const gmail = renderMailOutboundEnvelope({
       ...base,
-      continuationRoute: null,
+      continuationRoute: "Gmail + GitHub only",
     });
     const alternate = renderMailOutboundEnvelope({
       ...base,
       continuationRoute: "mail provider + source system",
     });
 
-    expect(gmail.handle).toBe("STN-HANDOFF:7K3Q");
-    expect(providerNeutral.handle).toBe(gmail.handle);
-    expect(alternate.handle).toBe(gmail.handle);
+    expect(providerNeutral.handle).toBe("STN-HANDOFF:7K3Q");
+    expect(gmail.handle).toBe(providerNeutral.handle);
+    expect(alternate.handle).toBe(providerNeutral.handle);
     expect(providerNeutral.launchLine).toBe("Continue STN-HANDOFF:7K3Q.");
+    expect(gmail.launchLine).toBe(
+      "Continue STN-HANDOFF:7K3Q via Gmail + GitHub only.",
+    );
     expect(alternate.launchLine).toBe(
       "Continue STN-HANDOFF:7K3Q via mail provider + source system.",
     );
