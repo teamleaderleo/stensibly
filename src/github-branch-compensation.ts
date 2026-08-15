@@ -1,8 +1,5 @@
 import { sha256, stableJson } from "./canonical-json.js";
-import type {
-  GitHubBranchResult,
-  GitHubProviderReceipt,
-} from "./github-provider-contracts.js";
+import type { GitHubProviderReceipt } from "./github-provider-contracts.js";
 import type { GitHubRepositoryWriteReceipt } from "./github-repository-write-provider-service.js";
 import {
   admitGitHubRepositoryFullName,
@@ -80,8 +77,13 @@ interface AdmittedSource {
   workflow: OperationWorkflow;
   repositoryFullName: string;
   targetRef: string;
-  branch: string;
   recordedSha: string;
+}
+
+interface AdmittedBranchReceipt {
+  name: string;
+  ref: string;
+  commitSha: string;
 }
 
 export class GitHubBranchCompensationConflictError extends Error {
@@ -157,11 +159,6 @@ export class GitHubBranchCompensationService {
       );
     }
 
-    workflow = await this.#dependencies.workflows.transitionOperationWorkflow({
-      current: workflow,
-      next: reserveOperationWorkflowStep(workflow, step.id, this.#now()),
-    });
-
     await this.#dependencies.assertAuthority(input);
     let before: GitHubBranchCompensationObservation;
     try {
@@ -173,30 +170,56 @@ export class GitHubBranchCompensationService {
         source,
       );
     } catch {
-      return await this.#hold(workflow, "github_branch_compensation_observation_unavailable");
+      return await this.#rejectPlanned(
+        workflow,
+        "github_branch_compensation_observation_unavailable",
+      );
     }
 
     if (before.defaultBranchRef === source.targetRef) {
-      return await this.#reject(workflow, "github_branch_compensation_default_branch");
+      return await this.#rejectPlanned(
+        workflow,
+        "github_branch_compensation_default_branch",
+      );
     }
     if (this.#excludedRefs.has(source.targetRef)) {
-      return await this.#reject(workflow, "github_branch_compensation_excluded_ref");
+      return await this.#rejectPlanned(
+        workflow,
+        "github_branch_compensation_excluded_ref",
+      );
     }
     if (before.protection === "protected") {
-      return await this.#reject(workflow, "github_branch_compensation_protected_ref");
+      return await this.#rejectPlanned(
+        workflow,
+        "github_branch_compensation_protected_ref",
+      );
     }
     if (before.protection === "unknown") {
-      return await this.#hold(workflow, "github_branch_compensation_protection_unknown");
+      return await this.#rejectPlanned(
+        workflow,
+        "github_branch_compensation_protection_unknown",
+      );
     }
     if (input.action === "delete") {
       if (before.state !== "present" || before.commitSha !== source.recordedSha) {
-        return await this.#reject(workflow, "github_branch_compensation_head_conflict");
+        return await this.#rejectPlanned(
+          workflow,
+          "github_branch_compensation_head_conflict",
+        );
       }
     } else if (before.state !== "absent") {
-      return await this.#reject(workflow, "github_branch_compensation_restore_occupied");
+      return await this.#rejectPlanned(
+        workflow,
+        "github_branch_compensation_restore_occupied",
+      );
     }
 
     await this.#dependencies.assertAuthority(input);
+    workflow = await this.#dependencies.workflows.transitionOperationWorkflow({
+      current: workflow,
+      next: reserveOperationWorkflowStep(workflow, step.id, this.#now()),
+    });
+
     let mutation: GitHubRunnerGitMutationResult;
     try {
       mutation = input.action === "delete"
@@ -226,23 +249,40 @@ export class GitHubBranchCompensationService {
       );
     }
     if (mutation.outcome === "rejected") {
-      return await this.#reject(workflow, "github_branch_compensation_runner_rejected", mutation);
+      return await this.#reject(
+        workflow,
+        "github_branch_compensation_runner_rejected",
+        mutation,
+      );
     }
 
-    return await this.#readbackAfterMutation(input, source, workflow, before, mutation);
+    return await this.#readbackAfterMutation(
+      input,
+      source,
+      workflow,
+      before,
+      mutation,
+    );
   }
 
   async #admitSource(input: GitHubBranchCompensationInput): Promise<AdmittedSource> {
     const repositoryFullName = admitGitHubRepositoryFullName(input.repository);
     const targetRef = exactHeadRef(input.targetRef);
     const recordedSha = admitGitObjectId(input.recordedSha);
-    const sourceOperationId = exactIdentifier(input.sourceOperationId, "Source operation ID", 160);
+    const sourceOperationId = exactIdentifier(
+      input.sourceOperationId,
+      "Source operation ID",
+      160,
+    );
     const sourceKey = exactIdentifier(
       input.sourceOperationIdempotencyKey,
       "Source operation idempotency key",
       240,
     );
-    const source = await this.#dependencies.workflows.getOperationWorkflow(input.project, sourceKey);
+    const source = await this.#dependencies.workflows.getOperationWorkflow(
+      input.project,
+      sourceKey,
+    );
     if (!source
       || source.id !== sourceOperationId
       || source.kind !== "github_publish_change"
@@ -262,11 +302,16 @@ export class GitHubBranchCompensationService {
       input.project,
       branchStep.providerIdempotencyKey,
     );
-    const branch = admittedBranchReceipt(branchReceipt, source, repositoryFullName, targetRef);
+    const branchReceiptResult = admittedBranchReceipt(
+      branchReceipt,
+      source,
+      repositoryFullName,
+      targetRef,
+    );
     if (branchStep.commandSha256 !== sha256(stableJson({
       repository: repositoryFullName,
-      branch: branch.name,
-      fromCommitSha: branch.commitSha,
+      branch: branchReceiptResult.name,
+      fromCommitSha: branchReceiptResult.commitSha,
     }))) {
       throw new GitHubBranchCompensationConflictError(
         "github_branch_compensation_source_command_conflict",
@@ -275,7 +320,7 @@ export class GitHubBranchCompensationService {
     if (branchStep.compensation.kind !== "github_delete_created_branch_if_owned"
       || branchStep.compensation.commandSha256 !== sha256(stableJson({
         repository: repositoryFullName,
-        branch: branch.name,
+        branch: branchReceiptResult.name,
         operationId: source.id,
       }))) {
       throw new GitHubBranchCompensationConflictError(
@@ -283,7 +328,7 @@ export class GitHubBranchCompensationService {
       );
     }
 
-    let finalSha = branch.commitSha;
+    let finalSha = branchReceiptResult.commitSha;
     const fileStep = source.steps[1]!;
     if (fileStep.state === "verified") {
       const write = await this.#dependencies.getRepositoryWriteReceipt(
@@ -304,11 +349,7 @@ export class GitHubBranchCompensationService {
         );
       }
       finalSha = admitGitObjectId(write.verified.nextExpectedParentSha);
-    } else if (![
-      "planned",
-      "rejected",
-      "cancelled",
-    ].includes(fileStep.state)) {
+    } else if (!["planned", "rejected", "cancelled"].includes(fileStep.state)) {
       throw new GitHubBranchCompensationConflictError(
         "github_branch_compensation_source_unresolved",
       );
@@ -322,7 +363,6 @@ export class GitHubBranchCompensationService {
       workflow: source,
       repositoryFullName,
       targetRef,
-      branch: branch.name,
       recordedSha: finalSha,
     });
   }
@@ -341,7 +381,10 @@ export class GitHubBranchCompensationService {
       "Delete compensation idempotency key",
       240,
     );
-    const prior = await this.#dependencies.workflows.getOperationWorkflow(input.project, deleteKey);
+    const prior = await this.#dependencies.workflows.getOperationWorkflow(
+      input.project,
+      deleteKey,
+    );
     if (!prior
       || prior.id !== deleteId
       || prior.kind !== "github_branch_compensation"
@@ -377,7 +420,9 @@ export class GitHubBranchCompensationService {
       recordedSha: source.recordedSha,
       sourceOperationId: source.workflow.id,
       sourceOperationIdempotencyKey: source.workflow.idempotencyKey,
-      deleteCompensationId: input.action === "restore" ? input.deleteCompensationId! : null,
+      deleteCompensationId: input.action === "restore"
+        ? input.deleteCompensationId!
+        : null,
       deleteCompensationIdempotencyKey: input.action === "restore"
         ? input.deleteCompensationIdempotencyKey!
         : null,
@@ -413,8 +458,9 @@ export class GitHubBranchCompensationService {
         nextSha: null,
         sourceOperationId: source.workflow.id,
       };
+    const generatedId = this.#dependencies.idFactory?.();
     return buildOperationWorkflow({
-      id: this.#dependencies.idFactory?.(),
+      ...(generatedId === undefined ? {} : { id: generatedId }),
       project: input.project,
       itemId: input.itemId,
       runId: input.runId,
@@ -466,7 +512,13 @@ export class GitHubBranchCompensationService {
       );
     }
     if (postconditionMatches(input.action, after, source.recordedSha)) {
-      return await this.#verify(workflow, before, after, mutation, mutation.outcome === "ambiguous");
+      return await this.#verify(
+        workflow,
+        before,
+        after,
+        mutation,
+        mutation.outcome === "ambiguous",
+      );
     }
     return await this.#hold(
       workflow,
@@ -512,7 +564,10 @@ export class GitHubBranchCompensationService {
         sourceRevision: observation.sourceRevision,
       },
     });
-    return await this.#dependencies.workflows.transitionOperationWorkflow({ current: workflow, next });
+    return await this.#dependencies.workflows.transitionOperationWorkflow({
+      current: workflow,
+      next,
+    });
   }
 
   async #verify(
@@ -534,7 +589,25 @@ export class GitHubBranchCompensationService {
         sourceRevision: after.sourceRevision,
       },
     });
-    return await this.#dependencies.workflows.transitionOperationWorkflow({ current: workflow, next });
+    return await this.#dependencies.workflows.transitionOperationWorkflow({
+      current: workflow,
+      next,
+    });
+  }
+
+  async #rejectPlanned(
+    workflow: OperationWorkflow,
+    code: string,
+  ): Promise<never> {
+    const reserved = await this.#dependencies.workflows.transitionOperationWorkflow({
+      current: workflow,
+      next: reserveOperationWorkflowStep(
+        workflow,
+        workflow.steps[0]!.id,
+        this.#now(),
+      ),
+    });
+    return await this.#reject(reserved, code);
   }
 
   async #hold(
@@ -546,7 +619,9 @@ export class GitHubBranchCompensationService {
       stepId: workflow.steps[0]!.id,
       outcome: "pending_reconciliation",
       settledAt: this.#now(),
-      ...(mutation === undefined ? {} : { providerReceiptRef: `runner-git:${mutation.attemptId}` }),
+      ...(mutation === undefined
+        ? {}
+        : { providerReceiptRef: `runner-git:${mutation.attemptId}` }),
       errorCode: exactCode(code),
     });
     const persisted = await this.#dependencies.workflows.transitionOperationWorkflow({
@@ -565,7 +640,9 @@ export class GitHubBranchCompensationService {
       stepId: workflow.steps[0]!.id,
       outcome: "rejected",
       settledAt: this.#now(),
-      ...(mutation === undefined ? {} : { providerReceiptRef: `runner-git:${mutation.attemptId}` }),
+      ...(mutation === undefined
+        ? {}
+        : { providerReceiptRef: `runner-git:${mutation.attemptId}` }),
       errorCode: exactCode(code),
     });
     const persisted = await this.#dependencies.workflows.transitionOperationWorkflow({
@@ -581,7 +658,7 @@ function admittedBranchReceipt(
   source: OperationWorkflow,
   repositoryFullName: string,
   targetRef: string,
-): GitHubBranchResult {
+): AdmittedBranchReceipt {
   if (!receipt
     || receipt.project !== source.project
     || receipt.repositoryFullName !== repositoryFullName
@@ -589,16 +666,27 @@ function admittedBranchReceipt(
     || receipt.target !== `${repositoryFullName}:${targetRef}`
     || receipt.idempotencyKey !== source.steps[0]!.providerIdempotencyKey
     || !["succeeded", "reconciled"].includes(receipt.state)
-    || !receipt.result
-    || receipt.result.kind !== "branch"
-    || receipt.result.ref !== targetRef
-    || `refs/heads/${receipt.result.name}` !== targetRef) {
+    || receipt.result === null
+    || typeof receipt.result !== "object") {
     throw new GitHubBranchCompensationConflictError(
       "github_branch_compensation_source_receipt_conflict",
     );
   }
-  admitGitObjectId(receipt.result.commitSha);
-  return receipt.result;
+  const result = receipt.result as unknown as Record<string, unknown>;
+  if (result.kind !== "branch"
+    || typeof result.name !== "string"
+    || typeof result.ref !== "string"
+    || result.ref !== targetRef
+    || `refs/heads/${result.name}` !== targetRef) {
+    throw new GitHubBranchCompensationConflictError(
+      "github_branch_compensation_source_receipt_conflict",
+    );
+  }
+  return Object.freeze({
+    name: result.name,
+    ref: result.ref,
+    commitSha: admitGitObjectId(result.commitSha),
+  });
 }
 
 function admitObservation(
@@ -618,7 +706,9 @@ function admitObservation(
     || !["unprotected", "protected", "unknown"].includes(value.protection)) {
     throw new RangeError("GitHub branch compensation observation state is invalid");
   }
-  const commitSha = value.commitSha === null ? null : admitGitObjectId(value.commitSha);
+  const commitSha = value.commitSha === null
+    ? null
+    : admitGitObjectId(value.commitSha);
   if ((value.state === "present") !== (commitSha !== null)) {
     throw new RangeError("GitHub branch compensation observation head is incoherent");
   }
