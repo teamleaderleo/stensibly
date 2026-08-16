@@ -206,7 +206,7 @@ jobs:
             echo
             echo "- mode: \`shadow\`"
             echo "- CI source: \`${{ steps.admit.outputs.trigger_sha }}\`"
-            jq --raw-output '.targets[] | "- \(.target): `\(.decision)` (`\(.reason)`)"' \
+            jq --raw-output '.targets[] | "- \(.target): `\(.decision)` (`\(.reason)`), baseline `\(.baselineAuthority)`, provider current `\(.providerCurrentVerified)`"' \
               "${RUNNER_TEMP}/deployment-reconciliation-shadow.json"
             echo "- authorizes deployment: \`false\`"
           } >>"${GITHUB_STEP_SUMMARY}"

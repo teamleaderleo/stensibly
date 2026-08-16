@@ -46,7 +46,7 @@ describe("public dashboard deployment marker", () => {
     expect(() => admitDashboardDeploymentMarker({
       ...marker,
       fingerprint: `sha256:${"f".repeat(64)}`,
-    }, identity())).toThrow("does not match");
+    }, identity())).toThrow("not self-consistent");
     expect(() => admitDashboardDeploymentMarker({
       ...marker,
       unexpected: true,

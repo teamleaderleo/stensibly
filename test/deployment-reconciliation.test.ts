@@ -37,6 +37,7 @@ describe("deployment reconciliation decision compiler", () => {
         reason: "dependency_classifier_not_implemented",
         providerCurrentVerified: false,
         baselineAuthority: "workflow_only",
+        providerCurrent: null,
         authorizesDeployment: false,
       }),
       expect.objectContaining({
@@ -45,6 +46,7 @@ describe("deployment reconciliation decision compiler", () => {
         reason: "dependency_classifier_not_implemented",
         providerCurrentVerified: false,
         baselineAuthority: "workflow_only",
+        providerCurrent: null,
         authorizesDeployment: false,
       }),
       expect.objectContaining({
@@ -57,8 +59,15 @@ describe("deployment reconciliation decision compiler", () => {
           revision: baselineSha,
           updatedAt: "2026-08-16T10:00:00Z",
         },
-        providerCurrentVerified: false,
-        baselineAuthority: "workflow_only",
+        providerCurrentVerified: true,
+        baselineAuthority: "public_deployment_marker",
+        providerCurrent: {
+          kind: "dashboard-public-marker",
+          sourceRevision: baselineSha,
+          workflowRunId: "700",
+          workflowRunAttempt: 2,
+          markerFingerprint: `sha256:${"7".repeat(64)}`,
+        },
         authorizesDeployment: false,
       }),
     ]);
@@ -98,7 +107,7 @@ describe("deployment reconciliation decision compiler", () => {
 
   test("distinguishes missing and non-linear workflow baselines", () => {
     const missingTargets = targetFixtures().map((target) => target.target === "dashboard"
-      ? { ...target, latestSuccessfulWorkflow: null }
+      ? { ...target, latestSuccessfulWorkflow: null, providerCurrent: null }
       : target) as readonly TargetDeploymentObservation[];
     expect(compileDeploymentReconciliation(fixture({ targets: missingTargets })).targets[2])
       .toEqual(expect.objectContaining({
@@ -137,6 +146,29 @@ describe("deployment reconciliation decision compiler", () => {
         jobs: { ...exactReceipt().jobs, repositoryTests: "failure" },
       },
     }))).toThrow("job topology");
+    expect(() => compileDeploymentReconciliation(fixture({
+      targets: targetFixtures().map((target) => target.target === "dashboard"
+        ? {
+          ...target,
+          providerCurrent: {
+            ...target.providerCurrent!,
+            workflowRunId: "701",
+          },
+        }
+        : target),
+    }))).toThrow("does not bind its workflow baseline");
+    expect(() => compileDeploymentReconciliation(fixture({
+      targets: targetFixtures().map((target) => target.target === "dashboard"
+        ? {
+          ...target,
+          classifier: {
+            kind: "unavailable" as const,
+            contractVersion: 1 as const,
+            reason: "provider_current_observation_failed" as const,
+          },
+        }
+        : target),
+    }))).toThrow("evidence and classifier are incoherent");
   });
 
   test("requires the observer workflow and checked-out source to be the admitted CI head", () => {
@@ -224,6 +256,7 @@ function targetFixtures(
       target: "worker",
       workflowPath: ".github/workflows/deploy-worker.yml",
       latestSuccessfulWorkflow: null,
+      providerCurrent: null,
       history: "unknown",
       classifier: {
         kind: "unavailable",
@@ -235,6 +268,7 @@ function targetFixtures(
       target: "convex",
       workflowPath: ".github/workflows/deploy-convex.yml",
       latestSuccessfulWorkflow: null,
+      providerCurrent: null,
       history: "unknown",
       classifier: {
         kind: "unavailable",
@@ -250,6 +284,13 @@ function targetFixtures(
         runAttempt: 2,
         revision: baselineSha,
         updatedAt: "2026-08-16T10:00:00Z",
+      },
+      providerCurrent: {
+        kind: "dashboard-public-marker",
+        sourceRevision: baselineSha,
+        workflowRunId: "700",
+        workflowRunAttempt: 2,
+        markerFingerprint: `sha256:${"7".repeat(64)}`,
       },
       history: "ahead",
       classifier: {

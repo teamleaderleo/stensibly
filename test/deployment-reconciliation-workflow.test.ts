@@ -91,6 +91,8 @@ describe("deployment reconciliation shadow workflow", () => {
     expect(count(workflow, "authorizesDeployment: false")).toBeGreaterThanOrEqual(1);
     expect(count(workflow, "authorizesRetry: false")).toBeGreaterThanOrEqual(1);
     expect(workflow).toContain("bun scripts/observe-deployment-reconciliation.ts");
+    expect(workflow).toContain("baseline `\\(.baselineAuthority)`");
+    expect(workflow).toContain("provider current `\\(.providerCurrentVerified)`");
     expect(workflow).toContain("deployment-reconciliation-shadow-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}");
     expect(count(workflow, "retention-days: 30")).toBe(2);
   });

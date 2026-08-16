@@ -2,6 +2,10 @@ import { lstat, readFile, readdir, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { sha256 } from "../src/canonical-json.js";
 import {
+  parseDashboardDeploymentMarker,
+  type DashboardDeploymentMarker,
+} from "./dashboard-deployment-marker.js";
+import {
   compileDeploymentReconciliation,
   type ExactCiArtifactObservation,
   type ExactCiRunObservation,
@@ -99,7 +103,12 @@ export async function runDeploymentReconciliationObserver(
     repositoryId,
     run: ciRun,
   });
-  const targets = await observeTargets(client, initialMainRevision);
+  const targets = await observeTargets(
+    client,
+    initialMainRevision,
+    repository,
+    repositoryId,
+  );
   const currentMainRevision = await client.mainRevision();
   const receipt = compileDeploymentReconciliation({
     repository,
@@ -140,7 +149,7 @@ interface GitHubClient {
   workflow(path: string): Promise<Record<string, unknown>>;
   mainRevision(): Promise<string>;
   exactReceiptArtifact(runId: string, runAttempt: string): Promise<Record<string, unknown>>;
-  latestSuccessfulWorkflow(path: string): Promise<SuccessfulDeploymentWorkflowObservation | null>;
+  dashboardMarker(cacheRevision: string): Promise<DashboardDeploymentMarker>;
   compare(base: string, head: string): Promise<"ahead" | "identical" | "behind" | "diverged">;
   siteTreeOid(revision: string): Promise<string>;
 }
@@ -215,57 +224,33 @@ function githubClient(input: {
       }
       return artifact;
     },
-    async latestSuccessfulWorkflow(path: string): Promise<SuccessfulDeploymentWorkflowObservation | null> {
-      const envelope = await record(
-        `/actions/workflows/${encodeURIComponent(path)}/runs?branch=main&status=success&per_page=100`,
-        `${path} successful runs`,
+    async dashboardMarker(cacheRevision: string): Promise<DashboardDeploymentMarker> {
+      const response = await input.request(
+        `https://www.stensibly.com/.well-known/stensibly-deployment.json?revision=${requireSha(cacheRevision, "Dashboard marker cache revision")}`,
+        {
+          headers: { "cache-control": "no-cache" },
+          method: "GET",
+          redirect: "error",
+          signal: AbortSignal.timeout(10_000),
+        },
       );
-      const totalCount = requireBoundedInteger(
-        envelope.total_count,
-        `${path} successful run total count`,
-        0,
-        100,
-      );
-      if (
-        !Array.isArray(envelope.workflow_runs)
-        || envelope.workflow_runs.length !== totalCount
-      ) {
-        throw new Error(`${path} successful runs envelope is invalid`);
+      if (response.status !== 200) {
+        throw new Error(`Dashboard marker request failed with HTTP ${response.status}`);
       }
-      const candidates = envelope.workflow_runs.map((entry, index) => {
-        const run = exactRecord(entry, `${path} run ${index + 1}`);
-        if (run.status !== "completed" || run.conclusion !== "success" || run.head_branch !== "main") {
-          throw new Error(`${path} successful run query returned a non-successful main run`);
-        }
-        const updatedAt = requireTimestamp(run.updated_at, `${path} run terminal update time`);
-        return Object.freeze({
-          revision: requireSha(run.head_sha, `${path} run head revision`),
-          epoch: Date.parse(updatedAt),
-          runId: numericIdentifier(run.id, `${path} run ID`),
-          runAttempt: requireBoundedInteger(
-            run.run_attempt,
-            `${path} run attempt`,
-            1,
-            1_000_000,
-          ),
-          updatedAt,
-        });
-      });
-      const newestEpoch = Math.max(...candidates.map((candidate) => candidate.epoch));
-      if (!Number.isFinite(newestEpoch)) return null;
-      const newest = candidates.filter((candidate) => candidate.epoch === newestEpoch);
-      const identities = new Set(newest.map((candidate) =>
-        `${candidate.runId}:${candidate.runAttempt}:${candidate.revision}:${candidate.updatedAt}`));
-      if (identities.size !== 1) {
-        throw new Error(`${path} successful runs have an ambiguous newest terminal update`);
+      if (!response.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+        throw new Error("Dashboard marker response is not JSON");
       }
-      const latest = newest[0]!;
-      return Object.freeze({
-        runId: latest.runId,
-        runAttempt: latest.runAttempt,
-        revision: latest.revision,
-        updatedAt: latest.updatedAt,
-      });
+      return parseDashboardDeploymentMarker(parseStrictJson(
+        await readBoundedResponseText(response, 2_048),
+        {
+          maxBytes: 2_048,
+          maxDepth: 6,
+          maxStringLength: 256,
+          maxObjectKeys: 16,
+          maxArrayLength: 4,
+          prefix: "DASHBOARD_RECONCILIATION_MARKER",
+        },
+      ));
     },
     async compare(base: string, head: string) {
       const comparison = exactRecord(await readJson(
@@ -302,17 +287,42 @@ function githubClient(input: {
 async function observeTargets(
   client: GitHubClient,
   currentMainRevision: string,
+  repository: string,
+  repositoryId: string,
 ): Promise<readonly TargetDeploymentObservation[]> {
-  const dashboardBaseline = await client.latestSuccessfulWorkflow(
-    "publish-dashboard-on-main.yml",
-  );
+  let dashboardBaseline: SuccessfulDeploymentWorkflowObservation | null = null;
+  let dashboardProviderCurrent: TargetDeploymentObservation["providerCurrent"] = null;
   let dashboardClassifier: TargetDeploymentObservation["classifier"] = Object.freeze({
     kind: "unavailable",
     contractVersion: 1,
-    reason: "site_tree_observation_failed",
+    reason: "provider_current_observation_failed",
   });
   let dashboardHistory: TargetDeploymentObservation["history"] = "unknown";
-  if (dashboardBaseline !== null) {
+  try {
+    const marker = await client.dashboardMarker(currentMainRevision);
+    const [run, workflow] = await Promise.all([
+      client.run(marker.run.id),
+      client.workflow(".github/workflows/publish-dashboard-on-main.yml"),
+    ]);
+    dashboardBaseline = admitDashboardPublicationRun({
+      run,
+      workflow,
+      marker,
+      repository,
+      repositoryId,
+    });
+    dashboardProviderCurrent = Object.freeze({
+      kind: "dashboard-public-marker" as const,
+      sourceRevision: marker.sourceRevision,
+      workflowRunId: marker.run.id,
+      workflowRunAttempt: dashboardBaseline.runAttempt,
+      markerFingerprint: marker.fingerprint,
+    });
+    dashboardClassifier = Object.freeze({
+      kind: "unavailable",
+      contractVersion: 1,
+      reason: "site_tree_observation_failed",
+    });
     try {
       let history: TargetDeploymentObservation["history"];
       let baselineTreeOid: string;
@@ -338,6 +348,25 @@ async function observeTargets(
     } catch {
       // Shadow evidence fails closed without turning provider/API errors into deploy authority.
     }
+    const finalMarker = await client.dashboardMarker(currentMainRevision);
+    if (
+      finalMarker.fingerprint !== marker.fingerprint
+      || finalMarker.sourceRevision !== marker.sourceRevision
+      || finalMarker.run.id !== marker.run.id
+      || finalMarker.run.attempt !== marker.run.attempt
+    ) {
+      throw new Error("Dashboard provider current moved during observation");
+    }
+  } catch {
+    // Missing or incoherent public/provider evidence remains visible but non-authorizing.
+    dashboardBaseline = null;
+    dashboardProviderCurrent = null;
+    dashboardHistory = "unknown";
+    dashboardClassifier = Object.freeze({
+      kind: "unavailable",
+      contractVersion: 1,
+      reason: "provider_current_observation_failed",
+    });
   }
   return Object.freeze([
     unavailableTarget("worker", ".github/workflows/deploy-worker.yml"),
@@ -346,6 +375,7 @@ async function observeTargets(
       target: "dashboard",
       workflowPath: ".github/workflows/publish-dashboard-on-main.yml",
       latestSuccessfulWorkflow: dashboardBaseline,
+      providerCurrent: dashboardProviderCurrent,
       history: dashboardHistory,
       classifier: dashboardClassifier,
     }),
@@ -360,12 +390,55 @@ function unavailableTarget(
     target,
     workflowPath,
     latestSuccessfulWorkflow: null,
+    providerCurrent: null,
     history: "unknown",
     classifier: Object.freeze({
       kind: "unavailable",
       contractVersion: 1,
       reason: "dependency_classifier_not_implemented",
     }),
+  });
+}
+
+function admitDashboardPublicationRun(input: {
+  readonly run: Record<string, unknown>;
+  readonly workflow: Record<string, unknown>;
+  readonly marker: DashboardDeploymentMarker;
+  readonly repository: string;
+  readonly repositoryId: string;
+}): SuccessfulDeploymentWorkflowObservation {
+  const runRepository = exactRecord(input.run.repository, "Dashboard run repository");
+  const headRepository = exactRecord(input.run.head_repository, "Dashboard run head repository");
+  const workflowId = numericIdentifier(input.workflow.id, "Dashboard workflow ID");
+  if (
+    numericIdentifier(input.run.id, "Dashboard run ID") !== input.marker.run.id
+    || numericIdentifier(input.run.run_attempt, "Dashboard run attempt") !== input.marker.run.attempt
+    || numericIdentifier(input.run.workflow_id, "Dashboard run workflow ID") !== workflowId
+    || input.workflow.name !== "Publish Dashboard Production"
+    || input.workflow.path !== ".github/workflows/publish-dashboard-on-main.yml"
+    || input.run.path !== ".github/workflows/publish-dashboard-on-main.yml"
+    || input.run.event !== "workflow_dispatch"
+    || input.run.head_branch !== "main"
+    || input.run.head_sha !== input.marker.sourceRevision
+    || input.run.status !== "completed"
+    || input.run.conclusion !== "success"
+    || numericIdentifier(runRepository.id, "Dashboard run repository ID") !== input.repositoryId
+    || runRepository.full_name !== input.repository
+    || numericIdentifier(headRepository.id, "Dashboard run head repository ID") !== input.repositoryId
+    || headRepository.full_name !== input.repository
+  ) {
+    throw new Error("Dashboard public marker does not bind an exact successful publication run");
+  }
+  return Object.freeze({
+    runId: input.marker.run.id,
+    runAttempt: requireBoundedInteger(
+      Number(input.marker.run.attempt),
+      "Dashboard marker run attempt",
+      1,
+      1_000_000,
+    ),
+    revision: input.marker.sourceRevision,
+    updatedAt: requireTimestamp(input.run.updated_at, "Dashboard run terminal update time"),
   });
 }
 
