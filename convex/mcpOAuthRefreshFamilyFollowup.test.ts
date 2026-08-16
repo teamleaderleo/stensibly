@@ -16,8 +16,10 @@ beforeEach(() => {
 
 describe("OAuth refresh-family follow-up hardening", () => {
   test("wrong-client refresh attempts leave the family unchanged and preserve correct rotation", async () => {
-    const t = convexTest(schema, modules);
+    vi.useFakeTimers();
     const base = Date.parse("2026-04-01T00:00:00.000Z");
+    vi.setSystemTime(base);
+    const t = convexTest(schema, modules);
     const clock = vi.spyOn(Date, "now").mockReturnValue(base);
     try {
       const { clientId, rootId } = await createFamily(t, "wrongclient");
@@ -57,6 +59,7 @@ describe("OAuth refresh-family follow-up hardening", () => {
       });
     } finally {
       clock.mockRestore();
+      vi.useRealTimers();
     }
   });
 

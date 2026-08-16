@@ -23,8 +23,10 @@ beforeEach(() => {
 
 describe("OAuth refresh-family lifetime", () => {
   test("keeps the accepted root deadline through a long chain and deduplicates replay cleanup", async () => {
-    const t = convexTest(schema, modules);
+    vi.useFakeTimers();
     const base = Date.parse("2026-01-01T00:00:00.000Z");
+    vi.setSystemTime(base);
+    const t = convexTest(schema, modules);
     const clock = vi.spyOn(Date, "now").mockReturnValue(base);
     try {
       const { clientId, rootId, workspaceId } = await createFamily(t, "longchain");
@@ -90,12 +92,15 @@ describe("OAuth refresh-family lifetime", () => {
       expect(await scheduledFunctions(t)).toHaveLength(1);
     } finally {
       clock.mockRestore();
+      vi.useRealTimers();
     }
   });
 
   test("re-enrols one workspace-bound job from a legacy cleanup marker", async () => {
-    const t = convexTest(schema, modules);
+    vi.useFakeTimers();
     const base = Date.parse("2026-02-01T00:00:00.000Z");
+    vi.setSystemTime(base);
+    const t = convexTest(schema, modules);
     const clock = vi.spyOn(Date, "now").mockReturnValue(base);
     try {
       const fixture = await setup(t, "legacymarker");
@@ -167,6 +172,7 @@ describe("OAuth refresh-family lifetime", () => {
       });
     } finally {
       clock.mockRestore();
+      vi.useRealTimers();
     }
   });
 
