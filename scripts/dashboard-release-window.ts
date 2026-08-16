@@ -11,6 +11,7 @@ const exactPaths = new Set([
   "bun.lock",
   "package.json",
   "scripts/dashboard-production-receipt.ts",
+  "scripts/dashboard-deployment-marker.ts",
   "scripts/link-vercel-project-domain.sh",
   "src/dashboard-assets.ts",
   "src/dashboard-deployment-diagnostics.ts",

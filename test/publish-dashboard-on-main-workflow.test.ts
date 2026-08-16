@@ -90,8 +90,34 @@ describe("guarded dashboard publication workflow", () => {
     expect(workflow).toContain("/labs/soft-companion/");
     expect(workflow).toContain("/labs/field-console/");
     expect(workflow).toContain("alias set");
+    expect(workflow).toContain("Embed the public deployment identity");
+    expect(workflow).toContain("scripts/dashboard-deployment-marker.ts");
+    expect(workflow).toContain(
+      ".vercel/output/static/.well-known/stensibly-deployment.json",
+    );
+    expect(position("Pull and build the complete dashboard project"))
+      .toBeLessThan(position("Embed the public deployment identity"));
+    expect(position("Embed the public deployment identity"))
+      .toBeLessThan(position("Create and verify an immutable production deployment"));
     expect(position("Create and verify an immutable production deployment"))
       .toBeLessThan(position("Assign the canonical domain to the verified deployment"));
+  });
+
+  test("proves the exact public source identity before recording provider current", () => {
+    expect(workflow).toContain(
+      'vercel@${VERCEL_CLI_VERSION} curl "/.well-known/stensibly-deployment.json"',
+    );
+    expect(workflow).toContain(
+      'https://${DASHBOARD_HOST}/.well-known/stensibly-deployment.json?revision=${EXPECTED_REVISION}',
+    );
+    expect(workflow).toContain("${{ runner.temp }}/dashboard-marker-immutable.json");
+    expect(workflow).toContain("${{ runner.temp }}/dashboard-marker-public.json");
+    expect(workflow).toContain("DASHBOARD_DEPLOYMENT_MARKER_MODE: write");
+    expect(workflow).toContain("DASHBOARD_DEPLOYMENT_MARKER_MODE: verify");
+    expect(position("Embed the public deployment identity"))
+      .toBeLessThan(position("Assign the canonical domain to the verified deployment"));
+    expect(position("Verify the public dashboard and Labs routes"))
+      .toBeLessThan(position("Record provider-current dashboard receipt"));
   });
 
   test("uses token environment authentication without forwarding it to native curl", () => {
