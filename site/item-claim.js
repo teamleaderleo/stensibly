@@ -1,6 +1,7 @@
 import './actor-activity-controller.js';
 import './board-filter-controller.js';
 import './project-brief-controller.js';
+import './project-correspondence-controller.js';
 import './item-progress-controller.js';
 import './item-semantic-generation-controller.js';
 import './item-block-controller.js';
