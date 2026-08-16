@@ -116,8 +116,19 @@ describe("guarded dashboard publication workflow", () => {
     expect(workflow).toContain('https://${DASHBOARD_HOST}/labs/quiet-control/');
     expect(workflow).toContain('https://${DASHBOARD_HOST}/labs/soft-companion/');
     expect(workflow).toContain('https://${DASHBOARD_HOST}/labs/field-console/');
-    expect(position("Verify the public dashboard and Labs routes"))
-      .toBeLessThan(position("Record publication receipt"));
+    const verify = position("Verify the public dashboard and Labs routes");
+    const providerReceipt = position("Record provider-current dashboard receipt");
+    const uploadReceipt = position("Upload provider-current dashboard receipt");
+    const summary = position("Record publication receipt");
+    expect(verify).toBeLessThan(providerReceipt);
+    expect(providerReceipt).toBeLessThan(uploadReceipt);
+    expect(uploadReceipt).toBeLessThan(summary);
+    expect(workflow).toContain("bun scripts/dashboard-production-receipt.ts");
+    expect(workflow).toContain("${{ runner.temp }}/dashboard-production-deployment-receipt.json");
+    expect(workflow).toContain(
+      "dashboard-production-receipt-${{ github.run_id }}-${{ github.run_attempt }}",
+    );
+    expect(workflow).toContain("retention-days: 90");
     expect(workflow).toContain("source: \\`${GITHUB_SHA}\\`");
     expect(workflow).toContain("expected revision: \\`${EXPECTED_REVISION}\\`");
     expect(workflow).toContain("immutable deployment:");
@@ -130,5 +141,14 @@ describe("guarded dashboard publication workflow", () => {
     expect(workflow).not.toContain("STENSIBLY_SERVICE_SECRET");
     expect(workflow).not.toContain("CLOUDFLARE_API_TOKEN");
     expect(workflow).not.toContain("CONVEX_URL");
+
+    const publish = position("  publish:");
+    const steps = workflow.indexOf("    steps:", publish);
+    expect(workflow.slice(publish, steps)).not.toContain("secrets.");
+    const upload = position("Upload provider-current dashboard receipt");
+    const summary = position("Record publication receipt");
+    expect(workflow.slice(upload, summary)).not.toContain("secrets.");
+    expect(workflow.slice(position("Record provider-current dashboard receipt"), upload))
+      .toContain("secrets.VERCEL_TOKEN");
   });
 });

@@ -10,6 +10,7 @@ const exactPaths = new Set([
   ".github/workflows/publish-dashboard-on-main.yml",
   "bun.lock",
   "package.json",
+  "scripts/dashboard-production-receipt.ts",
   "scripts/link-vercel-project-domain.sh",
   "src/dashboard-assets.ts",
   "src/dashboard-deployment-diagnostics.ts",
