@@ -7,6 +7,7 @@ import {
   type StensiblyEnv,
 } from "./http-auth.js";
 import type { WorkLedger } from "./ledger.js";
+import { registerProjectAttachmentDraftApi } from "./project-attachment-draft-api.js";
 import {
   acceptProjectAttachmentSchema,
   projectAttachmentLedger,
@@ -104,6 +105,7 @@ export function registerProjectAttachmentApi(
     }
   });
 
+  registerProjectAttachmentDraftApi(app, ledger);
   registerProjectAttachmentReviewApi(app, ledger);
   registerProjectAttachmentRepositoryVerificationApi(app, ledger);
 }
