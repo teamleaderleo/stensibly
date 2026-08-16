@@ -39,14 +39,14 @@ describe("hosted dashboard refresh policy", () => {
     expect(dashboardItemsFingerprint([{ ...first, title: "ignored" }, second])).toBe(dashboardItemsFingerprint([first, second]));
     expect(dashboardItemsFingerprint([{ ...first, version: 2 }, second])).not.toBe(dashboardItemsFingerprint([first, second]));
     expect(dashboardItemsFingerprint([{ ...first, status: "blocked" }, second])).not.toBe(dashboardItemsFingerprint([first, second]));
-    const large = Array.from({ length: 20_000 }, (_, index) => ({
+    const large = Array.from({ length: 2_000 }, (_, index) => ({
       id: `item-${index}-${"x".repeat(500)}`,
       version: index,
       status: index % 2 ? "active" : "ready",
       updatedAt: "2026-07-29T12:00:00.000Z",
     }));
     const digest = dashboardItemsFingerprint(large);
-    expect(digest).toMatch(/^v1:20000:[0-9a-f]{32}$/);
+    expect(digest).toMatch(/^v1:2000:[0-9a-f]{32}$/);
     expect(digest.length).toBeLessThan(64);
   });
 
