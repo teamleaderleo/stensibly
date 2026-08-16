@@ -133,9 +133,19 @@ jobs:
           test -f .vercel/output/config.json
           test -d .vercel/output/static
 
+      - name: Embed the public deployment identity
+        env:
+          DASHBOARD_DEPLOYMENT_MARKER_MODE: write
+          DASHBOARD_DEPLOYMENT_MARKER_PATH: .vercel/output/static/.well-known/stensibly-deployment.json
+          EXPECTED_REVISION: ${{ inputs.expected_revision }}
+        run: bun scripts/dashboard-deployment-marker.ts
+
       - name: Create and verify an immutable production deployment
         id: deploy
         env:
+          DASHBOARD_DEPLOYMENT_MARKER_MODE: verify
+          DASHBOARD_DEPLOYMENT_MARKER_PATH: ${{ runner.temp }}/dashboard-marker-immutable.json
+          EXPECTED_REVISION: ${{ inputs.expected_revision }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
@@ -167,6 +177,12 @@ jobs:
           grep --fixed-strings --quiet "Quiet Control" /tmp/dashboard-_labs_quiet-control_.html
           grep --fixed-strings --quiet "Soft Companion" /tmp/dashboard-_labs_soft-companion_.html
           grep --fixed-strings --quiet "Field Console" /tmp/dashboard-_labs_field-console_.html
+          npx --yes vercel@${VERCEL_CLI_VERSION} curl "/.well-known/stensibly-deployment.json" \
+            --deployment "${deployment_url}" \
+            -- \
+            --fail --silent --show-error \
+            > "${DASHBOARD_DEPLOYMENT_MARKER_PATH}"
+          bun scripts/dashboard-deployment-marker.ts
 
       - name: Assign the canonical domain to the verified deployment
         env:
@@ -182,6 +198,10 @@ jobs:
             --token="${VERCEL_TOKEN}"
 
       - name: Verify the public dashboard and Labs routes
+        env:
+          DASHBOARD_DEPLOYMENT_MARKER_MODE: verify
+          DASHBOARD_DEPLOYMENT_MARKER_PATH: ${{ runner.temp }}/dashboard-marker-public.json
+          EXPECTED_REVISION: ${{ inputs.expected_revision }}
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4 5; do
@@ -189,7 +209,12 @@ jobs:
               && curl --fail --silent --show-error "https://${DASHBOARD_HOST}/labs/" | grep --fixed-strings --quiet "Stensibly Labs" \
               && curl --fail --silent --show-error "https://${DASHBOARD_HOST}/labs/quiet-control/" | grep --fixed-strings --quiet "Quiet Control" \
               && curl --fail --silent --show-error "https://${DASHBOARD_HOST}/labs/soft-companion/" | grep --fixed-strings --quiet "Soft Companion" \
-              && curl --fail --silent --show-error "https://${DASHBOARD_HOST}/labs/field-console/" | grep --fixed-strings --quiet "Field Console"; then
+              && curl --fail --silent --show-error "https://${DASHBOARD_HOST}/labs/field-console/" | grep --fixed-strings --quiet "Field Console" \
+              && curl --fail --silent --show-error \
+                --header "Cache-Control: no-cache" \
+                "https://${DASHBOARD_HOST}/.well-known/stensibly-deployment.json?revision=${EXPECTED_REVISION}" \
+                > "${DASHBOARD_DEPLOYMENT_MARKER_PATH}" \
+              && bun scripts/dashboard-deployment-marker.ts; then
               exit 0
             fi
             sleep $((attempt * 5))

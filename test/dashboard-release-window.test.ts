@@ -34,6 +34,7 @@ describe("dashboard release-window policy", () => {
       "src/dashboard-deployment-diagnostics.ts",
       "src/verify-dashboard.ts",
       "scripts/dashboard-production-receipt.ts",
+      "scripts/dashboard-deployment-marker.ts",
       "scripts/link-vercel-project-domain.sh",
       ".github/workflows/auto-deploy-dashboard.yml",
       ".github/workflows/deploy-dashboard.yml",
