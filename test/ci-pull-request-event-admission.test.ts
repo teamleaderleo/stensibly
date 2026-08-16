@@ -32,6 +32,9 @@ describe("pull-request event admission", () => {
       expect(job).toContain("github.event.action == 'ready_for_review'");
       expect(job).toContain("github.event.action == 'unlabeled' &&");
       expect(job).toContain("github.event.label.name == 'ci:red-control'");
+      expect(job).not.toContain("github.event.action == 'edited'");
+      expect(job).not.toContain("github.event.action == 'labeled'");
+      expect(job).not.toContain("github.event.action == 'converted_to_draft'");
       expect(job).not.toContain("github.event.action != 'closed'");
     }
   });

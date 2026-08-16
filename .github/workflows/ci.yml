@@ -225,7 +225,7 @@ jobs:
           set -o pipefail
           bun run typecheck:browser 2>&1 | tee browser-typecheck-output.txt
       - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
+        run: bunx playwright install --with-deps --only-shell chromium
       - name: Run frontend browser evidence
         id: browser-test
         run: |
@@ -447,7 +447,7 @@ jobs:
       - name: Install committed dependencies once
         run: bun install --frozen-lockfile
       - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
+        run: bunx playwright install --with-deps --only-shell chromium
       - name: Run serial full validation
         id: serial-validation
         run: |
