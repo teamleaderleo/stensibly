@@ -472,6 +472,9 @@ export class DefaultGitHubOperationsService implements GitHubOperationsService {
       this.#read(input, "fetch_commit_workflow_runs", { commit_sha: input.expectedHeadSha }),
     ]);
     const statuses = record(statusReceipt.result, "combined status");
+    if (text(statuses.commitSha, "combined status commit SHA") !== input.expectedHeadSha) {
+      throw new Error("GitHub operation combined status commit SHA was invalid");
+    }
     const statusCount = integerAllowZero(statuses.totalCount, "combined status count");
     if (statusCount > 0 && statuses.state !== "success") {
       throw new Error("GitHub pull request checks are not successful");
@@ -481,14 +484,23 @@ export class DefaultGitHubOperationsService implements GitHubOperationsService {
       .filter((value) => record(value, "review thread").isResolved !== true);
     if (unresolved.length > 0) throw new Error("GitHub pull request has unresolved review threads");
     const workflows = record(workflowReceipt.result, "workflow runs");
+    if (text(workflows.commitSha, "workflow runs commit SHA") !== input.expectedHeadSha) {
+      throw new Error("GitHub operation workflow runs commit SHA was invalid");
+    }
     const workflowRuns = array(workflows.workflowRuns, "workflow runs");
-    const unready = workflowRuns.some((value) => {
-      const run = record(value, "workflow run");
+    const currentWorkflowRuns = latestNonSkippedWorkflowRuns(
+      workflowRuns,
+      input.expectedHeadSha,
+    );
+    const unready = currentWorkflowRuns.some((run) => {
       return run.status !== "completed"
-        || (run.conclusion !== "success" && run.conclusion !== "neutral" && run.conclusion !== "skipped");
+        || (run.conclusion !== "success" && run.conclusion !== "neutral");
     });
     if (unready) throw new Error("GitHub pull request workflows are not successful");
-    if (statusCount === 0 && workflowRuns.length === 0) {
+    const hasSuccessfulWorkflow = currentWorkflowRuns.some(
+      (run) => run.status === "completed" && run.conclusion === "success",
+    );
+    if (statusCount === 0 && !hasSuccessfulWorkflow) {
       throw new Error("GitHub pull request has no successful CI evidence");
     }
     return inspection;
@@ -604,6 +616,46 @@ function integerAllowZero(value: unknown, label: string): number {
     throw new Error(`GitHub operation ${label} was invalid`);
   }
   return value as number;
+}
+
+function latestNonSkippedWorkflowRuns(
+  values: readonly unknown[],
+  expectedHeadSha: string,
+): readonly Readonly<Record<string, unknown>>[] {
+  const latest = new Map<string, {
+    readonly runs: Readonly<Record<string, unknown>>[];
+    readonly createdAt: number;
+  }>();
+  for (const value of values) {
+    const run = record(value, "workflow run");
+    integer(run.id, "workflow run ID");
+    const workflowId = integer(run.workflowId, "workflow ID");
+    const event = text(run.event, "workflow run event");
+    if (text(run.headSha, "workflow run head SHA") !== expectedHeadSha) {
+      throw new Error("GitHub operation workflow run head SHA was invalid");
+    }
+    const status = text(run.status, "workflow run status");
+    const conclusion = run.conclusion;
+    const createdAtText = text(run.createdAt, "workflow run creation time");
+    const createdAt = Date.parse(createdAtText);
+    if (!Number.isFinite(createdAt) || new Date(createdAt).toISOString() !== createdAtText) {
+      throw new Error("GitHub operation workflow run creation time was invalid");
+    }
+    // Metadata-only workflow runs carry no source evidence. Excluding them here
+    // preserves the prior non-skipped result instead of allowing a later skip to
+    // hide either a successful or a failed source-validation attempt.
+    if (status === "completed" && conclusion === "skipped") continue;
+    const cohort = `${workflowId}:${event}`;
+    const previous = latest.get(cohort);
+    if (!previous || createdAt > previous.createdAt) {
+      latest.set(cohort, { runs: [run], createdAt });
+    } else if (createdAt === previous.createdAt) {
+      previous.runs.push(run);
+    }
+  }
+  return Object.freeze(
+    [...latest.values()].flatMap((value) => value.runs.map((run) => Object.freeze(run))),
+  );
 }
 
 export function githubLandRequestFingerprint(input: GitHubLandPrInput): string {
