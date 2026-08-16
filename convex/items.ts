@@ -27,6 +27,7 @@ import {
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
+import { persistLedgerEventActivity } from "./lib/ledgerEventActivity";
 import { readPublicItemRuns } from "./lib/runVisibility";
 import { mutation, query } from "./lib/server";
 import {
@@ -386,7 +387,7 @@ async function transition(
     updatedAt: now,
   };
   await ctx.db.patch(item._id, { ...patch, ...commonPatch });
-  await appendEvent(ctx, {
+  const transitionEvent = await appendEvent(ctx, {
     workspaceId: item.workspaceId,
     projectId: item.projectId,
     itemId: item._id,
@@ -397,6 +398,19 @@ async function transition(
     idempotencyKey: args.idempotencyKey,
     createdAt: now,
   });
+  if (operation === "complete" || operation === "handoff") {
+    await persistLedgerEventActivity(ctx, {
+      item,
+      event: transitionEvent,
+      actorExternalId: actor.externalId,
+      sourceClass: "ledger_event",
+      activityClass: operation === "complete" ? "completed" : "handoff",
+      activityState: operation === "complete" ? "succeeded" : "observed",
+      ...(expectedGeneration === 0
+        ? {}
+        : { responsibilityGeneration: expectedGeneration }),
+    });
+  }
   const updated = await ctx.db.get("items", item._id);
   if (!updated) throw new Error("Updated item disappeared");
   return await publicItem(ctx, updated);
