@@ -204,6 +204,163 @@ describe("GitHub outcome operations", () => {
     fixture.close();
   });
 
+  test("accepts a newer successful workflow after an older cancelled attempt", async () => {
+    const fixture = makeFixture({
+      noCi: true,
+      workflowRuns: [
+        workflowRun(9003, 100, "completed", "skipped", "2026-08-10T00:03:00.000Z"),
+        workflowRun(9002, 100, "completed", "success", "2026-08-10T00:02:00.000Z"),
+        workflowRun(9001, 100, "completed", "cancelled", "2026-08-10T00:01:00.000Z"),
+      ],
+    });
+    await expect(fixture.service.githubLandPr(landInput())).resolves.toMatchObject({
+      state: "succeeded",
+    });
+    expect(fixture.merges).toBe(1);
+    fixture.close();
+  });
+
+  test("blocks a newer pending workflow after an older success", async () => {
+    const fixture = makeFixture({
+      noCi: true,
+      workflowRuns: [
+        workflowRun(9001, 100, "completed", "success", "2026-08-10T00:01:00.000Z"),
+        workflowRun(9002, 100, "in_progress", null, "2026-08-10T00:02:00.000Z"),
+      ],
+    });
+    await expect(fixture.service.githubLandPr(landInput())).rejects.toThrow(
+      "workflows are not successful",
+    );
+    expect(fixture.merges).toBe(0);
+    fixture.close();
+  });
+
+  test("does not let a metadata-only skipped run hide a failed source run", async () => {
+    const fixture = makeFixture({
+      noCi: true,
+      workflowRuns: [
+        workflowRun(9001, 100, "completed", "failure", "2026-08-10T00:01:00.000Z"),
+        workflowRun(9002, 100, "completed", "skipped", "2026-08-10T00:02:00.000Z"),
+      ],
+    });
+    await expect(fixture.service.githubLandPr(landInput())).rejects.toThrow(
+      "workflows are not successful",
+    );
+    expect(fixture.merges).toBe(0);
+    fixture.close();
+  });
+
+  test("does not treat skipped-only workflow history as positive CI evidence", async () => {
+    const fixture = makeFixture({
+      noCi: true,
+      workflowRuns: [
+        workflowRun(9001, 100, "completed", "skipped", "2026-08-10T00:01:00.000Z"),
+      ],
+    });
+    await expect(fixture.service.githubLandPr(landInput())).rejects.toThrow(
+      "no successful CI evidence",
+    );
+    expect(fixture.merges).toBe(0);
+    fixture.close();
+  });
+
+  test("preserves a successful classic status beside skipped-only workflow history", async () => {
+    const fixture = makeFixture({
+      workflowRuns: [
+        workflowRun(9001, 100, "completed", "skipped", "2026-08-10T00:01:00.000Z"),
+      ],
+    });
+    await expect(fixture.service.githubLandPr(landInput())).resolves.toMatchObject({
+      state: "succeeded",
+    });
+    expect(fixture.merges).toBe(1);
+    fixture.close();
+  });
+
+  test("does not treat neutral-only workflow history as positive CI evidence", async () => {
+    const fixture = makeFixture({
+      noCi: true,
+      workflowRuns: [
+        workflowRun(9001, 100, "completed", "neutral", "2026-08-10T00:01:00.000Z"),
+      ],
+    });
+    await expect(fixture.service.githubLandPr(landInput())).rejects.toThrow(
+      "no successful CI evidence",
+    );
+    expect(fixture.merges).toBe(0);
+    fixture.close();
+  });
+
+  test("does not let a manual success mask a pull-request failure", async () => {
+    const fixture = makeFixture({
+      workflowRuns: [
+        workflowRun(
+          9001,
+          100,
+          "completed",
+          "failure",
+          "2026-08-10T00:01:00.000Z",
+          "pull_request",
+        ),
+        workflowRun(
+          9002,
+          100,
+          "completed",
+          "success",
+          "2026-08-10T00:02:00.000Z",
+          "workflow_dispatch",
+        ),
+      ],
+    });
+    await expect(fixture.service.githubLandPr(landInput())).rejects.toThrow(
+      "workflows are not successful",
+    );
+    expect(fixture.merges).toBe(0);
+    fixture.close();
+  });
+
+  test("does not let an unrelated workflow success mask cancelled CI", async () => {
+    const fixture = makeFixture({
+      workflowRuns: [
+        workflowRun(9001, 100, "completed", "cancelled", "2026-08-10T00:01:00.000Z"),
+        workflowRun(9002, 200, "completed", "success", "2026-08-10T00:01:00.000Z"),
+      ],
+    });
+    await expect(fixture.service.githubLandPr(landInput())).rejects.toThrow(
+      "workflows are not successful",
+    );
+    expect(fixture.merges).toBe(0);
+    fixture.close();
+  });
+
+  test("blocks conflicting outcomes created in the same workflow timestamp bucket", async () => {
+    const fixture = makeFixture({
+      noCi: true,
+      workflowRuns: [
+        workflowRun(9001, 100, "completed", "success", "2026-08-10T00:01:00.000Z"),
+        workflowRun(9002, 100, "completed", "failure", "2026-08-10T00:01:00.000Z"),
+      ],
+    });
+    await expect(fixture.service.githubLandPr(landInput())).rejects.toThrow(
+      "workflows are not successful",
+    );
+    expect(fixture.merges).toBe(0);
+    fixture.close();
+  });
+
+  test("rejects workflow evidence bound to another head before merge dispatch", async () => {
+    const mismatched = Object.freeze({
+      ...workflowRun(9001, 100, "completed", "success", "2026-08-10T00:01:00.000Z"),
+      headSha: commit("d"),
+    });
+    const fixture = makeFixture({ noCi: true, workflowRuns: [mismatched] });
+    await expect(fixture.service.githubLandPr(landInput())).rejects.toThrow(
+      "workflow run head SHA was invalid",
+    );
+    expect(fixture.merges).toBe(0);
+    fixture.close();
+  });
+
   test("holds a completed merge for reconciliation when the base races", async () => {
     const fixture = makeFixture({ racedBase: true });
     await expect(fixture.service.githubLandPr(landInput())).rejects.toMatchObject({
@@ -227,6 +384,7 @@ function makeFixture(options: {
   attachmentMissing?: boolean;
   delegatedFailure?: Error;
   jobStepsUnavailable?: boolean;
+  workflowRuns?: readonly Readonly<Record<string, unknown>>[];
 } = {}) {
   const workflows = new MemoryWorkflowStore();
   let merged = false;
@@ -339,6 +497,7 @@ function delegatedResult(tool: string, options: {
   failingCi?: boolean;
   unresolved?: boolean;
   noCi?: boolean;
+  workflowRuns?: readonly Readonly<Record<string, unknown>>[];
 }) {
   if (tool === "get_repo") return {
     repositoryFullName: "teamleaderleo/stensibly", private: true, archived: false,
@@ -361,9 +520,9 @@ function delegatedResult(tool: string, options: {
   };
   if (tool === "fetch_commit_workflow_runs") return {
     repositoryFullName: "teamleaderleo/stensibly", commitSha: commit("b"),
-    workflowRuns: options.failingCi
-      ? [{ id: 9001, status: "completed", conclusion: "failure", headSha: commit("b") }]
-      : [],
+    workflowRuns: options.workflowRuns ?? (options.failingCi
+      ? [workflowRun(9001, 100, "completed", "failure", "2026-08-10T00:01:00.000Z")]
+      : []),
   };
   if (tool === "fetch_workflow_run_jobs") return {
     repositoryFullName: "teamleaderleo/stensibly", runId: 9001,
@@ -371,6 +530,29 @@ function delegatedResult(tool: string, options: {
   };
   if (tool === "fetch_workflow_job_steps") return { jobId: 7001, failedStepCount: 1, steps: [] };
   throw new Error(`unexpected delegated tool ${tool}`);
+}
+
+function workflowRun(
+  id: number,
+  workflowId: number,
+  status: string,
+  conclusion: string | null,
+  createdAt: string,
+  event = "pull_request",
+): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    id,
+    attempt: 1,
+    workflowId,
+    workflowName: "CI",
+    event,
+    status,
+    conclusion,
+    headSha: commit("b"),
+    createdAt,
+    updatedAt: createdAt,
+    runStartedAt: createdAt,
+  });
 }
 
 function receipt(tool: string, result: unknown): GitHubDelegatedReadReceipt {
