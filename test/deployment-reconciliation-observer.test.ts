@@ -17,6 +17,9 @@ const currentRootTree = "d".repeat(40);
 const baselineSiteTree = "e".repeat(40);
 const currentSiteTree = "f".repeat(40);
 const otherSha = "9".repeat(40);
+const workerSha = "8".repeat(40);
+const workerVersionId = "21f335ee-7d2e-44e8-8139-5b9939a48248";
+const workerVersionCreatedAt = "2026-08-16T09:11:56.892401Z";
 const repository = "teamleaderleo/stensibly";
 const repositoryId = 1310091990;
 const temporaryRoots: string[] = [];
@@ -51,6 +54,15 @@ describe("deployment reconciliation observer adapter", () => {
         target: "worker",
         decision: "classification_unknown",
         reason: "dependency_classifier_not_implemented",
+        baselineAuthority: "public_worker_version",
+        providerCurrentVerified: true,
+        providerCurrent: {
+          kind: "worker-public-version",
+          sourceRevision: workerSha,
+          versionId: workerVersionId,
+          versionTag: `git-${workerSha}`,
+          versionCreatedAt: workerVersionCreatedAt,
+        },
       }),
       expect.objectContaining({
         target: "convex",
@@ -95,6 +107,7 @@ describe("deployment reconciliation observer adapter", () => {
     expect(calls).toContain(`/repos/${repository}/actions/workflows/publish-dashboard-on-main.yml`);
     expect(calls).toContain(`/repos/${repository}/compare/${baselineSha}...${currentSha}?per_page=1`);
     expect(calls.some((call) => call.includes("/.well-known/stensibly-deployment.json"))).toBe(true);
+    expect(calls.filter((call) => call === "/health?revision=" + currentSha)).toHaveLength(4);
     expect(calls.some((call) => call.includes("deploy-worker.yml/runs"))).toBe(false);
     expect(calls.some((call) => call.includes("deploy-convex.yml/runs"))).toBe(false);
   });
@@ -248,6 +261,30 @@ describe("deployment reconciliation observer adapter", () => {
     }));
   });
 
+  test("fails closed when Worker origins disagree or provider current moves", async () => {
+    const disagreeingFixture = await localFixture();
+    const disagreeing = await runDeploymentReconciliationObserver(
+      disagreeingFixture.environment,
+      githubStub([], { workerOriginMismatch: true }),
+    );
+    expect(disagreeing.targets[0]).toEqual(expect.objectContaining({
+      target: "worker",
+      baselineAuthority: "workflow_only",
+      providerCurrentVerified: false,
+      reason: "provider_current_observation_failed",
+    }));
+
+    const movingFixture = await localFixture();
+    const moving = await runDeploymentReconciliationObserver(
+      movingFixture.environment,
+      githubStub([], { workerVersionRevisions: [workerSha, otherSha] }),
+    );
+    expect(moving.targets[0]).toEqual(expect.objectContaining({
+      providerCurrentVerified: false,
+      reason: "provider_current_observation_failed",
+    }));
+  });
+
   test("reuses one dashboard tree read when the successful baseline is current", async () => {
     const fixture = await localFixture();
     const calls: string[] = [];
@@ -382,7 +419,8 @@ function githubStub(
 ): typeof fetch {
   let mainRead = 0;
   let markerRead = 0;
-  return (async (input: RequestInfo | URL) => {
+  let workerRead = 0;
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     const call = `${url.pathname}${url.search}`;
     calls.push(call);
@@ -409,6 +447,32 @@ function githubStub(
       return new Response(body, {
         status: 200,
         headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (
+      url.hostname === "api.stensibly.com"
+      || url.hostname === "stensibly-api.leoli-082000.workers.dev"
+    ) {
+      const requestHeaders = new Headers(input instanceof Request ? input.headers : undefined);
+      const initHeaders = new Headers(init?.headers);
+      if (requestHeaders.has("authorization") || initHeaders.has("authorization")) {
+        throw new Error("Worker public observation must not receive GitHub authorization");
+      }
+      const revisions = override.workerVersionRevisions ?? [workerSha];
+      const revision = revisions[
+        Math.min(Math.floor(workerRead / 2), revisions.length - 1)
+      ] ?? workerSha;
+      workerRead += 1;
+      const mismatched = override.workerOriginMismatch
+        && url.hostname === "stensibly-api.leoli-082000.workers.dev";
+      return new Response("{}", {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "x-stensibly-worker-version-id": workerVersionId,
+          "x-stensibly-worker-version-tag": `git-${mismatched ? otherSha : revision}`,
+          "x-stensibly-worker-version-created-at": workerVersionCreatedAt,
+        },
       });
     }
     const prefix = `/repos/${repository}`;
@@ -525,6 +589,8 @@ interface GitHubStubOverride {
   readonly dashboardMarkerFingerprint?: string;
   readonly oversizedDashboardMarker?: boolean;
   readonly dashboardRunConclusion?: "success" | "failure";
+  readonly workerOriginMismatch?: boolean;
+  readonly workerVersionRevisions?: readonly string[];
   readonly mainRevisions?: readonly string[];
   readonly comparePatchLength?: number;
 }

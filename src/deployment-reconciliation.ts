@@ -1,7 +1,7 @@
 import { sha256, stableJson } from "./canonical-json.js";
 
 export const DEPLOYMENT_RECONCILIATION_SCHEMA_VERSION =
-  "stensibly-deployment-reconciliation-decision/2" as const;
+  "stensibly-deployment-reconciliation-decision/3" as const;
 
 export type DeploymentTarget = "worker" | "convex" | "dashboard";
 export type DeploymentReconciliationDecision =
@@ -43,13 +43,25 @@ export interface SuccessfulDeploymentWorkflowObservation {
   readonly updatedAt: string;
 }
 
-export interface ProviderCurrentDeploymentObservation {
+export interface DashboardProviderCurrentDeploymentObservation {
   readonly kind: "dashboard-public-marker";
   readonly sourceRevision: string;
   readonly workflowRunId: string;
   readonly workflowRunAttempt: number;
   readonly markerFingerprint: string;
 }
+
+export interface WorkerProviderCurrentDeploymentObservation {
+  readonly kind: "worker-public-version";
+  readonly sourceRevision: string;
+  readonly versionId: string;
+  readonly versionTag: string;
+  readonly versionCreatedAt: string;
+}
+
+export type ProviderCurrentDeploymentObservation =
+  | DashboardProviderCurrentDeploymentObservation
+  | WorkerProviderCurrentDeploymentObservation;
 
 export interface TargetDeploymentObservation {
   readonly target: DeploymentTarget;
@@ -146,7 +158,10 @@ export interface DeploymentReconciliationReceipt {
     target: DeploymentTarget;
     decision: DeploymentReconciliationDecision;
     latestSuccessfulWorkflow: SuccessfulDeploymentWorkflowObservation | null;
-    baselineAuthority: "workflow_only" | "public_deployment_marker";
+    baselineAuthority:
+      | "workflow_only"
+      | "public_deployment_marker"
+      | "public_worker_version";
     providerCurrentVerified: boolean;
     providerCurrent: ProviderCurrentDeploymentObservation | null;
     classifier: TargetDeploymentObservation["classifier"];
@@ -170,6 +185,7 @@ export interface DeploymentReconciliationReceipt {
 
 const shaPattern = /^[0-9a-f]{40}$/u;
 const digestPattern = /^sha256:[0-9a-f]{64}$/u;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const numericIdPattern = /^[1-9][0-9]{0,19}$/u;
 const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const workflowPath = ".github/workflows/ci.yml" as const;
@@ -419,30 +435,40 @@ function admitTargets(
       requireSha(target.latestSuccessfulWorkflow.revision, `${target.target} workflow baseline revision`);
       requireTimestamp(target.latestSuccessfulWorkflow.updatedAt, `${target.target} workflow baseline update time`);
     }
-    if (target.providerCurrent !== null) {
+    if (target.providerCurrent?.kind === "dashboard-public-marker") {
       if (target.target !== "dashboard" || target.latestSuccessfulWorkflow === null) {
-        throw new Error("Only a dashboard workflow baseline may bind provider current");
-      }
-      if (target.providerCurrent.kind !== "dashboard-public-marker") {
-        throw new Error("Dashboard provider-current evidence kind is unsupported");
+        throw new Error("Only a dashboard workflow baseline may bind its public marker");
       }
       requireSha(target.providerCurrent.sourceRevision, "Dashboard provider-current source revision");
       requireNumericId(target.providerCurrent.workflowRunId, "Dashboard provider-current run ID");
-      if (
-        !Number.isInteger(target.providerCurrent.workflowRunAttempt)
+      if (!Number.isInteger(target.providerCurrent.workflowRunAttempt)
         || target.providerCurrent.workflowRunAttempt < 1
-        || target.providerCurrent.workflowRunAttempt > 1_000_000
-      ) {
+        || target.providerCurrent.workflowRunAttempt > 1_000_000) {
         throw new Error("Dashboard provider-current run attempt is invalid");
       }
       requireDigest(target.providerCurrent.markerFingerprint, "Dashboard marker fingerprint");
-      if (
-        target.providerCurrent.sourceRevision !== target.latestSuccessfulWorkflow.revision
+      if (target.providerCurrent.sourceRevision !== target.latestSuccessfulWorkflow.revision
         || target.providerCurrent.workflowRunId !== target.latestSuccessfulWorkflow.runId
-        || target.providerCurrent.workflowRunAttempt !== target.latestSuccessfulWorkflow.runAttempt
-      ) {
+        || target.providerCurrent.workflowRunAttempt !== target.latestSuccessfulWorkflow.runAttempt) {
         throw new Error("Dashboard provider current does not bind its workflow baseline");
       }
+    } else if (target.providerCurrent?.kind === "worker-public-version") {
+      if (target.target !== "worker" || target.latestSuccessfulWorkflow !== null) {
+        throw new Error("Only the Worker may bind its public version receipt");
+      }
+      requireSha(target.providerCurrent.sourceRevision, "Worker provider-current source revision");
+      if (!uuidPattern.test(target.providerCurrent.versionId)) {
+        throw new Error("Worker provider-current version ID is invalid");
+      }
+      if (target.providerCurrent.versionTag !== `git-${target.providerCurrent.sourceRevision}`) {
+        throw new Error("Worker provider-current version tag is invalid");
+      }
+      requireProviderTimestamp(
+        target.providerCurrent.versionCreatedAt,
+        "Worker provider-current creation time",
+      );
+    } else if (target.providerCurrent !== null) {
+      throw new Error("Deployment provider-current evidence kind is unsupported");
     }
     if (!["ahead", "identical", "behind", "diverged", "unknown"].includes(target.history)) {
       throw new Error(`Deployment history for ${target.target} is unsupported`);
@@ -471,7 +497,7 @@ function admitTargets(
       && target.classifier.kind === "unavailable"
       && target.classifier.reason === "provider_current_observation_failed"
     ) {
-      throw new Error("Dashboard provider-current evidence and classifier are incoherent");
+      throw new Error("Deployment provider-current evidence and classifier are incoherent");
     }
   }
   return Object.freeze([...targets]);
@@ -492,7 +518,9 @@ function compileTarget(
         providerCurrent: null,
       })
       : Object.freeze({
-        baselineAuthority: "public_deployment_marker" as const,
+        baselineAuthority: input.providerCurrent.kind === "dashboard-public-marker"
+          ? "public_deployment_marker" as const
+          : "public_worker_version" as const,
         providerCurrentVerified: true as const,
         providerCurrent: input.providerCurrent,
       })),
@@ -599,6 +627,18 @@ function requireTimestamp(value: unknown, label: string): string {
     typeof value !== "string"
     || value.length > 64
     || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)
+    || !Number.isFinite(Date.parse(value))
+  ) {
+    throw new Error(`${label} must be a bounded UTC timestamp`);
+  }
+  return value;
+}
+
+function requireProviderTimestamp(value: unknown, label: string): string {
+  if (
+    typeof value !== "string"
+    || value.length > 64
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u.test(value)
     || !Number.isFinite(Date.parse(value))
   ) {
     throw new Error(`${label} must be a bounded UTC timestamp`);

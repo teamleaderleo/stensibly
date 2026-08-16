@@ -11,6 +11,7 @@ import {
   type ExactCiRunObservation,
   type SuccessfulDeploymentWorkflowObservation,
   type TargetDeploymentObservation,
+  type WorkerProviderCurrentDeploymentObservation,
 } from "../src/deployment-reconciliation.js";
 import { parseStrictJson } from "../src/strict-json.js";
 
@@ -23,6 +24,11 @@ const receiptChecksumName = "exact-ref-validation-receipt.sha256";
 const shaPattern = /^[0-9a-f]{40}$/u;
 const digestPattern = /^sha256:[0-9a-f]{64}$/u;
 const numericIdPattern = /^[1-9][0-9]{0,19}$/u;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const workerOrigins = Object.freeze([
+  "https://api.stensibly.com",
+  "https://stensibly-api.leoli-082000.workers.dev",
+] as const);
 
 export interface DeploymentReconciliationEnvironment {
   readonly [key: string]: string | undefined;
@@ -150,6 +156,7 @@ interface GitHubClient {
   mainRevision(): Promise<string>;
   exactReceiptArtifact(runId: string, runAttempt: string): Promise<Record<string, unknown>>;
   dashboardMarker(cacheRevision: string): Promise<DashboardDeploymentMarker>;
+  workerVersion(cacheRevision: string): Promise<WorkerProviderCurrentDeploymentObservation>;
   compare(base: string, head: string): Promise<"ahead" | "identical" | "behind" | "diverged">;
   siteTreeOid(revision: string): Promise<string>;
 }
@@ -252,6 +259,50 @@ function githubClient(input: {
         },
       ));
     },
+    async workerVersion(
+      cacheRevision: string,
+    ): Promise<WorkerProviderCurrentDeploymentObservation> {
+      const observations = await Promise.all(workerOrigins.map(async (origin) => {
+        const response = await input.request(
+          `${origin}/health?revision=${requireSha(cacheRevision, "Worker version cache revision")}`,
+          {
+            headers: { "cache-control": "no-store" },
+            method: "GET",
+            redirect: "error",
+            signal: AbortSignal.timeout(10_000),
+          },
+        );
+        if (response.status !== 200) {
+          throw new Error(`Worker health request failed with HTTP ${response.status}`);
+        }
+        await response.body?.cancel();
+        const versionId = response.headers.get("x-stensibly-worker-version-id")?.trim();
+        const versionTag = response.headers.get("x-stensibly-worker-version-tag")?.trim();
+        const versionCreatedAt = response.headers
+          .get("x-stensibly-worker-version-created-at")?.trim();
+        if (!versionId || !uuidPattern.test(versionId)) {
+          throw new Error("Worker health version ID is invalid");
+        }
+        const sourceRevision = versionTag?.match(/^git-([0-9a-f]{40})$/u)?.[1];
+        if (!sourceRevision || !versionTag || !versionCreatedAt) {
+          throw new Error("Worker health source identity is invalid");
+        }
+        requireProviderTimestamp(versionCreatedAt, "Worker health version creation time");
+        return Object.freeze({ versionId, versionTag, versionCreatedAt, sourceRevision });
+      }));
+      const first = observations[0]!;
+      if (observations.some((observation) =>
+        observation.versionId !== first.versionId
+        || observation.versionTag !== first.versionTag
+        || observation.versionCreatedAt !== first.versionCreatedAt
+        || observation.sourceRevision !== first.sourceRevision)) {
+        throw new Error("Worker public origins disagree on provider current");
+      }
+      return Object.freeze({
+        kind: "worker-public-version" as const,
+        ...first,
+      });
+    },
     async compare(base: string, head: string) {
       const comparison = exactRecord(await readJson(
         `/compare/${requireSha(base, "Comparison base")}...${requireSha(head, "Comparison head")}?per_page=1`,
@@ -290,6 +341,12 @@ async function observeTargets(
   repository: string,
   repositoryId: string,
 ): Promise<readonly TargetDeploymentObservation[]> {
+  let initialWorkerVersion: WorkerProviderCurrentDeploymentObservation | null = null;
+  try {
+    initialWorkerVersion = await client.workerVersion(currentMainRevision);
+  } catch {
+    // Public Worker identity remains non-authorizing when either origin is unavailable.
+  }
   let dashboardBaseline: SuccessfulDeploymentWorkflowObservation | null = null;
   let dashboardProviderCurrent: TargetDeploymentObservation["providerCurrent"] = null;
   let dashboardClassifier: TargetDeploymentObservation["classifier"] = Object.freeze({
@@ -368,8 +425,25 @@ async function observeTargets(
       reason: "provider_current_observation_failed",
     });
   }
+  let workerProviderCurrent: WorkerProviderCurrentDeploymentObservation | null = null;
+  if (initialWorkerVersion !== null) {
+    try {
+      const finalWorkerVersion = await client.workerVersion(currentMainRevision);
+      if (
+        finalWorkerVersion.versionId !== initialWorkerVersion.versionId
+        || finalWorkerVersion.versionTag !== initialWorkerVersion.versionTag
+        || finalWorkerVersion.versionCreatedAt !== initialWorkerVersion.versionCreatedAt
+        || finalWorkerVersion.sourceRevision !== initialWorkerVersion.sourceRevision
+      ) {
+        throw new Error("Worker provider current moved during observation");
+      }
+      workerProviderCurrent = finalWorkerVersion;
+    } catch {
+      // A moving or unavailable public version fails closed.
+    }
+  }
   return Object.freeze([
-    unavailableTarget("worker", ".github/workflows/deploy-worker.yml"),
+    workerTarget(workerProviderCurrent),
     unavailableTarget("convex", ".github/workflows/deploy-convex.yml"),
     Object.freeze({
       target: "dashboard",
@@ -383,8 +457,8 @@ async function observeTargets(
 }
 
 function unavailableTarget(
-  target: "worker" | "convex",
-  workflowPath: ".github/workflows/deploy-worker.yml" | ".github/workflows/deploy-convex.yml",
+  target: "convex",
+  workflowPath: ".github/workflows/deploy-convex.yml",
 ): TargetDeploymentObservation {
   return Object.freeze({
     target,
@@ -396,6 +470,25 @@ function unavailableTarget(
       kind: "unavailable",
       contractVersion: 1,
       reason: "dependency_classifier_not_implemented",
+    }),
+  });
+}
+
+function workerTarget(
+  providerCurrent: WorkerProviderCurrentDeploymentObservation | null,
+): TargetDeploymentObservation {
+  return Object.freeze({
+    target: "worker",
+    workflowPath: ".github/workflows/deploy-worker.yml",
+    latestSuccessfulWorkflow: null,
+    providerCurrent,
+    history: "unknown",
+    classifier: Object.freeze({
+      kind: "unavailable",
+      contractVersion: 1,
+      reason: providerCurrent === null
+        ? "provider_current_observation_failed"
+        : "dependency_classifier_not_implemented",
     }),
   });
 }
@@ -684,6 +777,18 @@ function requireTimestamp(value: unknown, label: string): string {
     typeof value !== "string"
     || value.length > 64
     || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)
+    || !Number.isFinite(Date.parse(value))
+  ) {
+    throw new Error(`${label} must be a bounded UTC timestamp`);
+  }
+  return value;
+}
+
+function requireProviderTimestamp(value: unknown, label: string): string {
+  if (
+    typeof value !== "string"
+    || value.length > 64
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u.test(value)
     || !Number.isFinite(Date.parse(value))
   ) {
     throw new Error(`${label} must be a bounded UTC timestamp`);
