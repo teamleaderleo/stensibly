@@ -17,6 +17,9 @@ const concurrency = workflow.match(
 const testJob = workflow.match(
   /\n  test:\n([\s\S]*?)\n  runtime-parity:\n/u,
 )?.[1];
+const browserJob = workflow.match(
+  /\n  browser-evidence:\n([\s\S]*?)\n  test:\n/u,
+)?.[1];
 const runtimeParityJob = workflow.match(
   /\n  runtime-parity:\n([\s\S]*?)\n  serial-full:\n/u,
 )?.[1];
@@ -83,6 +86,26 @@ describe("canonical CI scheduling", () => {
     }
   });
 
+  test("pins every parallel job and attests the repository validation tree", () => {
+    for (const job of [browserJob, testJob, runtimeParityJob]) {
+      expect(job).toContain("PARALLEL_VALIDATION_SHA:");
+      expect(job).toContain("github.event.pull_request.head.sha");
+      expect(job).toContain("ref: ${{ env.PARALLEL_VALIDATION_SHA }}");
+      expect(job).toContain("persist-credentials: false");
+      expect(job).toContain('revision="$(git rev-parse HEAD)"');
+      expect(job).toContain('"${revision}" != "${PARALLEL_VALIDATION_SHA}"');
+    }
+    expect(testJob).toContain(
+      "validation-revision: ${{ steps.validation-tree.outputs.revision }}",
+    );
+    expect(testJob).toContain(
+      "validation-tree: ${{ steps.validation-tree.outputs.tree }}",
+    );
+    expect(testJob).toContain("id: validation-tree");
+    expect(testJob).toContain('tree="$(git rev-parse \'HEAD^{tree}\')"');
+    expect(testJob).toContain('! "${tree}" =~ ^[0-9a-f]{40}$');
+  });
+
   test("uses one canonical gate contract for both full profiles", () => {
     expect(CI_VALIDATION_PROFILE_COMMANDS_V1.full_parallel)
       .toBe(CI_CANONICAL_COMMAND_IDS_V1);
@@ -95,7 +118,7 @@ describe("canonical CI scheduling", () => {
     }
   });
 
-  test("runs exact-head serial validation automatically after green pull-request jobs", () => {
+  test("checks the synthetic merge after green exact-head parallel jobs", () => {
     expect(serialFullJob).toBeDefined();
     expect(serialFullJob).toContain("needs: [browser-evidence, test, runtime-parity]");
     expect(serialFullJob).toContain("always()");
@@ -106,6 +129,7 @@ describe("canonical CI scheduling", () => {
     expect(serialFullJob).toContain("github.event_name == 'workflow_dispatch' ||");
     expect(serialFullJob).toContain("github.event_name == 'workflow_call'");
     expect(serialFullJob).toContain("inputs.validation_profile == 'serial_full'");
+    expect(serialFullJob).toContain("github.sha ||");
     expect(serialFullJob?.match(/actions\/checkout@v6/gu)).toHaveLength(1);
     expect(serialFullJob?.match(/oven-sh\/setup-bun@v2/gu)).toHaveLength(1);
     expect(serialFullJob?.match(/actions\/setup-node@v6/gu)).toHaveLength(1);
@@ -116,9 +140,25 @@ describe("canonical CI scheduling", () => {
     expect(serialFullJob).toContain("exit \"${status}\"");
   });
 
+  test("reuses parallel results only for one exact byte-identical tree", () => {
+    expect(serialFullJob).toContain("id: tree-equivalence");
+    expect(serialFullJob).toContain(
+      "REPOSITORY_REVISION: ${{ needs.test.outputs.validation-revision }}",
+    );
+    expect(serialFullJob).toContain('"${GITHUB_EVENT_NAME}" == "pull_request"');
+    expect(serialFullJob).toContain(
+      '"${REPOSITORY_REVISION}" == "${EXPECTED_PARALLEL_SHA}"',
+    );
+    expect(serialFullJob).toContain('"${REPOSITORY_TREE}" == "${source_tree}"');
+    expect(serialFullJob).toContain(
+      "if: steps.tree-equivalence.outputs.reuse_parallel != 'true'",
+    );
+  });
+
   test("preserves exact-SHA admission and bounded failure artifacts", () => {
     expect(serialFullJob).toContain("SERIAL_VALIDATION_SHA:");
     expect(serialFullJob).toContain("github.event.pull_request.head.sha");
+    expect(serialFullJob).toContain("EXPECTED_PARALLEL_SHA:");
     expect(serialFullJob).toContain("ref: ${{ env.SERIAL_VALIDATION_SHA }}");
     expect(serialFullJob).toContain("persist-credentials: false");
     expect(serialFullJob).toContain('actual_sha="$(git rev-parse HEAD)"');

@@ -60,7 +60,11 @@ describe("CI browser evidence profile", () => {
     expect(browserJob).toContain(
       "bunx playwright install --with-deps --only-shell chromium",
     );
-    expect(browserJob).toContain("frontend-browser-evidence-${{ github.sha }}");
+    expect(browserJob).toContain("PARALLEL_VALIDATION_SHA:");
+    expect(browserJob).toContain("ref: ${{ env.PARALLEL_VALIDATION_SHA }}");
+    expect(browserJob).toContain(
+      "frontend-browser-evidence-${{ env.PARALLEL_VALIDATION_SHA }}",
+    );
     expect(browserJob).toContain("steps.browser-test.outcome == 'success'");
     expect(browserJob).toContain("steps.browser-artifacts.outcome == 'success'");
     for (const commandId of CI_BROWSER_EVIDENCE_COMMAND_IDS_V1) {
@@ -68,7 +72,7 @@ describe("CI browser evidence profile", () => {
     }
   });
 
-  test("automatically follows a green parallel pull-request candidate with exact-head serial validation", () => {
+  test("checks the synthetic merge after green exact-head browser validation", () => {
     expect(serialJob).toBeDefined();
     expect(serialJob).toContain("needs: [browser-evidence, test, runtime-parity]");
     expect(serialJob).toContain("always()");
@@ -80,12 +84,17 @@ describe("CI browser evidence profile", () => {
     expect(serialJob).toContain("github.event_name == 'workflow_call'");
     expect(serialJob).toContain("inputs.validation_profile == 'serial_full'");
     expect(serialJob).toContain("github.event.pull_request.head.sha");
+    expect(serialJob).toContain("EXPECTED_PARALLEL_SHA:");
+    expect(serialJob).toContain("github.sha ||");
     expect(serialJob).toContain("SERIAL_VALIDATION_SHA:");
     expect(serialJob).toContain("ref: ${{ env.SERIAL_VALIDATION_SHA }}");
     expect(serialJob).toContain("persist-credentials: false");
     expect(serialJob).toContain('actual_sha="$(git rev-parse HEAD)"');
     expect(serialJob).toContain('! "${SERIAL_VALIDATION_SHA}" =~ ^[0-9a-f]{40}$');
     expect(serialJob).toContain('"${actual_sha}" != "${SERIAL_VALIDATION_SHA}"');
+    expect(serialJob).toContain("id: tree-equivalence");
+    expect(serialJob).toContain('source_tree="$(git rev-parse \'HEAD^{tree}\')"');
+    expect(serialJob).toContain('"${REPOSITORY_TREE}" == "${source_tree}"');
   });
 
   test("executes the same browser commands on the serial profile's single runner", () => {
@@ -114,12 +123,24 @@ describe("CI browser evidence profile", () => {
     expect(serialJob).toContain("browser-artifact-output.txt");
   });
 
+  test("keeps exact-head browser evidence when merge-tree validation is redundant", () => {
+    expect(browserJob).toContain(
+      "name: frontend-browser-evidence-${{ env.PARALLEL_VALIDATION_SHA }}",
+    );
+    expect(serialJob).not.toContain("actions/download-artifact");
+    expect(serialJob).toContain('"${REPOSITORY_TREE}" == "${source_tree}"');
+    expect(serialJob).toContain("reused byte-identical parallel validation");
+  });
+
   test("retains browser outputs only after the serial privacy fence succeeds", () => {
     expect(serialDiagnostics).toBeDefined();
     expect(serialDiagnostics).toContain("serial-full-diagnostics-${{ env.SERIAL_VALIDATION_SHA }}");
     expect(serialDiagnostics).toContain("browser-typecheck-output.txt");
     expect(serialDiagnostics).not.toContain("browser-test-output.txt");
     expect(serialDiagnostics).not.toContain("browser-artifact-output.txt");
-    expect(serialJob).toContain("if: steps.serial-validation.outcome == 'success'");
+    expect(serialJob).toContain(
+      "steps.tree-equivalence.outputs.reuse_parallel != 'true' &&",
+    );
+    expect(serialJob).toContain("steps.serial-validation.outcome == 'success'");
   });
 });

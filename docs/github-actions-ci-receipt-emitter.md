@@ -29,7 +29,7 @@ For pull-request CI, candidate, base, and workflow-file revisions remain three i
 The compiler imports `ci-browser-evidence-profile/v1` rather than copying browser command vocabulary.
 
 - `full_parallel` binds the core six-command contract plus `browser-typecheck`, `browser-tests`, and `browser-artifacts`.
-- Pull-request runs retain all four active jobs, including exact-head `serial-full` validation.
+- Pull-request runs retain all four active jobs. The three parallel jobs independently validate the exact pull-request head; the repository-test job also attests its Git tree. `serial-full` checks the synthetic merge revision and reuses the green parallel results only when that exact-head tree equals the merge tree; otherwise it executes the complete suite against the merge revision.
 - Push runs retain `browser-evidence`, `test`, and `runtime-parity`, with `serial-full` skipped.
 - `serial_full` is admitted only for `workflow_dispatch`; browser commands run inside `serial-full` while the three parallel jobs remain skipped.
 

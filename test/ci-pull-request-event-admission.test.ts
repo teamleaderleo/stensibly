@@ -24,12 +24,14 @@ describe("pull-request event admission", () => {
     );
   });
 
-  test("runs full validation only for source-bearing or readiness events", () => {
+  test("runs full validation only for source changes or red-control recovery", () => {
     for (const job of [browserJob, testJob, runtimeJob, receiptJob]) {
       expect(job).toContain("github.event.action == 'opened'");
       expect(job).toContain("github.event.action == 'synchronize'");
       expect(job).toContain("github.event.action == 'reopened'");
-      expect(job).toContain("github.event.action == 'ready_for_review'");
+      expect(job).toContain(
+        "(github.event.action == 'ready_for_review' &&\n      contains(github.event.pull_request.labels.*.name, 'ci:red-control')) ||",
+      );
       expect(job).toContain("github.event.action == 'unlabeled' &&");
       expect(job).toContain("github.event.label.name == 'ci:red-control'");
       expect(job).not.toContain("github.event.action == 'edited'");

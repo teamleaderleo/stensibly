@@ -191,7 +191,8 @@ jobs:
       (github.event.action == 'opened' ||
       github.event.action == 'synchronize' ||
       github.event.action == 'reopened' ||
-      github.event.action == 'ready_for_review' ||
+      (github.event.action == 'ready_for_review' &&
+      contains(github.event.pull_request.labels.*.name, 'ci:red-control')) ||
       (github.event.action == 'unlabeled' &&
       github.event.label.name == 'ci:red-control')) &&
       !(github.event.pull_request.draft &&
@@ -200,8 +201,25 @@ jobs:
       github.event_name != 'workflow_call') ||
       inputs.validation_profile == 'full_parallel') }}
     runs-on: ubuntu-latest
+    env:
+      PARALLEL_VALIDATION_SHA: >-
+        ${{ github.event_name == 'pull_request' &&
+        github.event.pull_request.head.sha ||
+        (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+        inputs.expected_sha || github.sha }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.PARALLEL_VALIDATION_SHA }}
+          persist-credentials: false
+      - name: Verify the exact validation checkout
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          if [[ ! "${revision}" =~ ^[0-9a-f]{40}$ || "${revision}" != "${PARALLEL_VALIDATION_SHA}" ]]; then
+            echo "Browser validation checkout identity is invalid." >&2
+            exit 1
+          fi
       - name: Verify requested exact revision and profile
         if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
         env:
@@ -241,7 +259,7 @@ jobs:
         if: always() && steps.browser-test.outcome == 'success' && steps.browser-artifacts.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-browser-evidence-${{ github.sha }}
+          name: frontend-browser-evidence-${{ env.PARALLEL_VALIDATION_SHA }}
           path: |
             artifacts/playwright-report
             artifacts/playwright-results
@@ -257,7 +275,8 @@ jobs:
       (github.event.action == 'opened' ||
       github.event.action == 'synchronize' ||
       github.event.action == 'reopened' ||
-      github.event.action == 'ready_for_review' ||
+      (github.event.action == 'ready_for_review' &&
+      contains(github.event.pull_request.labels.*.name, 'ci:red-control')) ||
       (github.event.action == 'unlabeled' &&
       github.event.label.name == 'ci:red-control')) &&
       !(github.event.pull_request.draft &&
@@ -266,8 +285,32 @@ jobs:
       github.event_name != 'workflow_call') ||
       inputs.validation_profile == 'full_parallel') }}
     runs-on: ubuntu-latest
+    env:
+      PARALLEL_VALIDATION_SHA: >-
+        ${{ github.event_name == 'pull_request' &&
+        github.event.pull_request.head.sha ||
+        (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+        inputs.expected_sha || github.sha }}
+    outputs:
+      validation-revision: ${{ steps.validation-tree.outputs.revision }}
+      validation-tree: ${{ steps.validation-tree.outputs.tree }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.PARALLEL_VALIDATION_SHA }}
+          persist-credentials: false
+      - name: Record the exact validation checkout tree
+        id: validation-tree
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          if [[ ! "${revision}" =~ ^[0-9a-f]{40}$ || "${revision}" != "${PARALLEL_VALIDATION_SHA}" || ! "${tree}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Repository validation checkout identity is invalid." >&2
+            exit 1
+          fi
+          echo "revision=${revision}" >>"${GITHUB_OUTPUT}"
+          echo "tree=${tree}" >>"${GITHUB_OUTPUT}"
       - name: Verify requested exact revision and profile
         if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
         env:
@@ -291,14 +334,14 @@ jobs:
         if: steps.bun-lock.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: bun-lock-candidate-${{ github.sha }}
+          name: bun-lock-candidate-${{ env.PARALLEL_VALIDATION_SHA }}
           path: artifacts/bun-lock-candidate
           if-no-files-found: error
           retention-days: 7
       - name: Reject stale committed Bun lockfile
         if: steps.bun-lock.outputs.changed == 'true'
         run: |
-          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${{ github.sha }}, inspect it, and commit its bun.lock."
+          echo "package declarations regenerate bun.lock. Download artifact bun-lock-candidate-${PARALLEL_VALIDATION_SHA}, inspect it, and commit its bun.lock."
           echo "committed: ${{ steps.bun-lock.outputs.committed_sha256 }}"
           echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
           exit 1
@@ -339,7 +382,8 @@ jobs:
       (github.event.action == 'opened' ||
       github.event.action == 'synchronize' ||
       github.event.action == 'reopened' ||
-      github.event.action == 'ready_for_review' ||
+      (github.event.action == 'ready_for_review' &&
+      contains(github.event.pull_request.labels.*.name, 'ci:red-control')) ||
       (github.event.action == 'unlabeled' &&
       github.event.label.name == 'ci:red-control')) &&
       !(github.event.pull_request.draft &&
@@ -348,8 +392,25 @@ jobs:
       github.event_name != 'workflow_call') ||
       inputs.validation_profile == 'full_parallel') }}
     runs-on: ubuntu-latest
+    env:
+      PARALLEL_VALIDATION_SHA: >-
+        ${{ github.event_name == 'pull_request' &&
+        github.event.pull_request.head.sha ||
+        (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
+        inputs.expected_sha || github.sha }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.PARALLEL_VALIDATION_SHA }}
+          persist-credentials: false
+      - name: Verify the exact validation checkout
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          if [[ ! "${revision}" =~ ^[0-9a-f]{40}$ || "${revision}" != "${PARALLEL_VALIDATION_SHA}" ]]; then
+            echo "Runtime validation checkout identity is invalid." >&2
+            exit 1
+          fi
       - name: Verify requested exact revision and profile
         if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
         env:
@@ -398,7 +459,7 @@ jobs:
     env:
       SERIAL_VALIDATION_SHA: >-
         ${{ github.event_name == 'pull_request' &&
-        github.event.pull_request.head.sha ||
+        github.sha ||
         (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
         inputs.expected_sha || github.sha }}
     steps:
@@ -422,12 +483,42 @@ jobs:
             echo "Unsupported validation profile ${VALIDATION_PROFILE:-missing}." >&2
             exit 1
           fi
+      - name: Reuse byte-identical parallel validation
+        id: tree-equivalence
+        env:
+          EXPECTED_PARALLEL_SHA: ${{ github.event.pull_request.head.sha }}
+          REPOSITORY_REVISION: ${{ needs.test.outputs.validation-revision }}
+          REPOSITORY_TREE: ${{ needs.test.outputs.validation-tree }}
+        run: |
+          set -euo pipefail
+          reuse_parallel=false
+          source_tree="$(git rev-parse 'HEAD^{tree}')"
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" &&
+            "${EXPECTED_PARALLEL_SHA}" =~ ^[0-9a-f]{40}$ &&
+            "${REPOSITORY_REVISION}" == "${EXPECTED_PARALLEL_SHA}" &&
+            "${REPOSITORY_TREE}" =~ ^[0-9a-f]{40}$ &&
+            "${REPOSITORY_TREE}" == "${source_tree}" ]]; then
+            reuse_parallel=true
+          fi
+          echo "reuse_parallel=${reuse_parallel}" >>"${GITHUB_OUTPUT}"
+          echo "source_tree=${source_tree}" >>"${GITHUB_OUTPUT}"
+          {
+            echo "### Exact-head tree validation"
+            echo
+            echo "- exact head: \`${EXPECTED_PARALLEL_SHA:-not-applicable}\`"
+            echo "- merge revision: \`${SERIAL_VALIDATION_SHA}\`"
+            echo "- merge tree: \`${source_tree}\`"
+            echo "- reused byte-identical parallel validation: \`${reuse_parallel}\`"
+          } >>"${GITHUB_STEP_SUMMARY}"
       - uses: oven-sh/setup-bun@v2
+        if: steps.tree-equivalence.outputs.reuse_parallel != 'true'
       - uses: actions/setup-node@v6
+        if: steps.tree-equivalence.outputs.reuse_parallel != 'true'
         with:
           node-version: "26"
       - name: Prepare committed Bun lockfile candidate
         id: bun-lock
+        if: steps.tree-equivalence.outputs.reuse_parallel != 'true'
         run: bun run lockfile:check
       - name: Upload refreshed Bun lockfile candidate
         if: steps.bun-lock.outputs.changed == 'true'
@@ -445,11 +536,14 @@ jobs:
           echo "candidate: ${{ steps.bun-lock.outputs.candidate_sha256 }}"
           exit 1
       - name: Install committed dependencies once
+        if: steps.tree-equivalence.outputs.reuse_parallel != 'true'
         run: bun install --frozen-lockfile
       - name: Install Playwright Chromium
+        if: steps.tree-equivalence.outputs.reuse_parallel != 'true'
         run: bunx playwright install --with-deps --only-shell chromium
       - name: Run serial full validation
         id: serial-validation
+        if: steps.tree-equivalence.outputs.reuse_parallel != 'true'
         run: |
           set +e
           status=0
@@ -478,7 +572,9 @@ jobs:
           run_gate runtime-parity runtime-parity-output.txt bun run test:runtime-parity
           exit "${status}"
       - name: Upload verified frontend browser evidence
-        if: steps.serial-validation.outcome == 'success'
+        if: >-
+          steps.tree-equivalence.outputs.reuse_parallel != 'true' &&
+          steps.serial-validation.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: frontend-browser-evidence-${{ env.SERIAL_VALIDATION_SHA }}
@@ -513,7 +609,8 @@ jobs:
       (github.event.action == 'opened' ||
       github.event.action == 'synchronize' ||
       github.event.action == 'reopened' ||
-      github.event.action == 'ready_for_review' ||
+      (github.event.action == 'ready_for_review' &&
+      contains(github.event.pull_request.labels.*.name, 'ci:red-control')) ||
       (github.event.action == 'unlabeled' &&
       github.event.label.name == 'ci:red-control')) &&
       !(github.event.pull_request.draft &&
