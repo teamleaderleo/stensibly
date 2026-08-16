@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, symlink, unlink, writeFile } from "node:fs/promises
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { sha256 } from "../src/canonical-json.ts";
+import { compileDashboardDeploymentMarker } from "../scripts/dashboard-deployment-marker.ts";
 import {
   readExactCiReceiptDirectory,
   runDeploymentReconciliationObserver,
@@ -66,6 +67,15 @@ describe("deployment reconciliation observer adapter", () => {
           revision: baselineSha,
           updatedAt: "2026-08-16T10:00:00Z",
         },
+        baselineAuthority: "public_deployment_marker",
+        providerCurrentVerified: true,
+        providerCurrent: {
+          kind: "dashboard-public-marker",
+          sourceRevision: baselineSha,
+          workflowRunId: "700",
+          workflowRunAttempt: 2,
+          markerFingerprint: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+        },
         classifier: {
           kind: "site-tree-oid",
           contractVersion: 1,
@@ -81,7 +91,10 @@ describe("deployment reconciliation observer adapter", () => {
     expect(calls).toContain(`/repos/${repository}/actions/runs/123`);
     expect(calls).toContain(`/repos/${repository}/actions/workflows/ci.yml`);
     expect(calls).toContain(`/repos/${repository}/actions/runs/123/artifacts?name=exact-ref-validation-receipt-123-1&per_page=2`);
+    expect(calls).toContain(`/repos/${repository}/actions/runs/700`);
+    expect(calls).toContain(`/repos/${repository}/actions/workflows/publish-dashboard-on-main.yml`);
     expect(calls).toContain(`/repos/${repository}/compare/${baselineSha}...${currentSha}?per_page=1`);
+    expect(calls.some((call) => call.includes("/.well-known/stensibly-deployment.json"))).toBe(true);
     expect(calls.some((call) => call.includes("deploy-worker.yml/runs"))).toBe(false);
     expect(calls.some((call) => call.includes("deploy-convex.yml/runs"))).toBe(false);
   });
@@ -175,51 +188,64 @@ describe("deployment reconciliation observer adapter", () => {
     )).rejects.toThrow("Artifact list envelope is invalid");
   });
 
-  test("selects a late successful rerun by its terminal update time", async () => {
+  test("uses the exact successful publication named by the public marker", async () => {
     const fixture = await localFixture();
     const result = await runDeploymentReconciliationObserver(
       fixture.environment,
-      githubStub([], {
-        dashboardRuns: [
-          successfulRun("701", 1, otherSha, "2026-08-16T11:00:00Z", "2026-08-16T11:00:00Z"),
-          successfulRun("700", 2, baselineSha, "2026-08-16T09:00:00Z", "2026-08-16T12:00:00Z"),
-        ],
-      }),
+      githubStub([]),
     );
     expect(result.targets[2]?.latestSuccessfulWorkflow).toEqual({
       runId: "700",
       runAttempt: 2,
       revision: baselineSha,
-      updatedAt: "2026-08-16T12:00:00Z",
+      updatedAt: "2026-08-16T10:00:00Z",
     });
+    expect(result.targets[2]?.providerCurrentVerified).toBe(true);
     expect(result.targets[2]?.decision).toBe("would_dispatch");
   });
 
-  test("fails closed when newest successful workflow identities tie", async () => {
+  test("fails closed when the marker does not bind a successful protected run", async () => {
     const fixture = await localFixture();
-    await expect(runDeploymentReconciliationObserver(
+    const result = await runDeploymentReconciliationObserver(
       fixture.environment,
-      githubStub([], {
-        dashboardRuns: [
-          successfulRun("700", 1, baselineSha, "2026-08-16T09:00:00Z", "2026-08-16T12:00:00Z"),
-          successfulRun("701", 1, otherSha, "2026-08-16T10:00:00Z", "2026-08-16T12:00:00Z"),
-        ],
-      }),
-    )).rejects.toThrow("ambiguous newest terminal update");
+      githubStub([], { dashboardRunConclusion: "failure" }),
+    );
+    expect(result.targets[2]).toEqual(expect.objectContaining({
+      decision: "classification_unknown",
+      reason: "provider_current_observation_failed",
+      providerCurrentVerified: false,
+      providerCurrent: null,
+    }));
   });
 
-  test("rejects an incomplete successful-workflow history page", async () => {
+  test("fails closed on malformed or oversized public marker evidence", async () => {
     const fixture = await localFixture();
-    await expect(runDeploymentReconciliationObserver(
+    const malformed = await runDeploymentReconciliationObserver(
       fixture.environment,
-      githubStub([], { dashboardTotalCount: 101 }),
-    )).rejects.toThrow("successful run total count");
+      githubStub([], { dashboardMarkerFingerprint: `sha256:${"0".repeat(64)}` }),
+    );
+    expect(malformed.targets[2]?.reason).toBe("provider_current_observation_failed");
 
-    const mismatched = await localFixture();
-    await expect(runDeploymentReconciliationObserver(
-      mismatched.environment,
-      githubStub([], { dashboardTotalCount: 2 }),
-    )).rejects.toThrow("successful runs envelope is invalid");
+    const oversizedFixture = await localFixture();
+    const oversized = await runDeploymentReconciliationObserver(
+      oversizedFixture.environment,
+      githubStub([], { oversizedDashboardMarker: true }),
+    );
+    expect(oversized.targets[2]?.reason).toBe("provider_current_observation_failed");
+  });
+
+  test("fails closed when provider current moves during observation", async () => {
+    const fixture = await localFixture();
+    const result = await runDeploymentReconciliationObserver(
+      fixture.environment,
+      githubStub([], { dashboardMarkerRevisions: [baselineSha, otherSha] }),
+    );
+    expect(result.targets[2]).toEqual(expect.objectContaining({
+      decision: "classification_unknown",
+      reason: "provider_current_observation_failed",
+      providerCurrentVerified: false,
+      providerCurrent: null,
+    }));
   });
 
   test("reuses one dashboard tree read when the successful baseline is current", async () => {
@@ -228,9 +254,7 @@ describe("deployment reconciliation observer adapter", () => {
     const result = await runDeploymentReconciliationObserver(
       fixture.environment,
       githubStub(calls, {
-        dashboardRuns: [
-          successfulRun("702", 1, currentSha, "2026-08-16T10:00:00Z", "2026-08-16T10:01:00Z"),
-        ],
+        dashboardMarkerRevision: currentSha,
       }),
     );
     expect(result.targets[2]?.decision).toBe("not_relevant");
@@ -357,11 +381,38 @@ function githubStub(
   override: GitHubStubOverride = {},
 ): typeof fetch {
   let mainRead = 0;
+  let markerRead = 0;
   return (async (input: RequestInfo | URL) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    calls.push(`${url.pathname}${url.search}`);
+    const call = `${url.pathname}${url.search}`;
+    calls.push(call);
+    if (url.hostname === "www.stensibly.com") {
+      const markerRevisions = override.dashboardMarkerRevisions
+        ?? [override.dashboardMarkerRevision ?? baselineSha];
+      const markerRevision = markerRevisions[
+        Math.min(markerRead, markerRevisions.length - 1)
+      ] ?? baselineSha;
+      markerRead += 1;
+      const marker = compileDashboardDeploymentMarker({
+        repository,
+        sourceRevision: markerRevision,
+        workflowRevision: markerRevision,
+        runId: "700",
+        runAttempt: "2",
+      });
+      const body = override.oversizedDashboardMarker
+        ? "x".repeat(2_049)
+        : JSON.stringify({
+          ...marker,
+          fingerprint: override.dashboardMarkerFingerprint ?? marker.fingerprint,
+        });
+      return new Response(body, {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     const prefix = `/repos/${repository}`;
-    const path = `${url.pathname}${url.search}`.slice(prefix.length);
+    const path = call.slice(prefix.length);
     if (override.oversizedRun && path === "/actions/runs/123") {
       return new Response("{}", {
         status: 200,
@@ -407,6 +458,25 @@ function responseFixture(
     name: "CI",
     path: ".github/workflows/ci.yml",
   };
+  if (path === "/actions/runs/700") return {
+    id: 700,
+    run_attempt: 2,
+    workflow_id: 1447,
+    path: ".github/workflows/publish-dashboard-on-main.yml",
+    event: "workflow_dispatch",
+    head_branch: "main",
+    head_sha: override.dashboardMarkerRevision ?? baselineSha,
+    status: "completed",
+    conclusion: override.dashboardRunConclusion ?? "success",
+    updated_at: "2026-08-16T10:00:00Z",
+    repository: { id: repositoryId, full_name: repository },
+    head_repository: { id: repositoryId, full_name: repository },
+  };
+  if (path === "/actions/workflows/publish-dashboard-on-main.yml") return {
+    id: 1447,
+    name: "Publish Dashboard Production",
+    path: ".github/workflows/publish-dashboard-on-main.yml",
+  };
   if (path === "/actions/runs/123/artifacts?name=exact-ref-validation-receipt-123-1&per_page=2") {
     const artifact = {
       id: 789,
@@ -426,12 +496,6 @@ function responseFixture(
       total_count: override.artifactTotalCount ?? 1,
       artifacts: Array.from({ length: override.artifactArrayLength ?? 1 }, () => artifact),
     };
-  }
-  if (path.startsWith("/actions/workflows/publish-dashboard-on-main.yml/runs?")) {
-    const runs = override.dashboardRuns ?? [
-      successfulRun("700", 2, baselineSha, "2026-08-16T09:00:00Z", "2026-08-16T10:00:00Z"),
-    ];
-    return { total_count: override.dashboardTotalCount ?? runs.length, workflow_runs: runs };
   }
   if (path === `/compare/${baselineSha}...${currentSha}?per_page=1`) return {
     status: "ahead",
@@ -456,38 +520,11 @@ interface GitHubStubOverride {
   readonly artifactTotalCount?: number;
   readonly artifactArrayLength?: number;
   readonly oversizedRun?: boolean;
-  readonly dashboardRuns?: readonly SuccessfulRunFixture[];
-  readonly dashboardTotalCount?: number;
+  readonly dashboardMarkerRevision?: string;
+  readonly dashboardMarkerRevisions?: readonly string[];
+  readonly dashboardMarkerFingerprint?: string;
+  readonly oversizedDashboardMarker?: boolean;
+  readonly dashboardRunConclusion?: "success" | "failure";
   readonly mainRevisions?: readonly string[];
   readonly comparePatchLength?: number;
-}
-
-interface SuccessfulRunFixture {
-  readonly id: number;
-  readonly run_attempt: number;
-  readonly status: "completed";
-  readonly conclusion: "success";
-  readonly head_branch: "main";
-  readonly head_sha: string;
-  readonly created_at: string;
-  readonly updated_at: string;
-}
-
-function successfulRun(
-  runId: string,
-  runAttempt: number,
-  revision: string,
-  createdAt: string,
-  updatedAt: string,
-): SuccessfulRunFixture {
-  return {
-    id: Number(runId),
-    run_attempt: runAttempt,
-    status: "completed",
-    conclusion: "success",
-    head_branch: "main",
-    head_sha: revision,
-    created_at: createdAt,
-    updated_at: updatedAt,
-  };
 }

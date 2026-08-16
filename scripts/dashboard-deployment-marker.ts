@@ -62,6 +62,17 @@ export function admitDashboardDeploymentMarker(
   value: unknown,
   expected: DashboardDeploymentMarkerInput,
 ): DashboardDeploymentMarker {
+  const admitted = parseDashboardDeploymentMarker(value);
+  const exactExpected = compileDashboardDeploymentMarker(expected);
+  if (stableJson(admitted) !== stableJson(exactExpected)) {
+    throw new Error("Dashboard deployment marker does not match the exact publication");
+  }
+  return admitted;
+}
+
+export function parseDashboardDeploymentMarker(
+  value: unknown,
+): DashboardDeploymentMarker {
   const marker = exactRecord(value, "Dashboard deployment marker", [
     "schemaVersion",
     "repository",
@@ -82,14 +93,12 @@ export function admitDashboardDeploymentMarker(
     runId: requireString(run.id, "Dashboard marker run ID"),
     runAttempt: requireString(run.attempt, "Dashboard marker run attempt"),
   });
-  const exactExpected = compileDashboardDeploymentMarker(expected);
   if (
     admitted.schemaVersion !== marker.schemaVersion
     || marker.authorizesDeployment !== false
     || admitted.fingerprint !== marker.fingerprint
-    || stableJson(admitted) !== stableJson(exactExpected)
   ) {
-    throw new Error("Dashboard deployment marker does not match the exact publication");
+    throw new Error("Dashboard deployment marker is not self-consistent");
   }
   return admitted;
 }

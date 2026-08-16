@@ -1,7 +1,7 @@
 import { sha256, stableJson } from "./canonical-json.js";
 
 export const DEPLOYMENT_RECONCILIATION_SCHEMA_VERSION =
-  "stensibly-deployment-reconciliation-decision/1" as const;
+  "stensibly-deployment-reconciliation-decision/2" as const;
 
 export type DeploymentTarget = "worker" | "convex" | "dashboard";
 export type DeploymentReconciliationDecision =
@@ -43,6 +43,14 @@ export interface SuccessfulDeploymentWorkflowObservation {
   readonly updatedAt: string;
 }
 
+export interface ProviderCurrentDeploymentObservation {
+  readonly kind: "dashboard-public-marker";
+  readonly sourceRevision: string;
+  readonly workflowRunId: string;
+  readonly workflowRunAttempt: number;
+  readonly markerFingerprint: string;
+}
+
 export interface TargetDeploymentObservation {
   readonly target: DeploymentTarget;
   readonly workflowPath:
@@ -50,6 +58,7 @@ export interface TargetDeploymentObservation {
     | ".github/workflows/deploy-convex.yml"
     | ".github/workflows/publish-dashboard-on-main.yml";
   readonly latestSuccessfulWorkflow: SuccessfulDeploymentWorkflowObservation | null;
+  readonly providerCurrent: ProviderCurrentDeploymentObservation | null;
   readonly history: "ahead" | "identical" | "behind" | "diverged" | "unknown";
   readonly classifier:
     | Readonly<{
@@ -61,7 +70,10 @@ export interface TargetDeploymentObservation {
     | Readonly<{
       kind: "unavailable";
       contractVersion: 1;
-      reason: "dependency_classifier_not_implemented" | "site_tree_observation_failed";
+      reason:
+        | "dependency_classifier_not_implemented"
+        | "site_tree_observation_failed"
+        | "provider_current_observation_failed";
     }>;
 }
 
@@ -134,8 +146,9 @@ export interface DeploymentReconciliationReceipt {
     target: DeploymentTarget;
     decision: DeploymentReconciliationDecision;
     latestSuccessfulWorkflow: SuccessfulDeploymentWorkflowObservation | null;
-    baselineAuthority: "workflow_only";
-    providerCurrentVerified: false;
+    baselineAuthority: "workflow_only" | "public_deployment_marker";
+    providerCurrentVerified: boolean;
+    providerCurrent: ProviderCurrentDeploymentObservation | null;
     classifier: TargetDeploymentObservation["classifier"];
     history: TargetDeploymentObservation["history"];
     reason:
@@ -143,6 +156,7 @@ export interface DeploymentReconciliationReceipt {
       | "no_successful_workflow_baseline"
       | "dependency_classifier_not_implemented"
       | "site_tree_observation_failed"
+      | "provider_current_observation_failed"
       | "baseline_not_ancestor"
       | "site_tree_unchanged"
       | "site_tree_changed";
@@ -405,6 +419,31 @@ function admitTargets(
       requireSha(target.latestSuccessfulWorkflow.revision, `${target.target} workflow baseline revision`);
       requireTimestamp(target.latestSuccessfulWorkflow.updatedAt, `${target.target} workflow baseline update time`);
     }
+    if (target.providerCurrent !== null) {
+      if (target.target !== "dashboard" || target.latestSuccessfulWorkflow === null) {
+        throw new Error("Only a dashboard workflow baseline may bind provider current");
+      }
+      if (target.providerCurrent.kind !== "dashboard-public-marker") {
+        throw new Error("Dashboard provider-current evidence kind is unsupported");
+      }
+      requireSha(target.providerCurrent.sourceRevision, "Dashboard provider-current source revision");
+      requireNumericId(target.providerCurrent.workflowRunId, "Dashboard provider-current run ID");
+      if (
+        !Number.isInteger(target.providerCurrent.workflowRunAttempt)
+        || target.providerCurrent.workflowRunAttempt < 1
+        || target.providerCurrent.workflowRunAttempt > 1_000_000
+      ) {
+        throw new Error("Dashboard provider-current run attempt is invalid");
+      }
+      requireDigest(target.providerCurrent.markerFingerprint, "Dashboard marker fingerprint");
+      if (
+        target.providerCurrent.sourceRevision !== target.latestSuccessfulWorkflow.revision
+        || target.providerCurrent.workflowRunId !== target.latestSuccessfulWorkflow.runId
+        || target.providerCurrent.workflowRunAttempt !== target.latestSuccessfulWorkflow.runAttempt
+      ) {
+        throw new Error("Dashboard provider current does not bind its workflow baseline");
+      }
+    }
     if (!["ahead", "identical", "behind", "diverged", "unknown"].includes(target.history)) {
       throw new Error(`Deployment history for ${target.target} is unsupported`);
     }
@@ -422,9 +461,17 @@ function admitTargets(
       || ![
         "dependency_classifier_not_implemented",
         "site_tree_observation_failed",
+        "provider_current_observation_failed",
       ].includes(target.classifier.reason)
     ) {
       throw new Error(`Deployment classifier for ${target.target} is invalid`);
+    }
+    if (
+      target.providerCurrent !== null
+      && target.classifier.kind === "unavailable"
+      && target.classifier.reason === "provider_current_observation_failed"
+    ) {
+      throw new Error("Dashboard provider-current evidence and classifier are incoherent");
     }
   }
   return Object.freeze([...targets]);
@@ -438,8 +485,17 @@ function compileTarget(
   const common = Object.freeze({
     target: input.target,
     latestSuccessfulWorkflow: input.latestSuccessfulWorkflow,
-    baselineAuthority: "workflow_only" as const,
-    providerCurrentVerified: false as const,
+    ...(input.providerCurrent === null
+      ? Object.freeze({
+        baselineAuthority: "workflow_only" as const,
+        providerCurrentVerified: false as const,
+        providerCurrent: null,
+      })
+      : Object.freeze({
+        baselineAuthority: "public_deployment_marker" as const,
+        providerCurrentVerified: true as const,
+        providerCurrent: input.providerCurrent,
+      })),
     classifier: input.classifier,
     history: input.history,
     authorizesDeployment: false as const,
