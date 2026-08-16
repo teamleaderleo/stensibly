@@ -4,6 +4,7 @@ import { gmailMailboxDispositionTables } from "./gmailMailboxDispositionSchema";
 import { mailboxIntakeTables } from "./mailboxIntakeSchema";
 import { mailOutboundTables } from "./mailOutboundSchema";
 import { mailSemanticAdmissionTables } from "./mailSemanticAdmissionSchema";
+import { orchestratorActivityTables } from "./orchestratorActivitySchema";
 import { outlookRuntimeTables } from "./outlookRuntimeSchema";
 
 export const runnerAdapterCommandRecoveryTables = {
@@ -12,6 +13,7 @@ export const runnerAdapterCommandRecoveryTables = {
   ...mailOutboundTables,
   ...gmailMailboxDispositionTables,
   ...outlookRuntimeTables,
+  ...orchestratorActivityTables,
   runnerAdapterCommandRecoveries: defineTable({
     workspaceId: v.id("workspaces"),
     commandId: v.id("runnerAdapterCommands"),
