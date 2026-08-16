@@ -9,7 +9,7 @@ CI performs two separate steps:
 
 1. `bun install --lockfile-only` generates a candidate lockfile through
    `bun run lockfile:check`;
-2. when the candidate matches the committed file, both validation jobs install with
+2. when the candidate matches the committed file, every executing validation job installs with
    `bun install --frozen-lockfile`.
 
 The candidate generator always restores the committed `bun.lock` before returning.
@@ -20,7 +20,7 @@ Tests and builds therefore use only the reviewed repository file.
 1. Change `package.json` on a same-repository pull-request branch.
 2. Push the branch and allow CI to run.
 3. The `test` job generates the exact replacement lockfile.
-4. CI uploads `bun-lock-candidate-<workflow-sha>` and fails before tests because the
+4. CI uploads `bun-lock-candidate-<validated-revision>` and fails before tests because the
    committed lock is stale.
 5. The permanent `Apply Bun lock candidate` workflow receives the completed CI run.
 6. The writer verifies one open same-repository pull request at the exact triggering
@@ -32,7 +32,7 @@ Tests and builds therefore use only the reviewed repository file.
    triggering head SHA.
 8. The writer verifies the remote branch equals the generated commit and explicitly
    dispatches canonical CI with that commit SHA as a required input.
-9. Both CI jobs compare the dispatched `GITHUB_SHA` with the required SHA before
+9. Every dispatched CI job compares its exact checkout with the required SHA before
    installation or tests. Candidate generation should then report no drift, and every
    validation job should use `--frozen-lockfile`.
 10. Inspect the final package and lock diff, exact CI run, bundle result, and runtime

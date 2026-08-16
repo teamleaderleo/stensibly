@@ -17,7 +17,12 @@ describe("canonical CI dependency lock", () => {
     expect(workflow).toContain("bun run lockfile:check");
     expect(workflow).toContain("steps.bun-lock.outputs.changed == 'true'");
     expect(workflow).toContain("actions/upload-artifact@v4");
-    expect(workflow).toContain("bun-lock-candidate-${{ github.sha }}");
+    expect(workflow).toContain(
+      "bun-lock-candidate-${{ env.PARALLEL_VALIDATION_SHA }}",
+    );
+    expect(workflow).toContain(
+      "bun-lock-candidate-${{ env.SERIAL_VALIDATION_SHA }}",
+    );
     expect(workflow).toContain("artifacts/bun-lock-candidate");
     expect(workflow).not.toContain(".artifacts/bun-lock-candidate");
     expect(workflow).toContain("retention-days: 7");
