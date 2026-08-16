@@ -9,6 +9,7 @@ on:
       - "wrangler.jsonc"
       - "config/worker-production-bindings.json"
       - "scripts/worker-production-release.ts"
+      - "scripts/worker-production-receipt.ts"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/deploy-worker.yml"
@@ -158,6 +159,23 @@ jobs:
           fi
           bun run worker:deploy -- "${args[@]}"
 
+      - name: Record provider-current Worker receipt
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          EXPECTED_BASELINE_DEPLOYMENT_ID: ${{ steps.release.outputs.baseline_deployment_id }}
+          EXPECTED_CANDIDATE_VERSION_ID: ${{ steps.release.outputs.candidate_version_id }}
+          WORKER_PRODUCTION_RECEIPT_OUTPUT: ${{ runner.temp }}/worker-production-deployment-receipt.json
+        run: bun scripts/worker-production-receipt.ts
+
+      - name: Upload provider-current Worker receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-production-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/worker-production-deployment-receipt.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Record deployment summary
         if: ${{ success() }}
         env:
@@ -182,7 +200,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record failed release and recovery state
-        if: ${{ failure() && steps.release.outputs.candidate_version_id != '' }}
+        if: ${{ failure() && steps.release.outcome == 'failure' && steps.release.outputs.candidate_version_id != '' }}
         env:
           DEPLOY_SHA: ${{ github.sha }}
           BASELINE_DEPLOYMENT_ID: ${{ steps.release.outputs.baseline_deployment_id }}

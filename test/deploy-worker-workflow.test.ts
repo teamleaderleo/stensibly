@@ -12,6 +12,7 @@ describe("production Worker deployment workflow", () => {
     expect(workflow).toContain('"wrangler.jsonc"');
     expect(workflow).toContain('"config/worker-production-bindings.json"');
     expect(workflow).toContain('"scripts/worker-production-release.ts"');
+    expect(workflow).toContain('"scripts/worker-production-receipt.ts"');
     expect(workflow).not.toContain('"wrangler.toml"');
     expect(workflow).toContain('"package.json"');
     expect(workflow).toContain('"bun.lock"');
@@ -104,6 +105,22 @@ describe("production Worker deployment workflow", () => {
       "active deployment is unknown; manually reconcile Cloudflare before retrying",
     );
     expect(workflow).not.toContain("candidate did not remain at 100% traffic");
+  });
+
+  test("publishes a protected provider-current receipt without exposing credentials", () => {
+    const release = workflow.indexOf("Release exact production Worker candidate");
+    const receipt = workflow.indexOf("Record provider-current Worker receipt");
+    const upload = workflow.indexOf("Upload provider-current Worker receipt");
+    expect(receipt).toBeGreaterThan(release);
+    expect(upload).toBeGreaterThan(receipt);
+    expect(workflow).toContain("bun scripts/worker-production-receipt.ts");
+    expect(workflow).toContain("${{ runner.temp }}/worker-production-deployment-receipt.json");
+    expect(workflow).toContain("worker-production-receipt-${{ github.run_id }}-${{ github.run_attempt }}");
+    expect(workflow).toContain("retention-days: 90");
+    expect(workflow).toContain("steps.release.outcome == 'failure'");
+    expect(workflow.slice(receipt, upload)).toContain("secrets.CLOUDFLARE_API_TOKEN");
+    expect(workflow.slice(upload, workflow.indexOf("Record deployment summary")))
+      .not.toContain("secrets.CLOUDFLARE_API_TOKEN");
   });
 
   test("budgets enough time for typed routing convergence on both hosted origins", () => {

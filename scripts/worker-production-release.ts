@@ -69,6 +69,12 @@ export interface DeploymentSnapshot {
   id: string;
   created_on: string;
   versions: DeploymentVersion[];
+  source: string | null;
+  strategy: string | null;
+  annotations: {
+    message: string | null;
+    triggeredBy: string | null;
+  };
 }
 
 export interface CommandResult {
@@ -588,7 +594,39 @@ function parseDeploymentSnapshot(value: unknown): DeploymentSnapshot {
     return { version_id: entry.version_id, percentage: entry.percentage };
   });
   deploymentSpecs(versions);
-  return { id: value.id, created_on: value.created_on, versions };
+  const annotations = value.annotations === undefined
+    ? {}
+    : isRecord(value.annotations)
+      ? value.annotations
+      : null;
+  if (annotations === null) {
+    throw new Error(`Deployment ${value.id} has invalid annotations`);
+  }
+  const message = annotations["workers/message"];
+  const triggeredBy = annotations["workers/triggered_by"];
+  if (message !== undefined && typeof message !== "string") {
+    throw new Error(`Deployment ${value.id} has an invalid message annotation`);
+  }
+  if (triggeredBy !== undefined && typeof triggeredBy !== "string") {
+    throw new Error(`Deployment ${value.id} has an invalid trigger annotation`);
+  }
+  if (value.source !== undefined && typeof value.source !== "string") {
+    throw new Error(`Deployment ${value.id} has an invalid source`);
+  }
+  if (value.strategy !== undefined && typeof value.strategy !== "string") {
+    throw new Error(`Deployment ${value.id} has an invalid strategy`);
+  }
+  return {
+    id: value.id,
+    created_on: value.created_on,
+    versions,
+    source: value.source ?? null,
+    strategy: value.strategy ?? null,
+    annotations: {
+      message: message ?? null,
+      triggeredBy: triggeredBy ?? null,
+    },
+  };
 }
 
 function parseJsonLines(input: string): Array<Record<string, unknown>> {
