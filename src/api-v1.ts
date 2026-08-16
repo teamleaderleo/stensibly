@@ -6,6 +6,7 @@ import {
 } from "./completion-continuation-contracts.js";
 import { registerContinuationApi } from "./continuation-api.js";
 import { ConvexWorkLedger } from "./convex-ledger.js";
+import { ConvexProjectActivityOrchestratorSource } from "./convex-project-activity-source.js";
 import { ConvexProjectCorrespondenceSource } from "./convex-project-correspondence-source.js";
 import {
   filterItemsForPrincipal,
@@ -20,6 +21,7 @@ import {
 } from "./http-auth.js";
 import type { WorkLedger } from "./ledger.js";
 import { registerProjectAttachmentApi } from "./project-attachment-api.js";
+import { createProjectActivityApi } from "./project-activity-routes.js";
 import { createProjectCorrespondenceApi } from "./project-correspondence-routes.js";
 import {
   blockItemSchema,
@@ -75,6 +77,23 @@ export function createApiV1(
         authenticator,
         options,
         new ConvexProjectCorrespondenceSource({
+          client: ledger.client,
+          serviceSecret: ledger.serviceSecret,
+          workspace: ledger.workspace,
+        }),
+      ),
+    );
+    app.route(
+      "/",
+      createProjectActivityApi(
+        authenticator,
+        options,
+        new ConvexProjectCorrespondenceSource({
+          client: ledger.client,
+          serviceSecret: ledger.serviceSecret,
+          workspace: ledger.workspace,
+        }),
+        new ConvexProjectActivityOrchestratorSource({
           client: ledger.client,
           serviceSecret: ledger.serviceSecret,
           workspace: ledger.workspace,
