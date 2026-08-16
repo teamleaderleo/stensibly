@@ -1,5 +1,10 @@
 import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
+import { sha256, stableJson } from "../src/canonical-json";
+import { containsRealisticRetainedCredential } from "../src/github-retained-credential-policy";
+import {
+  compileOrchestratorActivityIngestionCandidate,
+} from "../src/orchestrator-activity-ingestion-candidate";
 import { expireClaimIfNeeded } from "./lib/claimState";
 import {
   appendEvent,
@@ -7,16 +12,21 @@ import {
   findWorkspace,
   getItemByExternalId,
   normalizeWorkspace,
+  projectSlugForItem,
   publicItem,
   requireMatchingIdempotency,
   requireSameIdempotentItem,
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
+import {
+  persistOrchestratorActivityCandidate,
+} from "./lib/orchestratorActivityStore";
 import { internalMutation, mutation } from "./lib/server";
 import { actorValidator, serviceArgs } from "./lib/validators";
 
 const expireScheduledRef = makeFunctionReference<"mutation">("claims:expireScheduled");
+const activityIdentifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,239}$/u;
 
 export const acquire = mutation({
   args: {
@@ -29,7 +39,8 @@ export const acquire = mutation({
   returns: v.any(),
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
-    const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
+    const workspaceSlug = normalizeWorkspace(args.workspace);
+    const workspace = await findWorkspace(ctx, workspaceSlug);
     if (!workspace) throw new Error(`Item ${args.id} does not exist`);
     const existing = await requireMatchingIdempotency(
       ctx,
@@ -76,7 +87,7 @@ export const acquire = mutation({
       version: item.version + 1,
       updatedAt: now,
     });
-    await appendEvent(ctx, {
+    const claimEvent = await appendEvent(ctx, {
       workspaceId: item.workspaceId,
       projectId: item.projectId,
       itemId: item._id,
@@ -87,6 +98,33 @@ export const acquire = mutation({
       idempotencyKey: args.idempotencyKey,
       createdAt: now,
     });
+    const projectSlug = await projectSlugForItem(ctx, item);
+    const sourceFingerprint = sha256(stableJson(claimEvent));
+    const activityCandidate = compileOrchestratorActivityIngestionCandidate({
+      deliveryId: `ledger:${claimEvent.id}`,
+      deliveryFingerprint: sourceFingerprint,
+      acceptedAt: claimEvent.createdAt,
+      observation: {
+        workspace: workspaceSlug,
+        project: projectSlug,
+        actorId: activityActorId(workspaceSlug, actor.externalId),
+        sourceClass: "responsibility",
+        sourceId: claimEvent.id,
+        sourceFingerprint,
+        observedAt: claimEvent.createdAt,
+        activityClass: "work_started",
+        activityState: "in_progress",
+        workItemId: item.externalId,
+        responsibilityGeneration: generation,
+        relatedEvidenceIds: [claimEvent.id],
+      },
+    });
+    await persistOrchestratorActivityCandidate(ctx, {
+      workspaceId: item.workspaceId,
+      projectId: item.projectId,
+      workspace: workspaceSlug,
+      project: projectSlug,
+    }, activityCandidate);
     await ctx.scheduler.runAt(expiresAt, expireScheduledRef, {
       itemId: item._id,
       generation,
@@ -300,6 +338,17 @@ export const expireScheduled = internalMutation({
     return null;
   },
 });
+
+function activityActorId(workspace: string, externalId: string): string {
+  if (
+    activityIdentifierPattern.test(externalId)
+    && !containsRealisticRetainedCredential(externalId)
+  ) {
+    return externalId;
+  }
+  const digest = sha256(stableJson({ workspace, actorExternalId: externalId }));
+  return `actor:${digest.slice("sha256:".length, "sha256:".length + 32)}`;
+}
 
 function claimGeneration(value: number): number {
   if (!Number.isInteger(value) || value < 1) {
