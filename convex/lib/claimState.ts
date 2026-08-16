@@ -1,3 +1,4 @@
+import { persistClaimActivity } from "./claimActivity";
 import { appendEvent, type MutationContext } from "./domain";
 
 export async function expireClaimIfNeeded(
@@ -16,23 +17,32 @@ export async function expireClaimIfNeeded(
 
   const previousClaimant = item.claimedByExternalId;
   const expiredAt = item.claimExpiresAt;
+  const expiredGeneration = item.claimGeneration;
   const patch = {
     status: "ready" as const,
     claimedByActorId: undefined,
     claimedByExternalId: undefined,
     claimExpiresAt: undefined,
-    claimGeneration: item.claimGeneration + 1,
+    claimGeneration: expiredGeneration + 1,
     version: item.version + 1,
     updatedAt: now,
   };
   await ctx.db.patch(item._id, patch);
-  await appendEvent(ctx, {
+  const claimEvent = await appendEvent(ctx, {
     workspaceId: item.workspaceId,
     projectId: item.projectId,
     itemId: item._id,
     type: "claim.expired",
     payload: { previousClaimant, expiredAt: new Date(expiredAt).toISOString() },
     createdAt: now,
+  });
+  await persistClaimActivity(ctx, {
+    item,
+    claimEvent,
+    actorExternalId: previousClaimant ?? "system:claim-expiry",
+    activityClass: "progress_evidence",
+    activityState: "stale",
+    responsibilityGeneration: expiredGeneration,
   });
   return { ...item, ...patch };
 }
