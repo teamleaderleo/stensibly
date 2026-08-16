@@ -171,6 +171,41 @@ describe("dashboard release-window GitHub coordinator", () => {
     }));
   });
 
+  test("fences an admitted revision before publisher-run reads or dispatch", async () => {
+    const calls: ApiCall[] = [];
+    await expect(runDashboardReleaseWindow(
+      {
+        ...baseEnvironment,
+        EXPECTED_DASHBOARD_RELEASE_REVISION: baselineSha,
+      },
+      createGithubStub(calls, {
+        currentSha,
+        runs: [workflowRun({ headSha: baselineSha, conclusion: "success" })],
+        comparison: { status: "ahead", files: ["site/app.js"] },
+      }),
+    )).resolves.toEqual({ action: "skip", reason: "current_main_advanced" });
+    expect(calls.map((call) => call.method)).toEqual(["GET"]);
+  });
+
+  test("dispatches only the exact admitted current revision", async () => {
+    const calls: ApiCall[] = [];
+    await expect(runDashboardReleaseWindow(
+      {
+        ...baseEnvironment,
+        EXPECTED_DASHBOARD_RELEASE_REVISION: currentSha,
+      },
+      createGithubStub(calls, {
+        currentSha,
+        runs: [workflowRun({ headSha: baselineSha, conclusion: "success" })],
+        comparison: { status: "ahead", files: ["site/app.js"] },
+      }),
+    )).resolves.toEqual({ action: "dispatch", reason: "relevant_changes" });
+    expect(calls.at(-1)?.body).toBe(JSON.stringify({
+      ref: "main",
+      inputs: { expected_revision: currentSha },
+    }));
+  });
+
   test("exits when the successful publication already covers main", async () => {
     const calls: ApiCall[] = [];
     await expect(runDashboardReleaseWindow(baseEnvironment, createGithubStub(calls, {
@@ -212,7 +247,7 @@ describe("dashboard release-window GitHub coordinator", () => {
     expect(forcedCalls.at(-1)?.body).toContain(currentSha);
   });
 
-  test("fails closed before API use for an invalid ref or force value", async () => {
+  test("fails closed before API use for an invalid ref, force value, or expected revision", async () => {
     let calls = 0;
     const request = (async () => {
       calls += 1;
@@ -226,6 +261,10 @@ describe("dashboard release-window GitHub coordinator", () => {
       { ...baseEnvironment, FORCE_DASHBOARD_RELEASE: "yes" },
       request,
     )).rejects.toThrow("must be true or false");
+    await expect(runDashboardReleaseWindow(
+      { ...baseEnvironment, EXPECTED_DASHBOARD_RELEASE_REVISION: "main" },
+      request,
+    )).rejects.toThrow("Expected dashboard release revision");
     expect(calls).toBe(0);
   });
 });
