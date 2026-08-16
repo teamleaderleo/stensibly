@@ -22,7 +22,8 @@ export const mailOutboundTables = {
   })
     .index("by_workspace_thread_id", ["workspaceId", "threadId"])
     .index("by_workspace_handle", ["workspaceId", "handle"])
-    .index("by_workspace_project_source", ["workspaceId", "project", "sourceIdentity"]),
+    .index("by_workspace_project_source", ["workspaceId", "project", "sourceIdentity"])
+    .index("by_workspace_project_updated_at", ["workspaceId", "project", "updatedAt"]),
 
   mailOutboundProviderProjections: defineTable({
     workspaceId: v.id("workspaces"),
