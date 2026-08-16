@@ -11,6 +11,7 @@ import {
 
 const SOURCE_SHA = "a".repeat(40);
 const VERSION_ID = "11111111-1111-4111-8111-111111111111";
+const STALE_VERSION_ID = "44444444-4444-4444-8444-444444444444";
 const DEPLOYMENT_ID = "22222222-2222-4222-8222-222222222222";
 const BASELINE_ID = "33333333-3333-4333-8333-333333333333";
 const temporaryRoots: string[] = [];
@@ -84,6 +85,9 @@ describe("production Worker provider-current receipt", () => {
           headers: { "x-stensibly-worker-version-id": VERSION_ID },
         });
       },
+      async sleep() {
+        throw new Error("matching origins must not sleep");
+      },
       now: () => new Date("2026-08-16T07:00:00.000Z"),
     };
     const receipt = await runWorkerProductionReceipt(environment(root, output), dependencies);
@@ -102,6 +106,37 @@ describe("production Worker provider-current receipt", () => {
     expect(calls).toHaveLength(3);
   });
 
+  test("accepts a temporarily stale public origin only after it converges to provider current", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stensibly-worker-receipt-convergence-"));
+    temporaryRoots.push(root);
+    const output = join(root, "receipt.json");
+    let fallbackReads = 0;
+    const sleeps: number[] = [];
+    const receipt = await runWorkerProductionReceipt(environment(root, output), {
+      async run() {
+        return { stdout: JSON.stringify(inventory()) };
+      },
+      async fetch(input) {
+        const isFallback = input.includes("workers.dev");
+        if (isFallback) fallbackReads += 1;
+        const versionId = isFallback && fallbackReads < 3 ? STALE_VERSION_ID : VERSION_ID;
+        return new Response("healthy", {
+          status: 200,
+          headers: { "x-stensibly-worker-version-id": versionId },
+        });
+      },
+      async sleep(milliseconds) {
+        sleeps.push(milliseconds);
+      },
+      now: () => new Date("2026-08-16T07:00:00.000Z"),
+    });
+
+    expect(fallbackReads).toBe(3);
+    expect(sleeps).toEqual([5_000, 5_000]);
+    expect(receipt.production.versionId).toBe(VERSION_ID);
+    expect(await Bun.file(output).json()).toEqual(receipt);
+  });
+
   test("strictly bounds and parses the provider deployment inventory", async () => {
     const root = await mkdtemp(join(tmpdir(), "stensibly-worker-receipt-json-"));
     temporaryRoots.push(root);
@@ -112,30 +147,44 @@ describe("production Worker provider-current receipt", () => {
       await expect(runWorkerProductionReceipt(environment(root, join(root, `${Math.random()}.json`)), {
         async run() { return { stdout }; },
         async fetch() { throw new Error("health must not be read"); },
+        async sleep() { throw new Error("sleep must not run"); },
         now: () => new Date("2026-08-16T07:00:00.000Z"),
       })).rejects.toThrow();
     }
   });
 
-  test("fails before writing when either public origin disagrees with provider current", async () => {
+  test("fails before writing when a public origin never converges with provider current", async () => {
     const root = await mkdtemp(join(tmpdir(), "stensibly-worker-receipt-drift-"));
     temporaryRoots.push(root);
-    let fetchCount = 0;
+    let fallbackReads = 0;
+    let officialReads = 0;
+    const sleeps: number[] = [];
     await expect(runWorkerProductionReceipt(environment(root, join(root, "receipt.json")), {
       async run() {
         return { stdout: JSON.stringify(inventory()) };
       },
-      async fetch() {
-        fetchCount += 1;
+      async fetch(input) {
+        if (input.includes("workers.dev")) {
+          fallbackReads += 1;
+          return new Response("healthy", {
+            status: 200,
+            headers: { "x-stensibly-worker-version-id": VERSION_ID },
+          });
+        }
+        officialReads += 1;
         return new Response("healthy", {
           status: 200,
-          headers: {
-            "x-stensibly-worker-version-id": fetchCount === 1 ? VERSION_ID : "4".repeat(40),
-          },
+          headers: { "x-stensibly-worker-version-id": STALE_VERSION_ID },
         });
+      },
+      async sleep(milliseconds) {
+        sleeps.push(milliseconds);
       },
       now: () => new Date("2026-08-16T07:00:00.000Z"),
     })).rejects.toThrow("does not match provider current");
+    expect(fallbackReads).toBe(1);
+    expect(officialReads).toBe(8);
+    expect(sleeps).toEqual(Array.from({ length: 7 }, () => 5_000));
     expect(await Bun.file(join(root, "receipt.json")).exists()).toBe(false);
   });
 });

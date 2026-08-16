@@ -16,6 +16,8 @@ const NUMERIC_ID_PATTERN = /^[1-9][0-9]{0,19}$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const WORKER_NAME = PRODUCTION_BINDING_CONTRACT.workerName;
 const WRANGLER_CONFIG = "wrangler.jsonc";
+const ORIGIN_VERIFY_ATTEMPTS = 8;
+const ORIGIN_VERIFY_DELAY_MS = 5_000;
 
 export interface WorkerProviderCurrentObservation {
   readonly deploymentId: string;
@@ -60,6 +62,7 @@ export interface WorkerProductionDeploymentReceipt {
 export interface WorkerProductionReceiptDependencies {
   run(command: string, args: readonly string[]): Promise<{ stdout: string }>;
   fetch(input: string, init?: RequestInit): Promise<Response>;
+  sleep(milliseconds: number): Promise<void>;
   now(): Date;
 }
 
@@ -201,14 +204,24 @@ async function verifyOrigin(
   expectedVersionId: string,
   dependencies: WorkerProductionReceiptDependencies,
 ): Promise<void> {
-  const response = await dependencies.fetch(`${endpoint}/health`, {
-    headers: { "cache-control": "no-store" },
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (response.status !== 200) throw new Error(`Worker receipt health returned ${response.status}`);
-  if (response.headers.get("x-stensibly-worker-version-id")?.trim() !== expectedVersionId) {
-    throw new Error("Worker receipt health version does not match provider current");
+  let observedStatus = 0;
+  let observedVersionId = "";
+  for (let attempt = 1; attempt <= ORIGIN_VERIFY_ATTEMPTS; attempt += 1) {
+    const response = await dependencies.fetch(`${endpoint}/health`, {
+      headers: { "cache-control": "no-store" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    observedStatus = response.status;
+    observedVersionId = response.headers.get("x-stensibly-worker-version-id")?.trim() ?? "";
+    if (observedStatus === 200 && observedVersionId === expectedVersionId) return;
+    if (attempt < ORIGIN_VERIFY_ATTEMPTS) {
+      await dependencies.sleep(ORIGIN_VERIFY_DELAY_MS);
+    }
   }
+  if (observedStatus !== 200) {
+    throw new Error(`Worker receipt health returned ${observedStatus}`);
+  }
+  throw new Error("Worker receipt health version does not match provider current");
 }
 
 function requiredEnvironment(
@@ -263,6 +276,7 @@ const defaultDependencies: WorkerProductionReceiptDependencies = {
     return { stdout };
   },
   fetch: (input, init) => fetch(input, init),
+  sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   now: () => new Date(),
 };
 
