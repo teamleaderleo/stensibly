@@ -1,0 +1,221 @@
+name: Observe Deployment Reconciliation
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  observe:
+    name: Observe exact current-main deployment reconciliation
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.status == 'completed' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.repository.id == github.event.repository.id &&
+      github.event.workflow_run.repository.full_name == github.repository &&
+      github.event.workflow_run.head_repository.id == github.event.repository.id &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Refetch the triggering run and current main
+        id: admit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_REPOSITORY_ID: ${{ github.event.repository.id }}
+          TRIGGER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
+          TRIGGER_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${EVENT_REPOSITORY_ID}" =~ ^[1-9][0-9]{0,19}$ ]]; then
+            echo "Repository identity is invalid" >&2
+            exit 1
+          fi
+          if [[ ! "${TRIGGER_RUN_ID}" =~ ^[1-9][0-9]{0,19}$ || ! "${TRIGGER_RUN_ATTEMPT}" =~ ^[1-9][0-9]{0,19}$ ]]; then
+            echo "Trigger run identity is invalid" >&2
+            exit 1
+          fi
+          if [[ ! "${TRIGGER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Trigger revision is invalid" >&2
+            exit 1
+          fi
+
+          run_json="$(gh api --method GET "repos/${GITHUB_REPOSITORY}/actions/runs/${TRIGGER_RUN_ID}")"
+          main_json="$(gh api --method GET "repos/${GITHUB_REPOSITORY}/git/ref/heads/main")"
+          jq --exit-status \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg repository_id "${EVENT_REPOSITORY_ID}" \
+            --arg run_id "${TRIGGER_RUN_ID}" \
+            --arg run_attempt "${TRIGGER_RUN_ATTEMPT}" \
+            --arg trigger_sha "${TRIGGER_SHA}" '
+              (.id | tostring) == $run_id and
+              (.run_attempt | tostring) == $run_attempt and
+              .path == ".github/workflows/ci.yml" and
+              .event == "push" and
+              .head_branch == "main" and
+              .head_sha == $trigger_sha and
+              .status == "completed" and
+              .conclusion == "success" and
+              (.repository.id | tostring) == $repository_id and
+              .repository.full_name == $repository and
+              (.head_repository.id | tostring) == $repository_id and
+              .head_repository.full_name == $repository
+            ' <<<"${run_json}" >/dev/null
+          current_main="$(jq --exit-status --raw-output '.object.sha' <<<"${main_json}")"
+          if [[ ! "${current_main}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Current main revision is invalid" >&2
+            exit 1
+          fi
+
+          echo "trigger_sha=${TRIGGER_SHA}" >>"${GITHUB_OUTPUT}"
+          if [[ "${current_main}" == "${TRIGGER_SHA}" ]]; then
+            workflow_json="$(gh api --method GET "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml")"
+            artifact_name="exact-ref-validation-receipt-${TRIGGER_RUN_ID}-${TRIGGER_RUN_ATTEMPT}"
+            artifact_json="$(gh api --method GET "repos/${GITHUB_REPOSITORY}/actions/runs/${TRIGGER_RUN_ID}/artifacts?name=${artifact_name}&per_page=2")"
+            workflow_id="$(jq --exit-status --raw-output '.workflow_id | tostring' <<<"${run_json}")"
+            jq --exit-status \
+              --arg workflow_id "${workflow_id}" '
+                (.id | tostring) == $workflow_id and
+                .name == "CI" and
+                .path == ".github/workflows/ci.yml"
+              ' <<<"${workflow_json}" >/dev/null
+            jq --exit-status \
+              --arg artifact_name "${artifact_name}" \
+              --arg repository_id "${EVENT_REPOSITORY_ID}" \
+              --arg run_id "${TRIGGER_RUN_ID}" \
+              --arg trigger_sha "${TRIGGER_SHA}" '
+                (.total_count | type) == "number" and
+                (.total_count | floor) == .total_count and
+                .total_count == 1 and
+                (.artifacts | type) == "array" and
+                (.artifacts | length) == 1 and
+                .artifacts[0].name == $artifact_name and
+                (.artifacts[0].id | type) == "number" and
+                (.artifacts[0].size_in_bytes | type) == "number" and
+                .artifacts[0].size_in_bytes >= 1 and
+                .artifacts[0].size_in_bytes <= 16384 and
+                .artifacts[0].expired == false and
+                (.artifacts[0].digest | type) == "string" and
+                (.artifacts[0].digest | test("^sha256:[0-9a-f]{64}$")) and
+                (.artifacts[0].workflow_run.id | tostring) == $run_id and
+                (.artifacts[0].workflow_run.repository_id | tostring) == $repository_id and
+                (.artifacts[0].workflow_run.head_repository_id | tostring) == $repository_id and
+                .artifacts[0].workflow_run.head_branch == "main" and
+                .artifacts[0].workflow_run.head_sha == $trigger_sha
+              ' <<<"${artifact_json}" >/dev/null
+            echo "proceed=true" >>"${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "proceed=false" >>"${GITHUB_OUTPUT}"
+          jq -n \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg repositoryId "${EVENT_REPOSITORY_ID}" \
+            --arg runId "${TRIGGER_RUN_ID}" \
+            --arg runAttempt "${TRIGGER_RUN_ATTEMPT}" \
+            --arg triggerSha "${TRIGGER_SHA}" \
+            --arg currentMain "${current_main}" '
+              {
+                schemaVersion: "stensibly-deployment-reconciliation-waiting/1",
+                mode: "shadow",
+                repository: { id: $repositoryId, fullName: $repository },
+                ci: { runId: $runId, runAttempt: $runAttempt, sourceRevision: $triggerSha },
+                currentMainRevision: $currentMain,
+                decision: "waiting_current_main",
+                reason: "current_main_advanced",
+                authorizesMutation: false,
+                authorizesDeployment: false,
+                authorizesRetry: false
+              }
+            ' >"${RUNNER_TEMP}/deployment-reconciliation-waiting.json"
+
+      - name: Upload non-authorizing waiting receipt
+        if: steps.admit.outputs.proceed == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-reconciliation-waiting-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ runner.temp }}/deployment-reconciliation-waiting.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Download the exact CI receipt outside the workspace
+        if: steps.admit.outputs.proceed == 'true'
+        uses: actions/download-artifact@v5
+        with:
+          name: exact-ref-validation-receipt-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ runner.temp }}/exact-ci-receipt
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Check out only the admitted exact CI head
+        if: steps.admit.outputs.proceed == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.admit.outputs.trigger_sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.admit.outputs.proceed == 'true'
+
+      - name: Require the admitted checkout
+        if: steps.admit.outputs.proceed == 'true'
+        env:
+          EXPECTED_HEAD: ${{ steps.admit.outputs.trigger_sha }}
+        run: |
+          set -euo pipefail
+          checked_out="$(git rev-parse HEAD)"
+          if [[ "${checked_out}" != "${EXPECTED_HEAD}" ]]; then
+            echo "Checked-out observer source does not match the admitted CI head" >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
+            echo "Observer checkout is not clean" >&2
+            exit 1
+          fi
+
+      - name: Compile bounded shadow reconciliation evidence
+        if: steps.admit.outputs.proceed == 'true'
+        env:
+          CI_RECEIPT_DIRECTORY: ${{ runner.temp }}/exact-ci-receipt
+          DEPLOYMENT_RECONCILIATION_OUTPUT: ${{ runner.temp }}/deployment-reconciliation-shadow.json
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY_ID: ${{ github.event.repository.id }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          OBSERVER_SOURCE_REVISION: ${{ steps.admit.outputs.trigger_sha }}
+          TRIGGER_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          TRIGGER_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: bun scripts/observe-deployment-reconciliation.ts
+
+      - name: Record content-minimised shadow summary
+        if: steps.admit.outputs.proceed == 'true'
+        run: |
+          set -euo pipefail
+          {
+            echo "## Deployment reconciliation shadow"
+            echo
+            echo "- mode: \`shadow\`"
+            echo "- CI source: \`${{ steps.admit.outputs.trigger_sha }}\`"
+            jq --raw-output '.targets[] | "- \(.target): `\(.decision)` (`\(.reason)`)"' \
+              "${RUNNER_TEMP}/deployment-reconciliation-shadow.json"
+            echo "- authorizes deployment: \`false\`"
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload non-authorizing reconciliation receipt
+        if: steps.admit.outputs.proceed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-reconciliation-shadow-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ runner.temp }}/deployment-reconciliation-shadow.json
+          if-no-files-found: error
+          retention-days: 30
