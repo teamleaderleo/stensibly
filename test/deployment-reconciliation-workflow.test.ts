@@ -70,10 +70,11 @@ describe("deployment reconciliation shadow workflow", () => {
     expect(workflow).not.toContain("path: exact-ci-receipt");
   });
 
-  test("is read-only, unprivileged, and never dispatches a deployment", () => {
-    expect(workflow).toContain("permissions:\n  actions: read\n  contents: read");
-    expect(workflow).not.toContain("actions: write");
+  test("keeps repository and provider authority closed while allowing only bounded dashboard queueing", () => {
+    expect(workflow).toContain("permissions:\n  actions: write\n  contents: read");
     expect(workflow).not.toContain("contents: write");
+    expect(workflow).not.toContain("deployments: write");
+    expect(workflow).not.toContain("packages: write");
     expect(workflow).not.toContain("environment:");
     expect(workflow).not.toContain("secrets.");
     expect(workflow).not.toContain("workflow_dispatch:");
@@ -82,6 +83,9 @@ describe("deployment reconciliation shadow workflow", () => {
     expect(workflow).not.toContain("curl ");
     expect(workflow).not.toContain("set -x");
     expect(workflow).not.toContain("printenv");
+    expect(workflow).toContain("EXPECTED_DASHBOARD_RELEASE_REVISION: ${{ steps.admit.outputs.trigger_sha }}");
+    expect(workflow).toContain('FORCE_DASHBOARD_RELEASE: "false"');
+    expect(workflow).toContain("run: bun scripts/dashboard-release-window.ts");
   });
 
   test("publishes only explicitly non-authorizing shadow evidence", () => {
