@@ -341,6 +341,11 @@ async function transition(
   if (liveClaimHeldByOther(item, actor.externalId, now)) {
     throw new Error("Work is held by another actor");
   }
+  const responsibilityGeneration = liveResponsibilityGeneration(
+    item,
+    actor.externalId,
+    now,
+  );
 
   let patch: Record<string, unknown>;
   if (operation === "complete") {
@@ -398,22 +403,49 @@ async function transition(
     idempotencyKey: args.idempotencyKey,
     createdAt: now,
   });
-  if (operation === "complete" || operation === "handoff") {
-    await persistLedgerEventActivity(ctx, {
-      item,
-      event: transitionEvent,
-      actorExternalId: actor.externalId,
-      sourceClass: "ledger_event",
-      activityClass: operation === "complete" ? "completed" : "handoff",
-      activityState: operation === "complete" ? "succeeded" : "observed",
-      ...(expectedGeneration === 0
-        ? {}
-        : { responsibilityGeneration: expectedGeneration }),
-    });
-  }
+  const activity = transitionActivity(operation);
+  await persistLedgerEventActivity(ctx, {
+    item,
+    event: transitionEvent,
+    actorExternalId: actor.externalId,
+    sourceClass: "ledger_event",
+    activityClass: activity.activityClass,
+    activityState: activity.activityState,
+    ...(responsibilityGeneration === null
+      ? {}
+      : { responsibilityGeneration }),
+  });
   const updated = await ctx.db.get("items", item._id);
   if (!updated) throw new Error("Updated item disappeared");
   return await publicItem(ctx, updated);
+}
+
+function transitionActivity(
+  operation: "complete" | "handoff" | "block" | "unblock",
+) {
+  if (operation === "complete") {
+    return { activityClass: "completed" as const, activityState: "succeeded" as const };
+  }
+  if (operation === "handoff") {
+    return { activityClass: "handoff" as const, activityState: "observed" as const };
+  }
+  if (operation === "block") {
+    return { activityClass: "blocked" as const, activityState: "blocked" as const };
+  }
+  return { activityClass: "progress_evidence" as const, activityState: "observed" as const };
+}
+
+function liveResponsibilityGeneration(
+  item: any,
+  actorExternalId: string,
+  now: number,
+): number | null {
+  return item.claimedByActorId !== undefined
+      && item.claimedByExternalId === actorExternalId
+      && item.claimExpiresAt !== undefined
+      && item.claimExpiresAt > now
+    ? item.claimGeneration
+    : null;
 }
 
 function semanticTransitionPayload(
