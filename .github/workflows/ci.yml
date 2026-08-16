@@ -42,9 +42,16 @@ on:
         type: string
 
 concurrency:
+  # Red-control edits can supersede validation; ordinary PR prose and labels cannot.
   group: >-
     ci-${{ github.repository }}-${{ github.event_name == 'pull_request' &&
-    format('pr-{0}', github.event.pull_request.number) ||
+    format('pr-{0}-{1}', github.event.pull_request.number,
+    ((github.event.pull_request.draft &&
+    contains(github.event.pull_request.labels.*.name, 'ci:red-control')) ||
+    ((github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+    github.event.label.name == 'ci:red-control')) && 'validation' ||
+    (github.event.action == 'edited' || github.event.action == 'labeled' ||
+    github.event.action == 'unlabeled') && 'metadata' || 'validation') ||
     (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') &&
     format('exact-{0}-{1}', inputs.expected_sha, inputs.validation_profile) ||
     format('push-{0}', github.sha) }}
@@ -180,7 +187,13 @@ jobs:
   browser-evidence:
     if: >-
       ${{ (github.event_name != 'pull_request' ||
-      (github.event.action != 'closed' &&
+      (github.event.pull_request.head.ref != github.event.repository.default_branch &&
+      (github.event.action == 'opened' ||
+      github.event.action == 'synchronize' ||
+      github.event.action == 'reopened' ||
+      github.event.action == 'ready_for_review' ||
+      (github.event.action == 'unlabeled' &&
+      github.event.label.name == 'ci:red-control')) &&
       !(github.event.pull_request.draft &&
       contains(github.event.pull_request.labels.*.name, 'ci:red-control')))) &&
       ((github.event_name != 'workflow_dispatch' &&
@@ -212,7 +225,7 @@ jobs:
           set -o pipefail
           bun run typecheck:browser 2>&1 | tee browser-typecheck-output.txt
       - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
+        run: bunx playwright install --with-deps --only-shell chromium
       - name: Run frontend browser evidence
         id: browser-test
         run: |
@@ -240,7 +253,13 @@ jobs:
   test:
     if: >-
       ${{ (github.event_name != 'pull_request' ||
-      (github.event.action != 'closed' &&
+      (github.event.pull_request.head.ref != github.event.repository.default_branch &&
+      (github.event.action == 'opened' ||
+      github.event.action == 'synchronize' ||
+      github.event.action == 'reopened' ||
+      github.event.action == 'ready_for_review' ||
+      (github.event.action == 'unlabeled' &&
+      github.event.label.name == 'ci:red-control')) &&
       !(github.event.pull_request.draft &&
       contains(github.event.pull_request.labels.*.name, 'ci:red-control')))) &&
       ((github.event_name != 'workflow_dispatch' &&
@@ -316,7 +335,13 @@ jobs:
   runtime-parity:
     if: >-
       ${{ (github.event_name != 'pull_request' ||
-      (github.event.action != 'closed' &&
+      (github.event.pull_request.head.ref != github.event.repository.default_branch &&
+      (github.event.action == 'opened' ||
+      github.event.action == 'synchronize' ||
+      github.event.action == 'reopened' ||
+      github.event.action == 'ready_for_review' ||
+      (github.event.action == 'unlabeled' &&
+      github.event.label.name == 'ci:red-control')) &&
       !(github.event.pull_request.draft &&
       contains(github.event.pull_request.labels.*.name, 'ci:red-control')))) &&
       ((github.event_name != 'workflow_dispatch' &&
@@ -422,7 +447,7 @@ jobs:
       - name: Install committed dependencies once
         run: bun install --frozen-lockfile
       - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
+        run: bunx playwright install --with-deps --only-shell chromium
       - name: Run serial full validation
         id: serial-validation
         run: |
@@ -484,7 +509,13 @@ jobs:
     if: >-
       ${{ always() &&
       (github.event_name != 'pull_request' ||
-      (github.event.action != 'closed' &&
+      (github.event.pull_request.head.ref != github.event.repository.default_branch &&
+      (github.event.action == 'opened' ||
+      github.event.action == 'synchronize' ||
+      github.event.action == 'reopened' ||
+      github.event.action == 'ready_for_review' ||
+      (github.event.action == 'unlabeled' &&
+      github.event.label.name == 'ci:red-control')) &&
       !(github.event.pull_request.draft &&
       contains(github.event.pull_request.labels.*.name, 'ci:red-control')))) }}
     runs-on: ubuntu-latest

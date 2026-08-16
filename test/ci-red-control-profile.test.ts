@@ -32,7 +32,10 @@ describe("red-control CI profile", () => {
     ]) {
       expect(workflow).toContain(`      - ${activity}`);
     }
-    expect(workflow).toContain("format('pr-{0}', github.event.pull_request.number)");
+    expect(workflow).toContain(
+      "format('pr-{0}-{1}', github.event.pull_request.number,",
+    );
+    expect(workflow).toContain("&& 'metadata' || 'validation'");
     expect(workflow).toContain(
       "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
     );
@@ -101,6 +104,15 @@ describe("red-control CI profile", () => {
       "contains(github.event.pull_request.labels.*.name, 'ci:red-control')",
     );
     expect(receiptJob).toContain("stensibly-ci-exact-ref-receipt/1");
+  });
+
+  test("keeps red-control metadata in the validation concurrency lane", () => {
+    expect(workflow).toContain(
+      "github.event.action == 'labeled' || github.event.action == 'unlabeled'",
+    );
+    expect(workflow).toContain(
+      "github.event.label.name == 'ci:red-control')) && 'validation'",
+    );
   });
 
   test("preserves ordinary full validation commands and read-only permissions", () => {

@@ -48,8 +48,10 @@ describe("canonical CI scheduling", () => {
     expect(concurrency).toContain("ci-${{ github.repository }}-");
     expect(concurrency).toContain("github.event_name == 'pull_request'");
     expect(concurrency).toContain(
-      "format('pr-{0}', github.event.pull_request.number)",
+      "format('pr-{0}-{1}', github.event.pull_request.number,",
     );
+    expect(concurrency).toContain("&& 'validation' ||");
+    expect(concurrency).toContain("&& 'metadata' || 'validation'");
     expect(concurrency).toContain(
       "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
     );

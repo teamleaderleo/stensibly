@@ -57,7 +57,9 @@ describe("CI browser evidence profile", () => {
     expect(browserJob).toContain("github.event_name != 'workflow_call'");
     expect(browserJob).toContain("inputs.validation_profile == 'full_parallel'");
     expect(browserJob).toContain('"${GITHUB_SHA}" != "${EXPECTED_SHA}"');
-    expect(browserJob).toContain("bunx playwright install --with-deps chromium");
+    expect(browserJob).toContain(
+      "bunx playwright install --with-deps --only-shell chromium",
+    );
     expect(browserJob).toContain("frontend-browser-evidence-${{ github.sha }}");
     expect(browserJob).toContain("steps.browser-test.outcome == 'success'");
     expect(browserJob).toContain("steps.browser-artifacts.outcome == 'success'");
@@ -92,7 +94,11 @@ describe("CI browser evidence profile", () => {
     expect(serialJob?.match(/oven-sh\/setup-bun@v2/gu)).toHaveLength(1);
     expect(serialJob?.match(/actions\/setup-node@v6/gu)).toHaveLength(1);
     expect(serialJob?.match(/bun install --frozen-lockfile/gu)).toHaveLength(1);
-    expect(serialJob?.match(/bunx playwright install --with-deps chromium/gu)).toHaveLength(1);
+    expect(
+      serialJob?.match(
+        /bunx playwright install --with-deps --only-shell chromium/gu,
+      ),
+    ).toHaveLength(1);
 
     let previousIndex = -1;
     for (const commandId of CI_BROWSER_EVIDENCE_COMMAND_IDS_V1) {
