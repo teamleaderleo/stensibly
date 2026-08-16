@@ -99,9 +99,7 @@ export const listObservations = query({
     requireServiceSecret(args.serviceSecret);
     const workspaceSlug = normalizeWorkspace(args.workspace);
     const projectSlug = assertSlug(args.project, "Project");
-    if (!Number.isSafeInteger(args.limit) || args.limit < 1 || args.limit > maximumListLimit) {
-      throw new RangeError("Orchestrator activity list limit is invalid");
-    }
+    assertListLimit(args.limit);
     const workspace = await findWorkspace(ctx, workspaceSlug);
     if (!workspace) return { observations: [], truncated: false };
     const project = await findProject(ctx, workspace._id, projectSlug);
@@ -128,6 +126,56 @@ export const listObservations = query({
     return { observations, truncated };
   },
 });
+
+/**
+ * Returns the newest bounded project window while preserving append-order
+ * chronology inside the returned envelope. The full-history query above keeps
+ * its oldest-first replay semantics for rebuild consumers.
+ */
+export const listRecentObservations = query({
+  args: {
+    ...serviceArgs,
+    project: v.string(),
+    limit: v.number(),
+  },
+  handler: async (ctx, args) => {
+    requireServiceSecret(args.serviceSecret);
+    const workspaceSlug = normalizeWorkspace(args.workspace);
+    const projectSlug = assertSlug(args.project, "Project");
+    assertListLimit(args.limit);
+    const workspace = await findWorkspace(ctx, workspaceSlug);
+    if (!workspace) return { observations: [], truncated: false };
+    const project = await findProject(ctx, workspace._id, projectSlug);
+    if (!project) return { observations: [], truncated: false };
+    const rows = await ctx.db
+      .query("orchestratorActivityObservations")
+      .withIndex("by_project_append_order", (q) => q.eq("projectId", project._id))
+      .order("desc")
+      .take(args.limit + 1);
+    const truncated = rows.length > args.limit;
+    const selected = rows.slice(0, args.limit).reverse();
+    const observations = selected.map((row) => {
+      const observation = admitStoredOrchestratorActivityObservation(row);
+      if (
+        observation.workspace !== workspaceSlug
+        || observation.project !== projectSlug
+      ) {
+        throw new Error("Orchestrator activity durable observation escaped recent-list scope");
+      }
+      return {
+        appendOrder: row.appendOrder,
+        observationJson: stableJson(observation),
+      };
+    });
+    return { observations, truncated };
+  },
+});
+
+function assertListLimit(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximumListLimit) {
+    throw new RangeError("Orchestrator activity list limit is invalid");
+  }
+}
 
 function activityIdentifier(value: unknown, label: string): string {
   if (typeof value !== "string" || !identifierPattern.test(value)) {

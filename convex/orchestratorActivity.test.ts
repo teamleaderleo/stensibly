@@ -9,6 +9,7 @@ const serviceSecret = "orchestrator-activity-service-secret";
 const ingestRef = makeFunctionReference<"mutation">("orchestratorActivity:ingest");
 const receiptRef = makeFunctionReference<"query">("orchestratorActivity:getReceipt");
 const listRef = makeFunctionReference<"query">("orchestratorActivity:listObservations");
+const recentListRef = makeFunctionReference<"query">("orchestratorActivity:listRecentObservations");
 
 beforeEach(() => {
   vi.stubEnv("STENSIBLY_SERVICE_SECRET", serviceSecret);
@@ -97,6 +98,53 @@ describe("durable orchestrator activity", () => {
     expect(listed.truncated).toBe(false);
     expect(listed.observations).toHaveLength(1);
     expect(listed.observations[0].appendOrder).toBe(1);
+  });
+
+  test("keeps the replay list oldest-first and exposes a separate newest bounded window", async () => {
+    const t = convexTest(schema, modules);
+    for (let index = 1; index <= 4; index += 1) {
+      await ingest(t, ingestion({
+        deliveryId: `delivery_recent_${index}`,
+        deliveryFingerprint: `sha256:${String(index).repeat(64)}`,
+        acceptedAt: `2026-08-05T16:2${index}:01.000Z`,
+        observation: observation({
+          sourceId: `source_recent_${index}`,
+          sourceFingerprint: `sha256:${String(index + 4).repeat(64)}`,
+          observedAt: `2026-08-05T16:2${index}:00.000Z`,
+          attemptId: `attempt_recent_${index}`,
+        }),
+      }));
+    }
+
+    const replayWindow = await t.query(listRef, {
+      serviceSecret,
+      workspace: "test",
+      project: "stensibly",
+      limit: 2,
+    }) as any;
+    expect(replayWindow.truncated).toBe(true);
+    expect(replayWindow.observations.map((row: any) => ({
+      appendOrder: row.appendOrder,
+      sourceId: JSON.parse(row.observationJson).sourceId,
+    }))).toEqual([
+      { appendOrder: 1, sourceId: "source_recent_1" },
+      { appendOrder: 2, sourceId: "source_recent_2" },
+    ]);
+
+    const recentWindow = await t.query(recentListRef, {
+      serviceSecret,
+      workspace: "test",
+      project: "stensibly",
+      limit: 2,
+    }) as any;
+    expect(recentWindow.truncated).toBe(true);
+    expect(recentWindow.observations.map((row: any) => ({
+      appendOrder: row.appendOrder,
+      sourceId: JSON.parse(row.observationJson).sourceId,
+    }))).toEqual([
+      { appendOrder: 3, sourceId: "source_recent_3" },
+      { appendOrder: 4, sourceId: "source_recent_4" },
+    ]);
   });
 
   test("rejects changed delivery and changed source identity", async () => {
