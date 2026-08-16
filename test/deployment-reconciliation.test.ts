@@ -9,6 +9,7 @@ import {
 const currentSha = "a".repeat(40);
 const baselineSha = "b".repeat(40);
 const otherSha = "c".repeat(40);
+const workerSha = "8".repeat(40);
 const repository = "teamleaderleo/stensibly";
 
 describe("deployment reconciliation decision compiler", () => {
@@ -35,9 +36,15 @@ describe("deployment reconciliation decision compiler", () => {
         target: "worker",
         decision: "classification_unknown",
         reason: "dependency_classifier_not_implemented",
-        providerCurrentVerified: false,
-        baselineAuthority: "workflow_only",
-        providerCurrent: null,
+        providerCurrentVerified: true,
+        baselineAuthority: "public_worker_version",
+        providerCurrent: {
+          kind: "worker-public-version",
+          sourceRevision: workerSha,
+          versionId: "21f335ee-7d2e-44e8-8139-5b9939a48248",
+          versionTag: `git-${workerSha}`,
+          versionCreatedAt: "2026-08-16T09:11:56.892401Z",
+        },
         authorizesDeployment: false,
       }),
       expect.objectContaining({
@@ -169,6 +176,17 @@ describe("deployment reconciliation decision compiler", () => {
         }
         : target),
     }))).toThrow("evidence and classifier are incoherent");
+    expect(() => compileDeploymentReconciliation(fixture({
+      targets: targetFixtures().map((target) => target.target === "worker"
+        ? {
+          ...target,
+          providerCurrent: {
+            ...target.providerCurrent!,
+            versionTag: `git-${otherSha}`,
+          },
+        }
+        : target),
+    }))).toThrow("version tag is invalid");
   });
 
   test("requires the observer workflow and checked-out source to be the admitted CI head", () => {
@@ -256,7 +274,13 @@ function targetFixtures(
       target: "worker",
       workflowPath: ".github/workflows/deploy-worker.yml",
       latestSuccessfulWorkflow: null,
-      providerCurrent: null,
+      providerCurrent: {
+        kind: "worker-public-version",
+        sourceRevision: workerSha,
+        versionId: "21f335ee-7d2e-44e8-8139-5b9939a48248",
+        versionTag: `git-${workerSha}`,
+        versionCreatedAt: "2026-08-16T09:11:56.892401Z",
+      },
       history: "unknown",
       classifier: {
         kind: "unavailable",
