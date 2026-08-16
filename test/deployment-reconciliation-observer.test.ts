@@ -86,6 +86,21 @@ describe("deployment reconciliation observer adapter", () => {
     expect(calls.some((call) => call.includes("deploy-convex.yml/runs"))).toBe(false);
   });
 
+  test("admits a bounded comparison response with a large provider diff patch", async () => {
+    const fixture = await localFixture();
+    const result = await runDeploymentReconciliationObserver(
+      fixture.environment,
+      githubStub([], { comparePatchLength: 48_000 }),
+    );
+
+    expect(result.targets[2]).toEqual(expect.objectContaining({
+      target: "dashboard",
+      decision: "would_dispatch",
+      reason: "site_tree_changed",
+      history: "ahead",
+    }));
+  });
+
   test("rejects duplicate-key JSON, unexpected files, and symlinked receipt files", async () => {
     const duplicate = await exactReceiptDirectory('{"schemaVersion":"a","schemaVersion":"b"}\n');
     await expect(readExactCiReceiptDirectory(duplicate)).rejects.toThrow("Duplicate JSON object key");
@@ -418,7 +433,12 @@ function responseFixture(
     ];
     return { total_count: override.dashboardTotalCount ?? runs.length, workflow_runs: runs };
   }
-  if (path === `/compare/${baselineSha}...${currentSha}?per_page=1`) return { status: "ahead" };
+  if (path === `/compare/${baselineSha}...${currentSha}?per_page=1`) return {
+    status: "ahead",
+    files: override.comparePatchLength === undefined
+      ? []
+      : [{ patch: "x".repeat(override.comparePatchLength) }],
+  };
   if (path === `/git/commits/${baselineSha}`) return { tree: { sha: baselineRootTree } };
   if (path === `/git/commits/${currentSha}`) return { tree: { sha: currentRootTree } };
   if (path === `/git/trees/${baselineRootTree}`) {
@@ -439,6 +459,7 @@ interface GitHubStubOverride {
   readonly dashboardRuns?: readonly SuccessfulRunFixture[];
   readonly dashboardTotalCount?: number;
   readonly mainRevisions?: readonly string[];
+  readonly comparePatchLength?: number;
 }
 
 interface SuccessfulRunFixture {

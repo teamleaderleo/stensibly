@@ -162,7 +162,10 @@ function githubClient(input: {
     Authorization: `Bearer ${input.token}`,
     "X-GitHub-Api-Version": "2022-11-28",
   });
-  const readJson = async (path: string): Promise<unknown> => {
+  const readJson = async (
+    path: string,
+    maxStringLength = 16_384,
+  ): Promise<unknown> => {
     const response = await input.request(
       `${input.apiBase}/repos/${input.repository}${path}`,
       { headers, method: "GET", signal: AbortSignal.timeout(20_000) },
@@ -173,7 +176,7 @@ function githubClient(input: {
     return parseStrictJson(await readBoundedResponseText(response, maximumApiResponseBytes), {
       maxBytes: maximumApiResponseBytes,
       maxDepth: 20,
-      maxStringLength: 16_384,
+      maxStringLength,
       maxObjectKeys: 256,
       maxArrayLength: 300,
       prefix: "DEPLOYMENT_RECONCILIATION_API",
@@ -265,10 +268,10 @@ function githubClient(input: {
       });
     },
     async compare(base: string, head: string) {
-      const comparison = await record(
+      const comparison = exactRecord(await readJson(
         `/compare/${requireSha(base, "Comparison base")}...${requireSha(head, "Comparison head")}?per_page=1`,
-        "Revision comparison",
-      );
+        maximumApiResponseBytes,
+      ), "Revision comparison");
       if (!["ahead", "identical", "behind", "diverged"].includes(String(comparison.status))) {
         throw new Error("Revision comparison status is invalid");
       }
