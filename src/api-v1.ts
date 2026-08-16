@@ -5,6 +5,8 @@ import {
   completionContinuationLedger,
 } from "./completion-continuation-contracts.js";
 import { registerContinuationApi } from "./continuation-api.js";
+import { ConvexWorkLedger } from "./convex-ledger.js";
+import { ConvexProjectCorrespondenceSource } from "./convex-project-correspondence-source.js";
 import {
   filterItemsForPrincipal,
   principalHasScope,
@@ -18,6 +20,7 @@ import {
 } from "./http-auth.js";
 import type { WorkLedger } from "./ledger.js";
 import { registerProjectAttachmentApi } from "./project-attachment-api.js";
+import { createProjectCorrespondenceApi } from "./project-correspondence-routes.js";
 import {
   blockItemSchema,
   claimActionSchema,
@@ -65,6 +68,20 @@ export function createApiV1(
   });
 
   app.use("*", createHttpAuthMiddleware(authenticator, options));
+  if (ledger instanceof ConvexWorkLedger) {
+    app.route(
+      "/",
+      createProjectCorrespondenceApi(
+        authenticator,
+        options,
+        new ConvexProjectCorrespondenceSource({
+          client: ledger.client,
+          serviceSecret: ledger.serviceSecret,
+          workspace: ledger.workspace,
+        }),
+      ),
+    );
+  }
 
   app.get("/principal", (context) => {
     const principal = currentPrincipal(context);
