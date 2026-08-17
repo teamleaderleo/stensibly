@@ -18,6 +18,7 @@
     <link rel="stylesheet" href="/hosted-session.css" />
     <link rel="stylesheet" href="/root-mode-status.css" />
     <link rel="stylesheet" href="/studio-control.css" />
+    <link rel="stylesheet" href="/studio-radar.css" />
   </head>
   <body>
     <main class="shell">
@@ -114,6 +115,7 @@
         <nav class="view-tabs" aria-label="Dashboard views">
           <button type="button" data-dashboard-view-target="overview" aria-selected="true"><span class="tab-icon" aria-hidden="true">📋</span> Overview</button>
           <button type="button" data-dashboard-view-target="activity" aria-selected="false"><span class="tab-icon" aria-hidden="true">⚡</span> Activity</button>
+          <button type="button" data-dashboard-view-target="radar" aria-selected="false"><span class="tab-icon" aria-hidden="true">🛰️</span> Radar</button>
           <button type="button" data-dashboard-view-target="work" aria-selected="false"><span class="tab-icon" aria-hidden="true">🗂️</span> Work</button>
           <button type="button" data-dashboard-view-target="system" aria-selected="false"><span class="tab-icon" aria-hidden="true">⚙️</span> System</button>
         </nav>
@@ -140,6 +142,19 @@
                 <span class="brief-icon" aria-hidden="true">🎯</span>
                 <div><strong>Ready Next</strong><p id="brief-ready-summary">0 items available to claim</p></div>
               </div>
+            </div>
+          </section>
+
+          <section class="decision-tray" id="decision-tray" aria-label="Morning decision tray" hidden>
+            <div class="decision-tray-head">
+              <div>
+                <p class="eyebrow">Morning Clearance</p>
+                <h2>Decisions & 1-Tap 'Okay, Go'</h2>
+              </div>
+              <button class="quick-action-btn quick-action-done" id="tray-batch-approve" type="button">⚡ Approve All Ready</button>
+            </div>
+            <div class="decision-tray-cards" id="decision-tray-cards">
+              <!-- Rendered dynamically -->
             </div>
           </section>
 
@@ -191,6 +206,29 @@
             </div>
             <div class="activity-feed-list" id="activity-feed-list">
               <p class="empty">Loading recent studio activity…</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="view-panel radar-view" data-dashboard-view-panel="radar" hidden>
+          <div class="radar-console">
+            <header class="radar-header">
+              <h2>🛰️ Tactical Studio Radar <span class="radar-badge">LIVE 30 RPM</span></h2>
+            </header>
+            <div class="radar-canvas-container">
+              <canvas id="radar-canvas"></canvas>
+            </div>
+            <div id="radar-selected-strip" class="radar-flight-strip" hidden>
+              <div class="strip-header">
+                <span class="strip-callsign" id="strip-callsign">LARK-01</span>
+                <span class="strip-status" id="strip-status">ACTIVE</span>
+              </div>
+              <p id="strip-title" style="margin: 4px 0 8px 0; font-weight: bold;"></p>
+              <p id="strip-next" style="margin: 0; color: var(--ink-subtle); font-size: 11px;"></p>
+              <div class="strip-actions">
+                <button class="quick-action-btn quick-action-done" id="strip-action-done" type="button">Mark Done</button>
+                <button class="quick-action-btn quick-action-open" id="strip-action-open" type="button">Open Detail →</button>
+              </div>
             </div>
           </div>
         </section>

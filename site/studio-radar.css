@@ -1,0 +1,83 @@
+/* Tactical Studio Radar Scope Styling (Strict No-Gradient) */
+
+.radar-console {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 16px;
+  border-radius: 4px;
+}
+
+.radar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+
+.radar-header h2 {
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.radar-badge {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: #14532d;
+  color: #86efac;
+  padding: 2px 6px;
+  border-radius: 2px;
+}
+
+.radar-canvas-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-height: 520px;
+  background: #060a08;
+  border: 1px solid #14532d;
+  overflow: hidden;
+  margin: 0 auto;
+}
+
+#radar-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: crosshair;
+}
+
+.radar-flight-strip {
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  padding: 12px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.strip-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.strip-callsign {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.strip-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}

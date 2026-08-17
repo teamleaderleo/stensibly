@@ -1,7 +1,7 @@
 const THEME_KEY = 'stensiblyTheme';
 const VIEW_KEY = 'stensiblyDashboardView';
 const themes = new Set(['dark', 'light']);
-const views = new Set(['overview', 'activity', 'work', 'system']);
+const views = new Set(['overview', 'activity', 'radar', 'work', 'system']);
 const root = document.documentElement;
 const themeToggle = document.querySelector('#theme-toggle');
 

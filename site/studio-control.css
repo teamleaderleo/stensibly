@@ -1057,6 +1057,106 @@ html[data-app-mode="connecting"] .disconnected {
   .board { grid-template-columns: repeat(4, 17rem); }
 }
 
+/* Morning Decision Tray & 1-Tap Go Actions (Strict No-Gradient) */
+.decision-tray {
+  margin-bottom: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: .5rem;
+  padding: 1.25rem;
+}
+
+.decision-tray-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: .75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.decision-tray-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.decision-tray-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.decision-card {
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: .4rem;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+}
+
+.decision-card-top {
+  display: flex;
+  justify-content: space-between;
+  font-size: .75rem;
+  font-family: var(--font-mono);
+  color: var(--accent-strong);
+}
+
+.decision-card-title {
+  font-weight: 700;
+  font-size: .95rem;
+  color: var(--ink);
+  margin: 0;
+}
+
+.decision-card-desc {
+  font-size: .8rem;
+  color: var(--muted);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.decision-card-actions {
+  display: flex;
+  gap: .5rem;
+  margin-top: .4rem;
+}
+
+.decision-card-actions button {
+  flex: 1;
+  padding: .5rem .75rem;
+  font-size: .8rem;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: .3rem;
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .3rem;
+}
+
+.decision-card-actions .btn-go {
+  background: #16a34a;
+  color: #ffffff;
+}
+
+.decision-card-actions .btn-go:hover {
+  background: #15803d;
+}
+
+.decision-card-actions .btn-open {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.decision-card-actions .btn-open:hover {
+  background: var(--surface);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;
@@ -1065,4 +1165,5 @@ html[data-app-mode="connecting"] .disconnected {
     animation-iteration-count: 1 !important;
   }
 }
+
 

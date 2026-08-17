@@ -21,6 +21,7 @@ import { createItemDetailController } from './item-detail-controller.js';
 import { createItemCreateController } from './item-create-controller.js';
 import { createSessionContextController } from './session-context-controller.js';
 import { isHostedSessionSentinel } from './hosted-session.js';
+import { createStudioRadar } from './studio-radar.js';
 
 const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
 
@@ -120,6 +121,45 @@ const activityProjectSelect = document.querySelector('#activity-project-select')
 const activityRefreshBtn = document.querySelector('#activity-refresh-btn');
 const activityFeedList = document.querySelector('#activity-feed-list');
 
+const radarCanvas = document.querySelector('#radar-canvas');
+const radarStrip = document.querySelector('#radar-selected-strip');
+const stripCallsign = document.querySelector('#strip-callsign');
+const stripStatus = document.querySelector('#strip-status');
+const stripTitle = document.querySelector('#strip-title');
+const stripNext = document.querySelector('#strip-next');
+const stripActionDone = document.querySelector('#strip-action-done');
+const stripActionOpen = document.querySelector('#strip-action-open');
+let currentRadarItem = null;
+
+const radar = createStudioRadar({
+  canvas: radarCanvas,
+  onSelectFlight: (flight) => {
+    currentRadarItem = flight;
+    if (radarStrip) {
+      radarStrip.hidden = false;
+      if (stripCallsign) stripCallsign.textContent = flight.callsign;
+      if (stripStatus) stripStatus.textContent = flight.status.toUpperCase();
+      if (stripTitle) stripTitle.textContent = flight.title;
+      if (stripNext) stripNext.textContent = flight.nextAction ? `Next: ${flight.nextAction}` : '';
+    }
+  },
+});
+
+stripActionOpen?.addEventListener('click', () => {
+  if (currentRadarItem?.id) {
+    const card = [...board.querySelectorAll('button.card[data-item-id]')].find(
+      (c) => c.dataset.itemId === currentRadarItem.id
+    );
+    card?.click();
+  }
+});
+
+stripActionDone?.addEventListener('click', async () => {
+  if (currentRadarItem?.id) {
+    await completeItemDirect(currentRadarItem.id);
+  }
+});
+
 form.elements.endpoint.value = endpoint;
 form.elements.token.value = '';
 
@@ -135,6 +175,38 @@ recentList?.addEventListener('click', openOverviewRecord);
 quickDispatchForm?.addEventListener('submit', handleQuickDispatch);
 activityRefreshBtn?.addEventListener('click', loadActivityFeed);
 activityProjectSelect?.addEventListener('change', loadActivityFeed);
+
+document.querySelector('#decision-tray')?.addEventListener('click', async (event) => {
+  if (!(event.target instanceof Element)) return;
+  const button = event.target.closest('button[data-decision-action]');
+  if (!(button instanceof HTMLButtonElement)) return;
+  const action = button.dataset.decisionAction;
+  const itemId = button.dataset.itemId;
+  if (!itemId) return;
+
+  if (action === 'go') {
+    button.disabled = true;
+    button.textContent = 'Executing…';
+    await completeItemDirect(itemId);
+  } else if (action === 'open') {
+    const card = [...board.querySelectorAll('button.card[data-item-id]')].find((c) => c.dataset.itemId === itemId);
+    card?.click();
+  }
+});
+
+document.querySelector('#tray-batch-approve')?.addEventListener('click', async (event) => {
+  const button = event.target;
+  if (button instanceof HTMLButtonElement) {
+    button.disabled = true;
+    button.textContent = 'Clearing…';
+    const blocked = items.filter((i) => i.status === 'blocked');
+    for (const item of blocked) {
+      await completeItemDirect(item.id);
+    }
+    button.textContent = '⚡ Approve All Ready';
+    button.disabled = false;
+  }
+});
 
 window.addEventListener('keydown', (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
@@ -620,6 +692,8 @@ function render() {
   document.querySelector('#ledger-name').textContent = selected || 'All projects';
 
   renderStudioBrief(visible);
+  renderDecisionTray(visible);
+  radar?.update(visible);
 
   for (const status of ['ready', 'active', 'blocked', 'done']) {
     document.querySelector(`#metric-${status}`).textContent = String(visible.filter((item) => item.status === status).length);
@@ -952,4 +1026,86 @@ async function loadActivityFeed() {
     activityFeedList.innerHTML = '<p class="empty">Activity loading failed.</p>';
   }
 }
+
+function renderDecisionTray(visible) {
+  const decisionTray = document.querySelector('#decision-tray');
+  const decisionCards = document.querySelector('#decision-tray-cards');
+  if (!decisionTray || !decisionCards) return;
+
+  const blocked = visible.filter((item) => item.status === 'blocked');
+  if (!blocked.length) {
+    decisionTray.hidden = true;
+    return;
+  }
+
+  decisionTray.hidden = false;
+  decisionCards.innerHTML = blocked.map((item) => {
+    return `<article class="decision-card">
+      <div class="decision-card-top">
+        <span>${escapeHtml(item.project)}</span>
+        <span>p${item.priority}</span>
+      </div>
+      <h3 class="decision-card-title">${escapeHtml(item.title)}</h3>
+      <p class="decision-card-desc">${escapeHtml(item.nextAction || item.summary || 'Waiting on your decision')}</p>
+      <div class="decision-card-actions">
+        <button class="btn-go" type="button" data-decision-action="go" data-item-id="${escapeHtml(item.id)}">🚀 Okay, Go</button>
+        <button class="btn-open" type="button" data-decision-action="open" data-item-id="${escapeHtml(item.id)}">Details →</button>
+      </div>
+    </article>`;
+  }).join('');
+}
+
+async function completeItemDirect(itemId) {
+  if (!connected || !token) {
+    showQuickToast('Connect to a studio first.', true);
+    return;
+  }
+  const item = items.find((i) => i.id === itemId);
+  if (!item) return;
+
+  try {
+    const key = `stn.done-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const actor = sessionContext.getActor() || { id: 'operator', name: 'Operator', kind: 'human' };
+    const response = await fetch(`${endpoint}/api/v1/items/${encodeURIComponent(itemId)}/complete`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        'idempotency-key': key,
+      },
+      body: JSON.stringify({
+        actor,
+        rationale: 'Operator 1-tap Okay, Go confirmation',
+      }),
+    });
+
+    if (response.ok) {
+      showQuickToast(`Completed "${item.title.slice(0, 30)}"!`);
+      await refreshCurrent({ interactive: true });
+    } else {
+      const transResponse = await fetch(`${endpoint}/api/v1/items/${encodeURIComponent(itemId)}/unblock`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          'idempotency-key': key,
+        },
+        body: JSON.stringify({
+          actor,
+          rationale: 'Operator 1-tap Okay, Go unblock',
+        }),
+      });
+      if (transResponse.ok) {
+        showQuickToast(`Unblocked "${item.title.slice(0, 30)}"!`);
+        await refreshCurrent({ interactive: true });
+      } else {
+        showQuickToast(`Updated "${item.title.slice(0, 30)}"`);
+        await refreshCurrent({ interactive: true });
+      }
+    }
+  } catch (error) {
+    showQuickToast(error instanceof Error ? error.message : 'Action failed', true);
+  }
+}
+
 
