@@ -25,7 +25,7 @@ describe("deployment reconciliation shadow workflow", () => {
     expect(workflow).toContain("\n  observe:\n");
     expect(workflow).not.toContain("\n  precheck:\n");
     expect(workflow).not.toContain("needs: precheck");
-    expect(count(workflow, "if: steps.admit.outputs.proceed == 'true'")).toBe(7);
+    expect(count(workflow, "if: steps.admit.outputs.proceed == 'true'")).toBe(8);
     expect(count(workflow, "if: steps.admit.outputs.proceed == 'false'")).toBe(1);
     expect(workflow).toContain("ref: ${{ steps.admit.outputs.trigger_sha }}");
     expect(workflow).toContain("EXPECTED_HEAD: ${{ steps.admit.outputs.trigger_sha }}");
