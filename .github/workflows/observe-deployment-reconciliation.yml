@@ -9,7 +9,7 @@ on:
       - main
 
 permissions:
-  actions: read
+  actions: write
   contents: read
 
 jobs:
@@ -219,3 +219,48 @@ jobs:
           path: ${{ runner.temp }}/deployment-reconciliation-shadow.json
           if-no-files-found: error
           retention-days: 30
+
+      - name: Admit dashboard publication from reconciliation
+        id: dashboard_release
+        if: steps.admit.outputs.proceed == 'true'
+        env:
+          EXPECTED_REVISION: ${{ steps.admit.outputs.trigger_sha }}
+          RECONCILIATION_RECEIPT: ${{ runner.temp }}/deployment-reconciliation-shadow.json
+        run: |
+          set -euo pipefail
+          jq --exit-status \
+            --arg expected "${EXPECTED_REVISION}" '
+              .schemaVersion == "stensibly-deployment-reconciliation-decision/3" and
+              .mode == "shadow" and
+              .observer.workflowRevision == $expected and
+              .observer.sourceRevision == $expected and
+              .ci.workflowRevision == $expected and
+              .ci.sourceRevision == $expected and
+              .currentMainRevision == $expected and
+              .authorizesMutation == false and
+              .authorizesDeployment == false and
+              .authorizesRetry == false and
+              ([.targets[] | select(.target == "dashboard")] | length) == 1
+            ' "${RECONCILIATION_RECEIPT}" >/dev/null
+          decision="$(jq --exit-status --raw-output '.targets[] | select(.target == "dashboard") | .decision' "${RECONCILIATION_RECEIPT}")"
+          if [[ "${decision}" != "would_dispatch" ]]; then
+            echo "queue=false" >>"${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          jq --exit-status '
+              .targets[]
+              | select(.target == "dashboard")
+              | .reason == "site_tree_changed" and
+                .providerCurrentVerified == true and
+                .classifier.kind == "site-tree-oid" and
+                .authorizesDeployment == false
+            ' "${RECONCILIATION_RECEIPT}" >/dev/null
+          echo "queue=true" >>"${GITHUB_OUTPUT}"
+
+      - name: Queue reconciled dashboard publication
+        if: steps.dashboard_release.outputs.queue == 'true'
+        env:
+          EXPECTED_DASHBOARD_RELEASE_REVISION: ${{ steps.admit.outputs.trigger_sha }}
+          FORCE_DASHBOARD_RELEASE: "false"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bun scripts/dashboard-release-window.ts

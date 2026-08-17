@@ -51,7 +51,8 @@ export type DashboardReleaseDecision = Readonly<{
     | "no_relevant_changes"
     | "comparison_unavailable"
     | "comparison_truncated"
-    | "history_not_linear";
+    | "history_not_linear"
+    | "current_main_advanced";
 }>;
 
 export function isDashboardReleasePath(path: string): boolean {
@@ -108,7 +109,19 @@ export async function runDashboardReleaseWindow(
     request,
   });
   const force = parseBoolean(env.FORCE_DASHBOARD_RELEASE ?? "false", "FORCE_DASHBOARD_RELEASE");
+  const expectedRevision = env.EXPECTED_DASHBOARD_RELEASE_REVISION === undefined
+    ? null
+    : requireSha(env.EXPECTED_DASHBOARD_RELEASE_REVISION, "Expected dashboard release revision");
   const currentSha = await client.mainSha();
+  if (expectedRevision !== null && currentSha !== expectedRevision) {
+    const decision = Object.freeze({
+      action: "skip" as const,
+      reason: "current_main_advanced" as const,
+    });
+    emitDecision(decision, currentSha, null);
+    await appendSummary(env.GITHUB_STEP_SUMMARY, decision, currentSha, null, null);
+    return decision;
+  }
   const runs = await client.publisherRuns();
   const baselineSha = latestSuccessfulDashboardSha(runs);
   const attemptedSha = latestAttemptedDashboardSha(runs);
@@ -251,10 +264,11 @@ function emitDecision(
     comparison_unavailable: ["Dashboard comparison unavailable", "Automatic publication was skipped; the manual queue remains available."],
     comparison_truncated: ["Dashboard comparison truncated", "Automatic publication was skipped because the file comparison reached its bound."],
     history_not_linear: ["Dashboard history uncertain", "Automatic publication was skipped because the successful baseline is not an ancestor of current main."],
+    current_main_advanced: ["Dashboard release superseded", "The admitted dashboard revision is no longer current main; a newer CI observation must decide the next release."],
   };
   const [title, message] = messages[decision.reason];
   const noticeReasons: readonly DashboardReleaseDecision["reason"][] = [
-    "active_run", "already_current", "no_relevant_changes",
+    "active_run", "already_current", "no_relevant_changes", "current_main_advanced",
   ];
   const level = decision.action === "dispatch" || noticeReasons.includes(decision.reason) ? "notice" : "warning";
   console.log(`::${level} title=${title}::${message}`);
