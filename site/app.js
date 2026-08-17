@@ -112,6 +112,14 @@ itemCreate = createItemCreateController({
 });
 itemCreate.sync();
 
+const quickDispatchForm = document.querySelector('#quick-dispatch-form');
+const quickDispatchInput = document.querySelector('#quick-dispatch-input');
+const quickDispatchProject = document.querySelector('#quick-dispatch-project');
+const quickDispatchToast = document.querySelector('#quick-dispatch-toast');
+const activityProjectSelect = document.querySelector('#activity-project-select');
+const activityRefreshBtn = document.querySelector('#activity-refresh-btn');
+const activityFeedList = document.querySelector('#activity-feed-list');
+
 form.elements.endpoint.value = endpoint;
 form.elements.token.value = '';
 
@@ -124,6 +132,17 @@ projectFilter.addEventListener('change', render);
 document.addEventListener('visibilitychange', handleVisibilityChange);
 focusList?.addEventListener('click', openOverviewRecord);
 recentList?.addEventListener('click', openOverviewRecord);
+quickDispatchForm?.addEventListener('submit', handleQuickDispatch);
+activityRefreshBtn?.addEventListener('click', loadActivityFeed);
+activityProjectSelect?.addEventListener('change', loadActivityFeed);
+
+window.addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    quickDispatchInput?.focus();
+    quickDispatchInput?.select();
+  }
+});
 
 if (token && isPlausibleToken(token)) {
   dashboardSnapshot = isHostedSessionSentinel(token)
@@ -576,16 +595,31 @@ function clearRefreshTimer() {
 function populateProjects() {
   const selected = projectFilter.value;
   const projects = [...new Set(items.map((item) => item.project))].sort();
-  projectFilter.innerHTML = '<option value="">all projects</option>' + projects
+  const options = '<option value="">all projects</option>' + projects
     .map((project) => `<option value="${escapeHtml(project)}">${escapeHtml(project)}</option>`)
     .join('');
+  projectFilter.innerHTML = options;
   if (projects.includes(selected)) projectFilter.value = selected;
+
+  if (quickDispatchProject) {
+    const defaultProject = selected || projects[0] || 'scrapbook';
+    quickDispatchProject.innerHTML = projects.length
+      ? projects.map((p) => `<option value="${escapeHtml(p)}" ${p === defaultProject ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')
+      : '<option value="scrapbook">scrapbook</option>';
+  }
+
+  if (activityProjectSelect) {
+    activityProjectSelect.innerHTML = options;
+    if (projects.includes(selected)) activityProjectSelect.value = selected;
+  }
 }
 
 function render() {
   const selected = projectFilter.value;
   const visible = selected ? items.filter((item) => item.project === selected) : items;
   document.querySelector('#ledger-name').textContent = selected || 'All projects';
+
+  renderStudioBrief(visible);
 
   for (const status of ['ready', 'active', 'blocked', 'done']) {
     document.querySelector(`#metric-${status}`).textContent = String(visible.filter((item) => item.status === status).length);
@@ -764,3 +798,158 @@ class ConnectionFailure extends Error {
     this.kind = kind;
   }
 }
+
+function renderStudioBrief(visible) {
+  const blocked = visible.filter((item) => item.status === 'blocked');
+  const active = visible.filter((item) => item.status === 'active');
+  const ready = visible.filter((item) => item.status === 'ready');
+  const headline = document.querySelector('#studio-brief-headline');
+  const activeSummary = document.querySelector('#brief-active-summary');
+  const blockedSummary = document.querySelector('#brief-blocked-summary');
+  const readySummary = document.querySelector('#brief-ready-summary');
+
+  if (headline) {
+    if (blocked.length > 0) {
+      headline.textContent = `Attention needed on ${blocked.length} ${blocked.length === 1 ? 'obligation' : 'obligations'}`;
+    } else if (active.length > 0) {
+      headline.textContent = `Studio is in motion · ${active.length} ${active.length === 1 ? 'task' : 'tasks'} held`;
+    } else {
+      headline.textContent = 'Studio is standing by · all clear';
+    }
+  }
+
+  if (activeSummary) {
+    if (active.length > 0) {
+      const holders = [...new Set(active.map((item) => item.claimedBy).filter(Boolean))];
+      const detail = holders.length ? ` (${holders.slice(0, 3).join(', ')})` : '';
+      activeSummary.textContent = `${active.length} ${active.length === 1 ? 'task' : 'tasks'} active${detail}`;
+    } else {
+      activeSummary.textContent = '0 agents actively holding work';
+    }
+  }
+
+  if (blockedSummary) {
+    if (blocked.length > 0) {
+      const topTitle = blocked[0].title;
+      blockedSummary.textContent = `Blocked: ${topTitle.slice(0, 50)}${topTitle.length > 50 ? '…' : ''}`;
+    } else {
+      blockedSummary.textContent = 'All lanes clear · no blockers';
+    }
+  }
+
+  if (readySummary) {
+    readySummary.textContent = `${ready.length} ${ready.length === 1 ? 'task' : 'tasks'} available to claim`;
+  }
+}
+
+async function handleQuickDispatch(event) {
+  event.preventDefault();
+  const rawTitle = quickDispatchInput?.value?.trim();
+  if (!rawTitle) return;
+  const project = quickDispatchProject?.value || projectFilter.value || (items[0]?.project || 'scrapbook');
+  const actor = sessionContext.getActor() || { id: 'operator', name: 'Operator', kind: 'human' };
+
+  if (!connected || !token) {
+    showQuickToast('Connect to a studio first.', true);
+    return;
+  }
+
+  const submitButton = document.querySelector('#quick-dispatch-submit');
+  if (submitButton) submitButton.disabled = true;
+
+  try {
+    const key = `stn.quick-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const response = await fetch(`${endpoint}/api/v1/items`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        'idempotency-key': key,
+      },
+      body: JSON.stringify({
+        project,
+        kind: 'task',
+        title: rawTitle,
+        priority: 50,
+        actor,
+      }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      const msg = data.message || `Failed to dispatch (HTTP ${response.status})`;
+      showQuickToast(msg, true);
+      return;
+    }
+
+    if (quickDispatchInput) quickDispatchInput.value = '';
+    showQuickToast(`Dispatched "${rawTitle.slice(0, 30)}${rawTitle.length > 30 ? '…' : ''}" to ${project}!`);
+    await refreshCurrent({ interactive: true });
+  } catch (error) {
+    showQuickToast(error instanceof Error ? error.message : 'Dispatch failed', true);
+  } finally {
+    if (submitButton) submitButton.disabled = false;
+  }
+}
+
+function showQuickToast(message, isError = false) {
+  if (!quickDispatchToast) return;
+  quickDispatchToast.textContent = message;
+  quickDispatchToast.style.background = isError ? 'var(--blocked)' : 'var(--done)';
+  quickDispatchToast.style.color = isError ? 'var(--blocked-ink)' : 'var(--done-ink)';
+  quickDispatchToast.hidden = false;
+  setTimeout(() => {
+    quickDispatchToast.hidden = true;
+  }, 4000);
+}
+
+async function loadActivityFeed() {
+  if (!activityFeedList || !connected || !token) return;
+  const project = activityProjectSelect?.value || projectFilter.value || (items[0]?.project || '');
+  if (!project) {
+    activityFeedList.innerHTML = '<p class="empty">No project selected.</p>';
+    return;
+  }
+
+  activityFeedList.innerHTML = '<p class="empty">Loading activity for ' + escapeHtml(project) + '…</p>';
+  try {
+    const response = await fetch(`${endpoint}/api/v1/projects/${encodeURIComponent(project)}/activity`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      activityFeedList.innerHTML = '<p class="empty">Could not load activity (HTTP ' + response.status + ').</p>';
+      return;
+    }
+    const data = await response.json();
+    const entries = data?.activity?.entries || [];
+    if (!entries.length) {
+      activityFeedList.innerHTML = '<p class="empty">No recent activity recorded for ' + escapeHtml(project) + '.</p>';
+      return;
+    }
+    activityFeedList.innerHTML = entries.map((entry) => {
+      const time = relativeTime(entry.happenedAt);
+      const icon = ({
+        completed: '✅',
+        blocked: '⚠️',
+        handoff: '🤝',
+        work_started: '🚀',
+        provider_effect: '📦',
+        verification: '🔍',
+      })[entry.activityClass] || '⚡';
+      return `<article class="overview-item status-${escapeHtml(entry.dispositionState || 'ready')}">
+        <span class="brief-icon" aria-hidden="true">${icon}</span>
+        <span class="overview-copy">
+          <strong>${escapeHtml(entry.summary || entry.activityClass)}</strong>
+          <small>${escapeHtml(entry.sourceClass)} · ${escapeHtml(entry.actor || 'studio')}</small>
+        </span>
+        <span class="overview-meta">
+          <strong>${escapeHtml(entry.dispositionState || 'observed')}</strong>
+          <span>${escapeHtml(time)}</span>
+        </span>
+      </article>`;
+    }).join('');
+  } catch (err) {
+    activityFeedList.innerHTML = '<p class="empty">Activity loading failed.</p>';
+  }
+}
+

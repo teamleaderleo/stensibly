@@ -112,12 +112,49 @@
         </header>
 
         <nav class="view-tabs" aria-label="Dashboard views">
-          <button type="button" data-dashboard-view-target="overview" aria-selected="true">Overview</button>
-          <button type="button" data-dashboard-view-target="work" aria-selected="false">Work</button>
-          <button type="button" data-dashboard-view-target="system" aria-selected="false">System</button>
+          <button type="button" data-dashboard-view-target="overview" aria-selected="true"><span class="tab-icon" aria-hidden="true">📋</span> Overview</button>
+          <button type="button" data-dashboard-view-target="activity" aria-selected="false"><span class="tab-icon" aria-hidden="true">⚡</span> Activity</button>
+          <button type="button" data-dashboard-view-target="work" aria-selected="false"><span class="tab-icon" aria-hidden="true">🗂️</span> Work</button>
+          <button type="button" data-dashboard-view-target="system" aria-selected="false"><span class="tab-icon" aria-hidden="true">⚙️</span> System</button>
         </nav>
 
         <section class="view-panel overview-view" data-dashboard-view-panel="overview">
+          <section class="studio-brief-card" id="studio-brief-card" aria-label="Studio morning brief">
+            <div class="studio-brief-head">
+              <div>
+                <p class="eyebrow">Studio Brief</p>
+                <h2 id="studio-brief-headline">Studio is active</h2>
+              </div>
+              <span class="studio-brief-time" id="studio-brief-time">Live snapshot</span>
+            </div>
+            <div class="studio-brief-bullets" id="studio-brief-bullets">
+              <div class="brief-item">
+                <span class="brief-icon" aria-hidden="true">⚡</span>
+                <div><strong>In Motion</strong><p id="brief-active-summary">0 agents actively holding work</p></div>
+              </div>
+              <div class="brief-item">
+                <span class="brief-icon" aria-hidden="true">⚠️</span>
+                <div><strong>Attention</strong><p id="brief-blocked-summary">All lanes clear · no blockers</p></div>
+              </div>
+              <div class="brief-item">
+                <span class="brief-icon" aria-hidden="true">🎯</span>
+                <div><strong>Ready Next</strong><p id="brief-ready-summary">0 items available to claim</p></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="studio-dispatch-bar" id="studio-dispatch-bar" aria-label="Quick studio dispatch">
+            <form id="quick-dispatch-form" class="quick-dispatch-form">
+              <span class="dispatch-icon" aria-hidden="true">⚡</span>
+              <input id="quick-dispatch-input" name="title" type="text" placeholder="Tell the studio what to do next... (or press ⌘K)" maxlength="240" autocomplete="off" required />
+              <div class="quick-dispatch-actions">
+                <select id="quick-dispatch-project" aria-label="Target project for dispatch"><option value="">Default project</option></select>
+                <button id="quick-dispatch-submit" type="submit">Dispatch</button>
+              </div>
+            </form>
+            <p class="quick-dispatch-toast" id="quick-dispatch-toast" role="status" aria-live="polite" hidden></p>
+          </section>
+
           <section class="metrics" aria-label="Status totals">
             <article class="metric-attention"><span>Needs you</span><strong id="metric-blocked">0</strong><small>Blocked obligations</small></article>
             <article class="metric-active"><span>In motion</span><strong id="metric-active">0</strong><small>Actively held</small></article>
@@ -140,6 +177,22 @@
             <div class="section-head"><div><p class="eyebrow">Active responsibility</p><h2>Agents holding work</h2></div><span id="agent-count">0 active</span></div>
             <div class="agents" id="agents"><p class="empty">Nothing active right now.</p></div>
           </section>
+        </section>
+
+        <section class="view-panel activity-view" data-dashboard-view-panel="activity" hidden>
+          <header class="view-intro">
+            <div><p class="eyebrow">Studio trail</p><h2>Live Project Activity</h2></div>
+            <p>Chronological record of work claimed, PRs opened, CI runs, and correspondence across all agents.</p>
+          </header>
+          <div class="activity-feed-container" id="activity-feed-container">
+            <div class="activity-feed-toolbar">
+              <label class="project-select"><span>Project</span><select id="activity-project-select" aria-label="Activity project filter"><option value="">All projects</option></select></label>
+              <button id="activity-refresh-btn" type="button" class="secondary">Refresh activity</button>
+            </div>
+            <div class="activity-feed-list" id="activity-feed-list">
+              <p class="empty">Loading recent studio activity…</p>
+            </div>
+          </div>
         </section>
 
         <section class="view-panel work-view" data-dashboard-view-panel="work" hidden>
