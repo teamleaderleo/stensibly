@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createApiToken } from "../src/auth.ts";
 import { createMcpServer } from "../src/mcp.ts";
 import { createServerApp } from "../src/server-app.ts";
+import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
 import {
   initializeMessage,
@@ -98,6 +99,37 @@ describe("remote MCP", () => {
       actor: leo,
     }));
     expect(write.status).toBe(403);
+  });
+
+  test("fails closed when an item project cannot be resolved", async () => {
+    const token = createApiToken(store, {
+      name: "Scoped writer",
+      scopes: ["write"],
+      projects: ["scrapbook"],
+    });
+    const ledger = new SqliteWorkLedger(store);
+    let writes = 0;
+    ledger.getItem = async () => {
+      throw new Error("Hosted backend upgrade required");
+    };
+    ledger.recordEvent = async () => {
+      writes += 1;
+      throw new Error("write handler must not be invoked");
+    };
+    const guardedApp = createServerApp(store, { ledger });
+
+    const response = await mcpRequest(
+      guardedApp,
+      token.token,
+      toolCall(6, "record_event", {
+        id: scrapbookItemId,
+        type: "progress",
+        payload: {},
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(writes).toBe(0);
   });
 
   test("rejects unclassified tools before constructing the MCP server", async () => {
