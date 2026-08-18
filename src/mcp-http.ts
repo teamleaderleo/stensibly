@@ -370,6 +370,7 @@ async function resolveAccessRule(
     case "continuation_source_item_argument":
       return await itemAccessRule(
         ledger,
+        principal,
         scope,
         stringArgument(args, resolution.argument),
       );
@@ -431,6 +432,7 @@ async function resolveAccessRule(
 
 async function itemAccessRule(
   ledger: WorkLedger,
+  principal: TokenPrincipal,
   scope: McpCapabilityScope,
   id: string | undefined,
 ): Promise<AccessRule> {
@@ -438,7 +440,7 @@ async function itemAccessRule(
   try {
     return { scope, project: (await ledger.getItem(id)).item.project };
   } catch {
-    return { scope };
+    return { scope, requireProject: principal.projects !== null };
   }
 }
 
