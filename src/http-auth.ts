@@ -168,6 +168,22 @@ export function requireHttpAccess(
   return null;
 }
 
+export function requireGlobalHttpAccess(
+  context: Context<StensiblyEnv>,
+  required: TokenScope,
+): Response | null {
+  const denied = requireHttpAccess(context, required);
+  if (denied) return denied;
+
+  const principal = context.get("principal");
+  if (principal && principal.projects !== null) {
+    const label = principal.kind === "account" ? "Account" : "Token";
+    context.header(FAILURE_CATEGORY_HEADER, "authorization_failure");
+    return context.json({ error: `${label} requires access to all projects` }, 403);
+  }
+  return null;
+}
+
 export function currentPrincipal(
   context: Context<StensiblyEnv>,
 ): HttpPrincipal | null {

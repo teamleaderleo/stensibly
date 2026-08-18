@@ -9,6 +9,7 @@ import {
 import {
   createHttpAuthMiddleware,
   currentPrincipal,
+  requireGlobalHttpAccess,
   requireHttpAccess,
   type HttpAuthOptions,
   type StensiblyEnv,
@@ -268,7 +269,7 @@ export function registerGitHubProviderEventRoutes(
   }));
 
   api.get("/provider-events", (context) => {
-    const denied = requireHttpAccess(context, "admin");
+    const denied = requireGlobalHttpAccess(context, "admin");
     if (denied) return denied;
 
     const rawLimit = context.req.query("limit");
@@ -332,7 +333,7 @@ export function registerGitHubProviderEventRoutes(
   });
 
   api.post("/provider-events/:id/acknowledge", async (context) => {
-    const denied = requireHttpAccess(context, "admin");
+    const denied = requireGlobalHttpAccess(context, "admin");
     if (denied) return denied;
 
     let rawPayload: unknown;
