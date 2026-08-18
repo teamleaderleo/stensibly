@@ -31,7 +31,7 @@ export async function enforceOAuthRegistrationAdmission(
   if (
     !options.enabled
     || request.method.toUpperCase() !== "POST"
-    || url.pathname !== REGISTRATION_PATH
+    || !isRegistrationPath(url.pathname)
   ) {
     return null;
   }
@@ -85,6 +85,14 @@ export async function enforceOAuthRegistrationAdmission(
     );
   }
   return null;
+}
+
+function isRegistrationPath(pathname: string): boolean {
+  try {
+    return decodeURI(pathname) === REGISTRATION_PATH;
+  } catch {
+    return false;
+  }
 }
 
 async function inspectRegistration(request: Request): Promise<RegistrationInspection> {
