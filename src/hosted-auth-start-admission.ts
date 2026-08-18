@@ -2,7 +2,7 @@ import type { OAuthRegistrationRateLimiter } from "./mcp-oauth-registration-admi
 import { FAILURE_CATEGORY_HEADER } from "./worker-observability.js";
 
 const AUTH_START_PATH = "/auth/github/start";
-const RATE_LIMIT_KEY = "github-auth-start";
+const RATE_LIMIT_KEY_PREFIX = "github-auth-start";
 const RETRY_AFTER_SECONDS = 60;
 
 export async function enforceHostedAuthStartAdmission(
@@ -23,7 +23,10 @@ export async function enforceHostedAuthStartAdmission(
 
   if (!options.rateLimiter) return authUnavailable();
   try {
-    const result = await options.rateLimiter.limit({ key: RATE_LIMIT_KEY });
+    const clientAddress = request.headers.get("CF-Connecting-IP")?.trim() || "unknown";
+    const result = await options.rateLimiter.limit({
+      key: `${RATE_LIMIT_KEY_PREFIX}:${clientAddress}`,
+    });
     if (result.success) return null;
   } catch {
     return authUnavailable();
