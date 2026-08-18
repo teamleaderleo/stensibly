@@ -58,6 +58,10 @@ describe("fenced Bun lock writer workflow", () => {
 
   test("isolates credentials from dependency resolution", () => {
     expect(workflow).toContain("persist-credentials: false");
+    expect(workflow).toContain(
+      "oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2",
+    );
+    expect(workflow).not.toMatch(/oven-sh\/setup-bun@(?![0-9a-f]{40}\b)/u);
     expect(workflow.match(/GH_TOKEN: \$\{\{ github\.token \}\}/g)).toHaveLength(2);
     expect(workflow).toContain("gh auth setup-git");
     expect(workflow.indexOf("gh auth setup-git")).toBeGreaterThan(
