@@ -22,6 +22,7 @@ describe("guarded dashboard publication workflow", () => {
 
   test("requires the coordinator's exact revision before checkout or protected publication", () => {
     const revisionGate = position("Require the exact admitted revision");
+    const mainRefGate = position('[ "${GITHUB_REF}" != "refs/heads/main" ]');
     const firstCheckout = position("actions/checkout@v6");
     const publishJob = position("  publish:");
 
@@ -33,6 +34,7 @@ describe("guarded dashboard publication workflow", () => {
     expect(workflow).toContain('[ "${GITHUB_SHA}" != "${EXPECTED_REVISION}" ]');
     expect(workflow).toContain("needs: validate");
     expect(revisionGate).toBeLessThan(firstCheckout);
+    expect(mainRefGate).toBeLessThan(firstCheckout);
     expect(firstCheckout).toBeLessThan(publishJob);
 
     const validate = workflow.slice(position("  validate:"), publishJob);
