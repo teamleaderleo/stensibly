@@ -24,6 +24,7 @@ env:
 jobs:
   validate:
     name: Validate dashboard candidate
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Require the exact admitted revision
@@ -54,6 +55,7 @@ jobs:
 
   publish:
     name: Attach domain, verify, and publish dashboard
+    if: github.ref == 'refs/heads/main'
     needs: validate
     runs-on: ubuntu-latest
     environment:

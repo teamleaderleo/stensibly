@@ -41,6 +41,14 @@ describe("guarded dashboard publication workflow", () => {
     expect(validate).not.toContain("environment:");
   });
 
+  test("rejects dispatches targeting refs other than main", () => {
+    const validate = workflow.slice(position("  validate:"), position("  publish:"));
+    const publish = workflow.slice(position("  publish:"));
+
+    expect(validate).toContain("if: github.ref == 'refs/heads/main'");
+    expect(publish).toContain("if: github.ref == 'refs/heads/main'");
+  });
+
   test("keeps validation secret-free and production effects environment-gated", () => {
     const validate = workflow.slice(position("  validate:"), position("  publish:"));
     expect(validate).not.toContain("secrets.");
