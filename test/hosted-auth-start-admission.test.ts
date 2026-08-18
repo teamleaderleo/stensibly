@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { enforceHostedAuthStartAdmission } from "../src/hosted-auth-start-admission.js";
 
 describe("hosted auth start admission", () => {
-  test("admits a bounded OAuth start request", async () => {
+  test("admits a bounded OAuth start request with a per-client key", async () => {
     const keys: string[] = [];
     const response = await enforceHostedAuthStartAdmission(
-      new Request("https://api.stensibly.com/auth/github/start"),
+      new Request("https://api.stensibly.com/auth/github/start", {
+        headers: { "CF-Connecting-IP": "203.0.113.7" },
+      }),
       {
         enabled: true,
         rateLimiter: {
@@ -18,7 +20,31 @@ describe("hosted auth start admission", () => {
     );
 
     expect(response).toBeNull();
-    expect(keys).toEqual(["github-auth-start"]);
+    expect(keys).toEqual(["github-auth-start:203.0.113.7"]);
+  });
+
+  test("keeps independent clients in independent limiter buckets", async () => {
+    const keys: string[] = [];
+    const rateLimiter = {
+      async limit(input: { key: string }) {
+        keys.push(input.key);
+        return { success: true };
+      },
+    };
+
+    for (const clientAddress of ["203.0.113.8", "203.0.113.9"]) {
+      expect(await enforceHostedAuthStartAdmission(
+        new Request("https://api.stensibly.com/auth/github/start", {
+          headers: { "CF-Connecting-IP": clientAddress },
+        }),
+        { enabled: true, rateLimiter },
+      )).toBeNull();
+    }
+
+    expect(keys).toEqual([
+      "github-auth-start:203.0.113.8",
+      "github-auth-start:203.0.113.9",
+    ]);
   });
 
   test("rejects an exhausted limiter before durable state creation", async () => {
