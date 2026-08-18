@@ -35,6 +35,14 @@
   },
   "ratelimits": [
     {
+      "name": "HOSTED_AUTH_START_RATE_LIMITER",
+      "namespace_id": "25202",
+      "simple": {
+        "limit": 20,
+        "period": 60
+      }
+    },
+    {
       "name": "OAUTH_REGISTRATION_RATE_LIMITER",
       "namespace_id": "25201",
       "simple": {

@@ -106,6 +106,20 @@ describe("production Worker release guard", () => {
     );
   });
 
+  test("requires the hosted sign-in rate limiter with Wrangler's actual binding type", () => {
+    expect(REQUIRED_PRODUCTION_BINDINGS.HOSTED_AUTH_START_RATE_LIMITER).toEqual({
+      name: "HOSTED_AUTH_START_RATE_LIMITER",
+      type: "ratelimit",
+    });
+    const bindings = completeBindings().filter((binding) => (
+      binding.name !== "HOSTED_AUTH_START_RATE_LIMITER"
+    ));
+    expect(validateProductionVersion({
+      id: VERSION_A,
+      resources: { bindings },
+    }, VERSION_A)).toContain("required binding HOSTED_AUTH_START_RATE_LIMITER is missing");
+  });
+
   test("enumerates active auth and OAuth bindings without secret values", () => {
     const secretNames = [
       "GITHUB_OAUTH_CLIENT_ID",
