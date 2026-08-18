@@ -47,6 +47,12 @@ interface ResolvedScope {
   authority: GitHubProviderAuthorityDecision;
 }
 
+const governedIssueWriteOperations = new Set<GitHubIssueProviderOperation>([
+  "github_create_issue",
+  "github_update_issue",
+  "github_add_issue_comment",
+]);
+
 export class GitHubIssueProviderService {
   readonly #projects: GitHubIssueProviderServiceDependencies["projects"];
   readonly #bindings: GitHubIssueProviderServiceDependencies["bindings"];
@@ -728,6 +734,27 @@ export class GitHubIssueProviderService {
         `GitHub installation ${connection.installationId} no longer exposes ${repositoryFullName}`,
       );
     }
+    const contractActions = [operation, "github_issue_write"];
+    const approvalRequired = governedIssueWriteOperations.has(operation)
+      && contractActions.some((action) =>
+        attachment.snapshot.contract.approvalRequired.includes(action)
+      );
+    if (approvalRequired && !context.approvalId) {
+      throw new GitHubProviderAuthorityError(
+        `Operation ${operation} requires approval under the accepted project contract`,
+      );
+    }
+    if (
+      governedIssueWriteOperations.has(operation)
+      && !approvalRequired
+      && !contractActions.some((action) =>
+        attachment.snapshot.contract.autonomousActions.includes(action)
+      )
+    ) {
+      throw new GitHubProviderAuthorityError(
+        `Operation ${operation} is not autonomous under the accepted project contract`,
+      );
+    }
     const authority = await this.#authority.authorizeGitHubOperation({
       project,
       repositoryFullName,
@@ -750,6 +777,14 @@ export class GitHubIssueProviderService {
     if (!authority.allowed) {
       throw new GitHubProviderAuthorityError(
         authority.reason?.trim() || `Operation ${operation} is outside current authority`,
+      );
+    }
+    if (
+      approvalRequired
+      && authority.approvalId !== context.approvalId
+    ) {
+      throw new GitHubProviderAuthorityError(
+        `Operation ${operation} requires a validated project-contract approval`,
       );
     }
     return {

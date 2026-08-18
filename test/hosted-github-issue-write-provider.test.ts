@@ -58,6 +58,48 @@ const attachment: ProjectAttachmentRecord = {
 };
 
 describe("private hosted GitHub issue writes", () => {
+  test("rejects writes outside accepted project authority before provider dispatch", async () => {
+    const restrictedSnapshot = compileProjectContract(renderProjectContract({
+      ...snapshot.contract,
+      autonomousActions: ["github_issue_read"],
+      approvalRequired: ["github_issue_write"],
+    }, {
+      goal: "Exercise project-contract denial of unapproved GitHub writes.",
+      boundaries: "The accepted contract grants issue reads and requires write approval.",
+      evidenceAndHandoff: "No provider request may occur without approval.",
+      escalation: "Grant and validate an approval before retrying a write.",
+    }));
+    const restrictedAttachment = {
+      ...attachment,
+      snapshot: restrictedSnapshot,
+    };
+    let providerCalls = 0;
+    const mounted = mountHostedGitHubIssueProviderFromEnv(
+      ledgerWithReceipts(
+        new InMemoryGitHubProviderReceiptStore(),
+        restrictedAttachment,
+      ),
+      providerEnv(true),
+      {
+        fetch: (async () => {
+          providerCalls += 1;
+          return Response.json({ message: "must not dispatch" });
+        }) as unknown as typeof fetch,
+        now: () => fixedNow,
+      },
+    );
+
+    await expect(mounted.createIssue!({
+      project,
+      repository: repositoryFullName,
+      actorId: "api-token:unapproved-write",
+      clientId: "mcp:api-token:unapproved-write",
+      title: "Must not be created",
+      idempotencyKey: "unapproved-create-1",
+    })).rejects.toThrow("requires approval under the accepted project contract");
+    expect(providerCalls).toBe(0);
+  });
+
   test("creates, replays across remount, updates, and comments with exact scopes and readback", async () => {
     const receipts = new InMemoryGitHubProviderReceiptStore();
     const calls: Array<{
@@ -419,8 +461,9 @@ describe("private hosted GitHub issue writes", () => {
 
 function ledgerWithReceipts(
   receipts: GitHubProviderReceiptStore,
+  acceptedAttachment: ProjectAttachmentRecord = attachment,
 ): WorkLedger & ProjectAttachmentLedger & GitHubProviderReceiptStore {
-  return Object.assign(fakeLedger(), {
+  return Object.assign(fakeLedger(acceptedAttachment), {
     reserveGitHubProviderReceipt:
       receipts.reserveGitHubProviderReceipt.bind(receipts),
     updateGitHubProviderReceipt:
@@ -430,10 +473,12 @@ function ledgerWithReceipts(
   });
 }
 
-function fakeLedger(): WorkLedger & ProjectAttachmentLedger {
+function fakeLedger(
+  acceptedAttachment: ProjectAttachmentRecord = attachment,
+): WorkLedger & ProjectAttachmentLedger {
   return {
     async getProjectAttachment(requestedProject: string) {
-      return requestedProject === project ? attachment : null;
+      return requestedProject === project ? acceptedAttachment : null;
     },
     async acceptProjectAttachment() {
       throw new Error("acceptProjectAttachment is outside this test");
