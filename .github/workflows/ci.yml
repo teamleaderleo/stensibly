@@ -9,7 +9,6 @@ on:
       - opened
       - synchronize
       - reopened
-      - edited
       - labeled
       - unlabeled
       - converted_to_draft
@@ -187,13 +186,14 @@ jobs:
   browser-evidence:
     if: >-
       ${{ (github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.ref != github.event.repository.default_branch &&
+      ((github.event.pull_request.head.repo.full_name != github.repository ||
+      github.event.pull_request.head.ref != github.event.repository.default_branch) &&
       (github.event.action == 'opened' ||
       github.event.action == 'synchronize' ||
       github.event.action == 'reopened' ||
       github.event.action == 'ready_for_review' ||
-      (github.event.action == 'unlabeled' &&
-      github.event.label.name == 'ci:red-control')) &&
+      github.event.action == 'labeled' ||
+      github.event.action == 'unlabeled') &&
       !(github.event.pull_request.draft &&
       contains(github.event.pull_request.labels.*.name, 'ci:red-control')))) &&
       ((github.event_name != 'workflow_dispatch' &&
@@ -253,13 +253,14 @@ jobs:
   test:
     if: >-
       ${{ (github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.ref != github.event.repository.default_branch &&
+      ((github.event.pull_request.head.repo.full_name != github.repository ||
+      github.event.pull_request.head.ref != github.event.repository.default_branch) &&
       (github.event.action == 'opened' ||
       github.event.action == 'synchronize' ||
       github.event.action == 'reopened' ||
       github.event.action == 'ready_for_review' ||
-      (github.event.action == 'unlabeled' &&
-      github.event.label.name == 'ci:red-control')) &&
+      github.event.action == 'labeled' ||
+      github.event.action == 'unlabeled') &&
       !(github.event.pull_request.draft &&
       contains(github.event.pull_request.labels.*.name, 'ci:red-control')))) &&
       ((github.event_name != 'workflow_dispatch' &&
@@ -335,13 +336,14 @@ jobs:
   runtime-parity:
     if: >-
       ${{ (github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.ref != github.event.repository.default_branch &&
+      ((github.event.pull_request.head.repo.full_name != github.repository ||
+      github.event.pull_request.head.ref != github.event.repository.default_branch) &&
       (github.event.action == 'opened' ||
       github.event.action == 'synchronize' ||
       github.event.action == 'reopened' ||
       github.event.action == 'ready_for_review' ||
-      (github.event.action == 'unlabeled' &&
-      github.event.label.name == 'ci:red-control')) &&
+      github.event.action == 'labeled' ||
+      github.event.action == 'unlabeled') &&
       !(github.event.pull_request.draft &&
       contains(github.event.pull_request.labels.*.name, 'ci:red-control')))) &&
       ((github.event_name != 'workflow_dispatch' &&
@@ -509,13 +511,14 @@ jobs:
     if: >-
       ${{ always() &&
       (github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.ref != github.event.repository.default_branch &&
+      ((github.event.pull_request.head.repo.full_name != github.repository ||
+      github.event.pull_request.head.ref != github.event.repository.default_branch) &&
       (github.event.action == 'opened' ||
       github.event.action == 'synchronize' ||
       github.event.action == 'reopened' ||
       github.event.action == 'ready_for_review' ||
-      (github.event.action == 'unlabeled' &&
-      github.event.label.name == 'ci:red-control')) &&
+      github.event.action == 'labeled' ||
+      github.event.action == 'unlabeled') &&
       !(github.event.pull_request.draft &&
       contains(github.event.pull_request.labels.*.name, 'ci:red-control')))) }}
     runs-on: ubuntu-latest

@@ -23,7 +23,6 @@ describe("red-control CI profile", () => {
       "opened",
       "synchronize",
       "reopened",
-      "edited",
       "labeled",
       "unlabeled",
       "converted_to_draft",
@@ -32,6 +31,7 @@ describe("red-control CI profile", () => {
     ]) {
       expect(workflow).toContain(`      - ${activity}`);
     }
+    expect(workflow).not.toContain("      - edited");
     expect(workflow).toContain(
       "format('pr-{0}-{1}', github.event.pull_request.number,",
     );
