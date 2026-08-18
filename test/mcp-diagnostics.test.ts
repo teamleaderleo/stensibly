@@ -258,7 +258,12 @@ async function writeFailureDiagnostic(
       [MCP_FAILURE_STAGE_HEADER]: "request_execution",
     },
   });
-  const diagnosed = await withMcpDiagnostics(request, response);
+  const diagnosed = await withMcpDiagnostics(request, response, undefined, {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: { name: tool, arguments: args },
+  });
   const payload = await diagnosed.json() as {
     error?: { data?: Record<string, unknown> };
   };
@@ -320,10 +325,45 @@ describe("MCP gateway validation diagnostics", () => {
           recommendedAction: "fix_request",
           manifestFingerprint: MCP_CORE_TOOL_MANIFEST_FINGERPRINT,
           manifestToolCount: MCP_CORE_TOOL_NAMES.length,
-          method: "initialize",
         });
       }
     } finally {
+      store.close();
+    }
+  });
+
+  test("does not parse request bodies rejected before authentication", async () => {
+    const store = new StensiblyStore(":memory:");
+    const originalJson = Request.prototype.json;
+    let requestBodyParses = 0;
+    Request.prototype.json = async function () {
+      requestBodyParses += 1;
+      return await originalJson.call(this);
+    };
+    try {
+      const app = createServerApp(store);
+      const response = await app.request("/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": "diag-unauthenticated-body",
+        },
+        body: JSON.stringify(initializeMessage(32, diagnosticsClient)),
+      });
+
+      expect(response.status).toBe(401);
+      expect(requestBodyParses).toBe(0);
+      const payload = await response.json() as {
+        error?: { data?: Record<string, unknown> };
+      };
+      expect(payload.error?.data).toMatchObject({
+        stage: "authentication",
+        requestId: "diag-unauthenticated-body",
+        recommendedAction: "reauthenticate",
+      });
+      expect(payload.error?.data).not.toHaveProperty("method");
+    } finally {
+      Request.prototype.json = originalJson;
       store.close();
     }
   });
