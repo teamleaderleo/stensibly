@@ -6,6 +6,7 @@ Read only the records relevant to the current subsystem or failure class. The is
 
 | Date | Record | Scope | Review when |
 | --- | --- | --- | --- |
+| 2026-08-19 | [Agent work coordination at high parallelism](notes/2026-08-19-agent-work-coordination-retrospective.md) | Many-agent work selection, authority, review, duplicate/stale work, integration economics, and Stensibly/Cultist composition | Operating protocol changes materially, active-work truth becomes machine-derived, or after the next sustained multi-agent wave |
 | 2026-07-28 | [Use one canonical authority record for recurring production automation](notes/2026-07-28-canonical-authority-for-production-automation.md) | W01 OAuth rollout and production-control workflows | The approval-record and production-effect model becomes server-enforced |
 
 ## Active postmortems
