@@ -1,0 +1,151 @@
+name: Cinder 1200 unknown classification repair
+
+on:
+  push:
+    branches:
+      - lumen/1147-mcp-policy-simulation
+    paths:
+      - .github/workflows/cinder-1200-unknown-classification.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cinder-1200-unknown-classification
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1147-mcp-policy-simulation
+          fetch-depth: 2
+          persist-credentials: true
+
+      - name: Verify exact source lease
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "fc7aeeac615e9088583e349117083976dde7074a"
+          test "$(git rev-parse HEAD:src/mcp-capability-policy-simulation-base.ts)" = "d55dfc6277cfa9ebf966dce4aad443b2f996379d"
+          test "$(git rev-parse HEAD:test/mcp-capability-policy-simulation.test.ts)" = "ea4720455d871649f735f692ebacd5b1e7ab958b"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Make unknown evidence exclusive
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("src/mcp-capability-policy-simulation-base.ts")
+          source = source_path.read_text()
+          old = '''  if (difference.currentDecision === "unknown" || difference.candidateDecision === "unknown") {
+            buckets.unknown.push(difference);
+            changed = true;
+          } else {
+          '''
+          new = '''  if (difference.currentDecision === "unknown" || difference.candidateDecision === "unknown") {
+            buckets.unknown.push(difference);
+            return true;
+          } else {
+          '''
+          if source.count(old) != 1:
+              raise SystemExit("unknown classification anchor moved")
+          source_path.write_text(source.replace(old, new, 1))
+
+          test_path = Path("test/mcp-capability-policy-simulation.test.ts")
+          text = test_path.read_text()
+          old_test = '''  test("marks stale and unavailable evidence unknown instead of optimistic", () => {
+            const policies = [writePolicy("github_create_issue")];
+            const result = simulateMcpCapabilityPolicyChange(simulationInput(
+              policies,
+              policies,
+              [
+                subject("subject:stale", "github_create_issue", {
+                  sourceFreshness: "stale",
+                }),
+                subject("subject:missing", "github_create_issue", {
+                  sourceFreshness: "unavailable",
+                }),
+              ],
+            ));
+
+            expect(result.unknown).toHaveLength(2);
+            expect(result.unknown.every((entry) => entry.currentDecision === "unknown")).toBe(true);
+            expect(result.unknown.every((entry) => entry.candidateDecision === "unknown")).toBe(true);
+          });
+          '''
+          new_test = '''  test("keeps stale and unavailable evidence exclusively unknown", () => {
+            const current = [writePolicy("github_create_issue", {
+              risk: "bounded_write",
+              exposure: "core",
+              approval: "none",
+              resolution: { kind: "project_argument", argument: "project" },
+            })];
+            const candidate = [writePolicy("github_create_issue", {
+              risk: "consequential",
+              exposure: "hidden",
+              approval: "tool_managed",
+              resolution: { kind: "item_argument", argument: "id" },
+            })];
+            const result = simulateMcpCapabilityPolicyChange(simulationInput(
+              current,
+              candidate,
+              [
+                subject("subject:stale", "github_create_issue", {
+                  activeWork: true,
+                  sourceFreshness: "stale",
+                }),
+                subject("subject:missing", "github_create_issue", {
+                  activeWork: true,
+                  sourceFreshness: "unavailable",
+                }),
+              ],
+            ));
+
+            expect(result.unknown).toHaveLength(2);
+            expect(result.unknown.every((entry) => entry.currentDecision === "unknown")).toBe(true);
+            expect(result.unknown.every((entry) => entry.candidateDecision === "unknown")).toBe(true);
+            expect(result.newlyAllowed).toEqual([]);
+            expect(result.newlyDenied).toEqual([]);
+            expect(result.approvalChanged).toEqual([]);
+            expect(result.exposureChanged).toEqual([]);
+            expect(result.riskChanged).toEqual([]);
+            expect(result.projectResolutionChanged).toEqual([]);
+            expect(result.activeWorkAffected).toEqual([]);
+          });
+          '''
+          if text.count(old_test) != 1:
+              raise SystemExit("unknown evidence control anchor moved")
+          test_path.write_text(text.replace(old_test, new_test, 1))
+          PY
+          git diff --check
+
+      - name: Validate repaired simulation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/mcp-capability-policy-simulation.test.ts \
+            test/mcp-capability-policy-simulation-revoked-input.test.ts
+
+      - name: Publish workflow-free repaired head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/cinder-1200-unknown-classification.yml
+          git add \
+            src/mcp-capability-policy-simulation-base.ts \
+            test/mcp-capability-policy-simulation.test.ts
+          git diff --cached --check
+          git config user.name "Cinder"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Keep unknown policy effects exclusive"
+          git push origin HEAD:lumen/1147-mcp-policy-simulation
