@@ -261,22 +261,21 @@ The Convex test suite runs in memory and covers competing claims, idempotent com
 
 ## Current product boundary
 
-The hosted coordination foundation is live: Convex state, API-token and browser-session authentication, Cloudflare Worker, REST v1, remote MCP, custom API domain, and static dashboard.
+The hosted coordination system is live and in ongoing dogfood. Stensibly has moved past the original first-pilot question: real work now crosses disposable worker sessions through durable handoffs and provider-backed continuation, while the hosted ledger, REST/MCP surfaces, authority checks, GitHub effects, and reconciliation machinery continue to be exercised and hardened.
 
-The dashboard can inspect shared item state, history, dependencies, reservation capacity, and recent agent runs. The ledger contains early dispatcher, continuation, reservation, run-lifecycle, reconciliation, and authority-fencing mechanics.
+Current work is increasingly about what comes after basic continuity works:
 
-Stensibly is ready for a guarded single-project pilot as a durable coordination system. It is not yet ready for unattended, multi-project autonomy or irreversible external effects.
+- compile project-native worker briefs from durable policy, current state, evidence obligations, and runner profiles;
+- keep useful work moving through local Git and mail when GitHub is unavailable, then reconcile against fresh provider state;
+- project Gmail/Outlook correspondence, current activity, evidence, blockers, and recovery into human-readable Control Room views;
+- run sealed cross-model review and adversarial responsibility/authority recovery drills;
+- reuse exact CI evidence and reduce duplicated validation/deployment work;
+- improve unattended intake, continuation, settlement, and provider ambiguity recovery;
+- preserve a common runner-neutral work/authority model while Codex, Claude Code, local tools, email-driven fresh chats, and future runners remain replaceable execution clients.
 
-The next product work should prove the authority-and-responsibility distinction in execution:
+Consequential effects still retain explicit authority fences. Merge, deployment, spending, credential/account changes, and other high-impact operations require the current server-owned grants and approval semantics appropriate to that effect; richer continuity does not widen authority by itself.
 
-1. complete end-to-end claim and run fencing;
-2. make current authority, outstanding responsibility, and approval state legible;
-3. dogfood one real project with one supervisor and one runner at concurrency one;
-4. add durable command inbox/outbox semantics before unattended retries;
-5. add one production-quality runner adapter and a bounded long-lived supervisor;
-6. keep merges, deployments, messages, provider changes, spending, and other consequential effects behind durable human approval until workflow and compensation semantics exist.
-
-See [issue #214](https://github.com/teamleaderleo/stensibly/issues/214) for the guarded pilot boundary.
+For current product direction, see the live portfolio and active programme issues rather than treating the historical guarded-pilot issue as the present status.
 
 ## Documentation
 
