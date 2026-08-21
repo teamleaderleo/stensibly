@@ -56,18 +56,22 @@ export async function handleMcpHttpRequest(
   request: Request,
   options: McpHttpOptions,
 ): Promise<Response> {
-  const diagnosticRequest = request.clone();
-  const response = await handleMcpHttpRequestCore(request, options);
+  let diagnosticPayload: unknown = null;
+  const response = await handleMcpHttpRequestCore(request, options, (body) => {
+    diagnosticPayload = body;
+  });
   return await withMcpDiagnostics(
-    diagnosticRequest,
+    request,
     response,
     mcpToolManifestForLedger(options.ledger),
+    diagnosticPayload,
   );
 }
 
 async function handleMcpHttpRequestCore(
   request: Request,
   options: McpHttpOptions,
+  recordDiagnosticPayload: (body: unknown) => void,
 ): Promise<Response> {
   if (request.method !== "POST") {
     return jsonRpcError(405, -32000, "Method not allowed.", null, {
@@ -107,6 +111,7 @@ async function handleMcpHttpRequestCore(
   } catch {
     return jsonRpcError(400, -32700, "Parse error: Invalid JSON", null);
   }
+  recordDiagnosticPayload(body);
 
   const denial = await authorizePayload(options.ledger, principal, body);
   if (denial) return denial;

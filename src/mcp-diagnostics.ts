@@ -170,6 +170,7 @@ export async function withMcpDiagnostics(
   request: Request,
   response: Response,
   manifest: McpToolManifestIdentity = MCP_CORE_TOOL_MANIFEST,
+  requestPayload: unknown = null,
 ): Promise<Response> {
   const headers = new Headers(response.headers);
   headers.set(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER, manifest.fingerprint);
@@ -190,7 +191,6 @@ export async function withMcpDiagnostics(
     return copyResponse(response, headers);
   }
 
-  const requestPayload = await readRequestPayload(request);
   const method = requestMethod(requestPayload);
   const tool = requestTool(requestPayload);
   const idempotencyKeyPresent = requestHasIdempotencyKey(requestPayload);
@@ -330,14 +330,6 @@ function isFailureStage(value: string | null): value is McpFailureStage {
     "request_execution",
     "request_validation",
   ].includes(value ?? "");
-}
-
-async function readRequestPayload(request: Request): Promise<unknown> {
-  try {
-    return await request.json();
-  } catch {
-    return null;
-  }
 }
 
 function requestMethod(payload: unknown): string | undefined {
