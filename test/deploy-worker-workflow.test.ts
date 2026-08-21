@@ -4,6 +4,23 @@ const workflowPath = new URL("../.github/workflows/deploy-worker.yml", import.me
 const workflow = await Bun.file(workflowPath).text();
 
 describe("production Worker deployment workflow", () => {
+  test("pins action code before production secrets are available", () => {
+    const actionReferences = [...workflow.matchAll(/uses:\s+[^@\s]+@([^\s]+)/gu)];
+
+    expect(actionReferences.length).toBeGreaterThan(0);
+    for (const [, revision] of actionReferences) {
+      expect(revision).toMatch(/^[0-9a-f]{40}$/u);
+    }
+    expect(workflow).toContain(
+      "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3",
+    );
+    expect(workflow).toContain(
+      "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0",
+    );
+    expect(workflow).toContain("permissions:\n  contents: read");
+    expect(workflow).not.toContain("issues: write");
+  });
+
   test("deploys relevant main changes automatically and keeps manual recovery", () => {
     expect(workflow).toContain("push:");
     expect(workflow).toContain("branches:");
