@@ -58,6 +58,17 @@ describe("fenced Bun lock writer workflow", () => {
 
   test("isolates credentials from dependency resolution", () => {
     expect(workflow).toContain("persist-credentials: false");
+    expect(workflow).toContain(
+      "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3",
+    );
+    expect(workflow).toContain(
+      "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0",
+    );
+    const actionReferences = [...workflow.matchAll(/uses:\s+[^@\s]+@([^\s]+)/gu)];
+    expect(actionReferences.length).toBeGreaterThan(0);
+    for (const [, revision] of actionReferences) {
+      expect(revision).toMatch(/^[0-9a-f]{40}$/u);
+    }
     expect(workflow.match(/GH_TOKEN: \$\{\{ github\.token \}\}/g)).toHaveLength(2);
     expect(workflow).toContain("gh auth setup-git");
     expect(workflow.indexOf("gh auth setup-git")).toBeGreaterThan(
