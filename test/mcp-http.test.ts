@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createApiToken } from "../src/auth.ts";
 import { createMcpServer } from "../src/mcp.ts";
 import { createServerApp } from "../src/server-app.ts";
+import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
 import {
   initializeMessage,
@@ -98,6 +99,31 @@ describe("remote MCP", () => {
       actor: leo,
     }));
     expect(write.status).toBe(403);
+  });
+
+  test("fails closed when an allowlisted token's item project cannot be resolved", async () => {
+    const token = createApiToken(store, {
+      name: "Scoped observer",
+      scopes: ["read"],
+      projects: ["scrapbook"],
+    });
+    const ledger = new SqliteWorkLedger(store);
+    ledger.getItem = async () => {
+      throw new Error("history_window_overflow:artifacts");
+    };
+    const guardedApp = createServerApp(store, { ledger });
+
+    const response = await mcpRequest(
+      guardedApp,
+      token.token,
+      toolCall(6, "list_artifacts", { id: scrapbookItemId }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json() as { error?: { message?: string } };
+    expect(body.error?.message).toBe(
+      "A project is required when a token has a project allowlist",
+    );
   });
 
   test("rejects unclassified tools before constructing the MCP server", async () => {
