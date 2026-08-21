@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createApiToken } from "../src/auth.ts";
 import { createMcpServer } from "../src/mcp.ts";
 import { createServerApp } from "../src/server-app.ts";
+import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
 import {
   initializeMessage,
@@ -98,6 +99,38 @@ describe("remote MCP", () => {
       actor: leo,
     }));
     expect(write.status).toBe(403);
+  });
+
+  test("fails closed when an item project lookup fails unexpectedly", async () => {
+    const token = createApiToken(store, {
+      name: "Scoped writer",
+      scopes: ["write"],
+      projects: ["scrapbook"],
+    });
+    const ledger = new SqliteWorkLedger(store);
+    let eventWrites = 0;
+    ledger.getItemProject = async () => {
+      throw new Error("synthetic project lookup failure");
+    };
+    const recordEvent = ledger.recordEvent.bind(ledger);
+    ledger.recordEvent = async (input) => {
+      eventWrites += 1;
+      return await recordEvent(input);
+    };
+    const guardedApp = createServerApp(store, { ledger });
+
+    const response = await mcpRequest(
+      guardedApp,
+      token.token,
+      toolCall(6, "record_event", {
+        id: scrapbookItemId,
+        type: "security.regression",
+        payload: {},
+      }),
+    );
+
+    expect(response.status).toBe(502);
+    expect(eventWrites).toBe(0);
   });
 
   test("rejects unclassified tools before constructing the MCP server", async () => {

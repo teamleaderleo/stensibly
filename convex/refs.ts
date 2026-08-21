@@ -19,6 +19,7 @@ export const convexApi = {
     create: mutationRef("items:create"),
     list: queryRef("items:list"),
     get: queryRef("items:get"),
+    getProject: queryRef("items:getProject"),
     complete: mutationRef("items:complete"),
     handoff: mutationRef("items:handoff"),
     block: mutationRef("items:block"),

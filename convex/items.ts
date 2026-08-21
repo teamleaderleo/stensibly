@@ -239,6 +239,20 @@ export const get = query({
   },
 });
 
+export const getProject = query({
+  args: { ...serviceArgs, id: v.string() },
+  returns: v.string(),
+  handler: async (ctx, args) => {
+    requireServiceSecret(args.serviceSecret);
+    const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
+    if (!workspace) throw new Error(`Item ${args.id} does not exist`);
+    const item = await getItemByExternalId(ctx, workspace._id, args.id);
+    const project = await ctx.db.get(item.projectId);
+    if (!project) throw new Error(`Item ${args.id} does not exist`);
+    return project.slug;
+  },
+});
+
 export const complete = mutation({
   args: {
     ...serviceArgs,

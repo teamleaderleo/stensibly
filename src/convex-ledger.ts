@@ -183,6 +183,13 @@ export class ConvexWorkLedger implements
     return { ...detail, reservations };
   }
 
+  async getItemProject(id: string): Promise<string> {
+    return await this.client.query(
+      convexApi.items.getProject,
+      this.args({ id }),
+    ) as string;
+  }
+
   async listArtifacts(id: string) {
     await this.ensureBoundedHistoryCapability();
     try {

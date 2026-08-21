@@ -177,6 +177,10 @@ export class SqliteWorkLedger implements
     };
   }
 
+  async getItemProject(id: string) {
+    return this.store.getItem(id).project;
+  }
+
   async listArtifacts(id: string) {
     return listArtifacts(this.store, id);
   }
