@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createHash, createHmac } from "node:crypto";
+import { createHmac } from "node:crypto";
 import {
   GitHubMailWebhookConsumer,
   type GitHubMailWebhookConsumeResult,
