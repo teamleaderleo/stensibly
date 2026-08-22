@@ -42,7 +42,7 @@ describe("project-owned public mail handles", () => {
       project: "quarry",
       projectCode: "QRY",
       internalHandle: "STN-HANDOFF:Q7R4",
-      legacyPublicHandles: ["OLD-REVIEW:Q7R4"],
+      legacyPublicHandles: ["ABC-REVIEW:Q7R4"],
     })).toThrow("same continuation token and class");
 
     expect(() => createMailPublicHandleAliasRecord({
@@ -50,7 +50,7 @@ describe("project-owned public mail handles", () => {
       project: "quarry",
       projectCode: "QRY",
       internalHandle: "STN-HANDOFF:Q7R4",
-      legacyPublicHandles: ["OLD-HANDOFF:7K3Q"],
+      legacyPublicHandles: ["ABC-HANDOFF:7K3Q"],
     })).toThrow("same continuation token and class");
 
     expect(() => parseMailProjectCode("Q0I")).toThrow("Mail project code is invalid");
