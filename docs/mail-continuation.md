@@ -29,6 +29,34 @@ without an old chat transcript.
    leave a compact material checkpoint that lets another disposable chat repeat this
    sequence.
 
+## External project continuation
+
+Mail continuation is useful before a project adopts any Stensibly-specific repository
+integration. When an external project already has clear repository instructions and a
+connected source for its live facts, those instructions remain the worker's operating
+contract. An `STN-*` email is simply a quick rendezvous into the current work.
+
+A fresh worker can therefore use the small loop:
+
+```text
+project instructions
+  -> newest material STN-* checkpoint, when one exists
+  -> fresh source-of-truth read
+  -> continue the bounded outcome
+  -> occasional material checkpoint
+```
+
+A project does not need a `STENSIBLY.md`, Stensibly-managed GitHub provider binding, or
+MCP-specific launch path merely to use this relay. Those capabilities may support
+later effects when the project actually needs them. Stensibly may observe repository
+activity and update mail on material review, blocker, decision, recovery, or handoff
+transitions while routine provider noise remains quiet.
+
+Email remains the reminder and entry surface; Stensibly retains durable coordination
+state; the referenced repository/provider owns its live facts. If Stensibly or mail is
+unavailable, the external project's normal repository-native recovery path must remain
+sufficient.
+
 For a fresh chat that starts without an exact handle and asks for the oldest actionable
 handoff, highest-value eligible review, or one useful digest lane, follow
 [`MAIL-UX-SELECTION.md`](MAIL-UX-SELECTION.md). That path uses bounded Gmail checkpoint
