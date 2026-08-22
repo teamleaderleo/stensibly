@@ -1,0 +1,539 @@
+name: Cedar 1160 context snapshot repair
+
+on:
+  push:
+    branches:
+      - lumen/1146-execution-recipes
+    paths:
+      - .github/workflows/cedar-1160-context-snapshot-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cedar-1160-context-snapshot-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1146-execution-recipes
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact source and current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:src/execution-recipe.ts)" = "aee287e6a6c83327312e0ea2f9c0fe9a216a9b64"
+          test "$(git rev-parse HEAD:test/execution-recipe.test.ts)" = "c62525d8345dee56d9f178b4621d70116d9f58f8"
+          test "$(git rev-parse HEAD:test/execution-recipe-boundary.test.ts)" = "cf641ac8cd2102e828238eef2015c7511adbc1d6"
+          test "$(git rev-parse HEAD:test/execution-recipe-input-inspection.test.ts)" = "b6374e943a5a33e92c7c16633699cb2d0350e133"
+          git cat-file -e e78ae196c31cc8ba9416bb8d8a050a98cb61a32a^{commit}
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Apply closed-schema snapshots and checkpoint coherence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("src/execution-recipe.ts")
+          text = source.read_text()
+
+          compile_old = '''export function compileExecutionRecipe(value: ExecutionRecipe): Readonly<ExecutionRecipe> {
+            const detached = detachInputGraph(value);
+            const recipe = admitRecipe(detached);
+          '''
+          compile_new = '''export function compileExecutionRecipe(value: ExecutionRecipe): Readonly<ExecutionRecipe> {
+            const detached = detachRecipeInput(value);
+            const recipe = admitRecipe(detached);
+          '''
+          compile_old = "\n".join(line[10:] if line.startswith("          ") else line for line in compile_old.splitlines()) + "\n"
+          compile_new = "\n".join(line[10:] if line.startswith("          ") else line for line in compile_new.splitlines()) + "\n"
+          if text.count(compile_old) != 1:
+            raise SystemExit("compile detachment anchor moved")
+          text = text.replace(compile_old, compile_new, 1)
+
+          instantiate_old = '''export function instantiateExecutionRecipe(
+            value: InstantiateExecutionRecipeInput,
+          ): InstantiatedExecutionRecipePlan {
+            const detached = detachInputGraph(value);
+          '''
+          instantiate_new = '''export function instantiateExecutionRecipe(
+            value: InstantiateExecutionRecipeInput,
+          ): InstantiatedExecutionRecipePlan {
+            const detached = detachInstantiationInput(value);
+          '''
+          instantiate_old = "\n".join(line[10:] if line.startswith("          ") else line for line in instantiate_old.splitlines()) + "\n"
+          instantiate_new = "\n".join(line[10:] if line.startswith("          ") else line for line in instantiate_new.splitlines()) + "\n"
+          if text.count(instantiate_old) != 1:
+            raise SystemExit("instantiate detachment anchor moved")
+          text = text.replace(instantiate_old, instantiate_new, 1)
+
+          start = text.index('function detachInputGraph(value: unknown): unknown {')
+          end = text.index('function arrayLength(value: unknown[]): number {', start)
+          replacement = r'''interface InputSnapshotBudget {
+  objects: number;
+}
+
+function detachRecipeInput(
+  value: unknown,
+  budget: InputSnapshotBudget = { objects: 0 },
+): ExecutionRecipe {
+  const record = requireCallerRecord(value, budget);
+  return {
+    recipeId: descriptorValue(record, "recipeId") as string,
+    version: descriptorValue(record, "version") as string,
+    outcomeClass: descriptorValue(record, "outcomeClass") as string,
+    description: descriptorValue(record, "description") as string,
+    parameterSchema: snapshotCallerArray(
+      descriptorValue(record, "parameterSchema"),
+      budget,
+      32,
+      (entry, index) => detachRecipeParameter(entry, budget, index),
+    ),
+    acceptedProjectProfiles: snapshotScalarArray(
+      descriptorValue(record, "acceptedProjectProfiles"), budget, 32,
+    ) as string[],
+    requiredCapabilities: snapshotScalarArray(
+      descriptorValue(record, "requiredCapabilities"), budget, 64,
+    ) as string[],
+    requiredInputs: snapshotScalarArray(
+      descriptorValue(record, "requiredInputs"), budget, 32,
+    ) as string[],
+    orderedPhases: snapshotCallerArray(
+      descriptorValue(record, "orderedPhases"),
+      budget,
+      32,
+      (entry, index) => detachRecipePhase(entry, budget, index),
+    ),
+    checks: snapshotScalarArray(
+      descriptorValue(record, "checks"), budget, 64,
+    ) as string[],
+    checkpointPolicy: descriptorValue(record, "checkpointPolicy") as ExecutionRecipeCheckpointPolicy,
+    stopConditions: snapshotScalarArray(
+      descriptorValue(record, "stopConditions"), budget, 64,
+    ) as string[],
+    approvalPredicates: snapshotScalarArray(
+      descriptorValue(record, "approvalPredicates"), budget, 64,
+    ) as string[],
+    budgetEnvelope: detachRecipeBudget(
+      descriptorValue(record, "budgetEnvelope"), budget,
+    ),
+    allowedArtifacts: snapshotScalarArray(
+      descriptorValue(record, "allowedArtifacts"), budget, 64,
+    ) as string[],
+    continuationPolicy: descriptorValue(record, "continuationPolicy") as ExecutionRecipeContinuationPolicy,
+    recoveryPolicy: descriptorValue(record, "recoveryPolicy") as ExecutionRecipeRecoveryPolicy,
+  };
+}
+
+function detachRecipeParameter(
+  value: unknown,
+  budget: InputSnapshotBudget,
+  _index: number,
+): ExecutionRecipeParameter {
+  const record = requireCallerRecord(value, budget);
+  return {
+    name: descriptorValue(record, "name") as string,
+    kind: descriptorValue(record, "kind") as ExecutionRecipeParameterKind,
+    required: descriptorValue(record, "required") as boolean,
+    minimum: descriptorValue(record, "minimum") as number | null,
+    maximum: descriptorValue(record, "maximum") as number | null,
+    allowedValues: snapshotScalarArray(
+      descriptorValue(record, "allowedValues"), budget, 32,
+    ) as string[],
+  };
+}
+
+function detachRecipePhase(
+  value: unknown,
+  budget: InputSnapshotBudget,
+  _index: number,
+): ExecutionRecipePhase {
+  const record = requireCallerRecord(value, budget);
+  return {
+    id: descriptorValue(record, "id") as string,
+    title: descriptorValue(record, "title") as string,
+    kind: descriptorValue(record, "kind") as ExecutionRecipePhaseKind,
+    requiredCapabilities: snapshotScalarArray(
+      descriptorValue(record, "requiredCapabilities"), budget, 32,
+    ) as string[],
+    requiredChecks: snapshotScalarArray(
+      descriptorValue(record, "requiredChecks"), budget, 32,
+    ) as string[],
+    checkpoint: descriptorValue(record, "checkpoint") as boolean,
+  };
+}
+
+function detachRecipeBudget(
+  value: unknown,
+  budget: InputSnapshotBudget,
+): ExecutionRecipeBudgetEnvelope {
+  const record = requireCallerRecord(value, budget);
+  return {
+    maxWallMinutes: descriptorValue(record, "maxWallMinutes") as number,
+    maxSteps: descriptorValue(record, "maxSteps") as number,
+    maxCostMicros: descriptorValue(record, "maxCostMicros") as number,
+  };
+}
+
+function detachInstantiationInput(
+  value: unknown,
+): InstantiateExecutionRecipeInput {
+  const budget: InputSnapshotBudget = { objects: 0 };
+  const record = requireCallerRecord(value, budget);
+  const recipe = detachRecipeInput(descriptorValue(record, "recipe"), budget);
+  const admittedRecipe = admitRecipe(recipe);
+  return {
+    recipe,
+    project: descriptorValue(record, "project") as string,
+    projectProfile: descriptorValue(record, "projectProfile") as string,
+    repository: descriptorValue(record, "repository") as string,
+    baseRevision: descriptorValue(record, "baseRevision") as string,
+    workGeneration: descriptorValue(record, "workGeneration") as number,
+    policyRevision: descriptorValue(record, "policyRevision") as string,
+    runnerProfile: descriptorValue(record, "runnerProfile") as string,
+    authorityGeneration: descriptorValue(record, "authorityGeneration") as number,
+    parameters: detachDeclaredParameters(
+      descriptorValue(record, "parameters"), admittedRecipe.parameterSchema, budget,
+    ) as Record<string, string | number | boolean>,
+  };
+}
+
+function detachDeclaredParameters(
+  value: unknown,
+  schema: readonly ExecutionRecipeParameter[],
+  budget: InputSnapshotBudget,
+): Record<string, unknown> {
+  const record = requireCallerRecord(value, budget);
+  const result: Record<string, unknown> = {};
+  for (const parameter of schema) {
+    Object.defineProperty(result, parameter.name, {
+      value: descriptorValue(record, parameter.name),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return result;
+}
+
+function snapshotScalarArray(
+  value: unknown,
+  budget: InputSnapshotBudget,
+  maximumLength: number,
+): unknown[] {
+  return snapshotCallerArray(
+    value, budget, maximumLength, (entry) => entry,
+  );
+}
+
+function snapshotCallerArray<T>(
+  value: unknown,
+  budget: InputSnapshotBudget,
+  maximumLength: number,
+  snapshotEntry: (entry: unknown, index: number) => T,
+): T[] {
+  const array = requireCallerArray(value, budget);
+  const length = arrayLength(array);
+  if (length > maximumLength || length > maximumArrayLength) {
+    throw new TypeError("Execution recipe input inspection exceeded its limit");
+  }
+  const result: T[] = [];
+  for (let index = 0; index < length; index += 1) {
+    result.push(snapshotEntry(descriptorValue(array, String(index)), index));
+  }
+  return result;
+}
+
+function requireCallerRecord(
+  value: unknown,
+  budget: InputSnapshotBudget,
+): object {
+  if (value === null || typeof value !== "object") throw inspectionError();
+  noteInputObject(budget);
+  try {
+    if (Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+      throw inspectionError();
+    }
+  } catch (error) {
+    if (isInspectionError(error)) throw error;
+    throw inspectionError();
+  }
+  return value;
+}
+
+function requireCallerArray(
+  value: unknown,
+  budget: InputSnapshotBudget,
+): unknown[] {
+  if (value === null || typeof value !== "object") throw inspectionError();
+  noteInputObject(budget);
+  try {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+      throw inspectionError();
+    }
+  } catch (error) {
+    if (isInspectionError(error)) throw error;
+    throw inspectionError();
+  }
+  return value as unknown[];
+}
+
+function noteInputObject(budget: InputSnapshotBudget): void {
+  budget.objects += 1;
+  if (budget.objects > maximumInputObjects) {
+    throw new TypeError("Execution recipe input inspection exceeded its limit");
+  }
+}
+
+'''
+          text = text[:start] + replacement + text[end:]
+
+          checks_anchor = '''  const checks = identityArray(
+    dataValue(value, "checks"),
+    64,
+    "Execution recipe checks",
+    false,
+  );
+  return {
+'''
+          checks_replacement = '''  const checks = identityArray(
+    dataValue(value, "checks"),
+    64,
+    "Execution recipe checks",
+    false,
+  );
+  const phases = admitPhases(
+    dataValue(value, "orderedPhases"), capabilities, checks,
+  );
+  const checkpointPolicy = enumValue(
+    dataValue(value, "checkpointPolicy"),
+    checkpointPolicySet,
+    "Execution recipe checkpoint policy",
+  );
+  const recoveryPolicy = enumValue(
+    dataValue(value, "recoveryPolicy"),
+    recoveryPolicySet,
+    "Execution recipe recovery policy",
+  );
+  assertCheckpointRecoveryCoherence(phases, checkpointPolicy, recoveryPolicy);
+  return {
+'''
+          if text.count(checks_anchor) != 1:
+            raise SystemExit("recipe checks anchor moved")
+          text = text.replace(checks_anchor, checks_replacement, 1)
+
+          old_phases = '''    orderedPhases: admitPhases(
+      dataValue(value, "orderedPhases"),
+      capabilities,
+      checks,
+    ),
+'''
+          if text.count(old_phases) != 1:
+            raise SystemExit("phase admission anchor moved")
+          text = text.replace(old_phases, '    orderedPhases: phases,\n', 1)
+
+          old_checkpoint = '''    checkpointPolicy: enumValue(
+      dataValue(value, "checkpointPolicy"),
+      checkpointPolicySet,
+      "Execution recipe checkpoint policy",
+    ),
+'''
+          if text.count(old_checkpoint) != 1:
+            raise SystemExit("checkpoint policy anchor moved")
+          text = text.replace(old_checkpoint, '    checkpointPolicy,\n', 1)
+
+          old_recovery = '''    recoveryPolicy: enumValue(
+      dataValue(value, "recoveryPolicy"),
+      recoveryPolicySet,
+      "Execution recipe recovery policy",
+    ),
+'''
+          if text.count(old_recovery) != 1:
+            raise SystemExit("recovery policy anchor moved")
+          text = text.replace(old_recovery, '    recoveryPolicy,\n', 1)
+
+          helper_anchor = 'function admitBudget(value: unknown): ExecutionRecipeBudgetEnvelope {\n'
+          helper = '''function assertCheckpointRecoveryCoherence(
+  phases: readonly ExecutionRecipePhase[],
+  checkpointPolicy: ExecutionRecipeCheckpointPolicy,
+  recoveryPolicy: ExecutionRecipeRecoveryPolicy,
+): void {
+  const checkpointCount = phases.filter((phase) => phase.checkpoint).length;
+  if (checkpointPolicy === "none" && checkpointCount !== 0) {
+    throw new RangeError(
+      "Execution recipe none checkpoint policy cannot mark checkpoint phases",
+    );
+  }
+  if (checkpointPolicy === "phase" && checkpointCount === 0) {
+    throw new RangeError(
+      "Execution recipe phase checkpoint policy requires a checkpoint phase",
+    );
+  }
+  if (
+    recoveryPolicy === "resume_checkpoint"
+    && (checkpointPolicy === "none" || checkpointCount === 0)
+  ) {
+    throw new RangeError(
+      "Execution recipe checkpoint recovery requires an admitted checkpoint phase",
+    );
+  }
+}
+
+function admitBudget(value: unknown): ExecutionRecipeBudgetEnvelope {
+'''
+          if text.count(helper_anchor) != 1:
+            raise SystemExit("budget helper anchor moved")
+          text = text.replace(helper_anchor, helper, 1)
+          source.write_text(text)
+
+          test_path = Path("test/execution-recipe.test.ts")
+          tests = test_path.read_text()
+          marker = '  test("rejects credential retention, undeclared phase references, and unbounded versions", () => {\n'
+          addition = '''  test("enforces checkpoint and recovery coherence", () => {
+    const noneWithPhase = recipe();
+    noneWithPhase.checkpointPolicy = "none";
+    noneWithPhase.recoveryPolicy = "restart_phase";
+    expect(() => compileExecutionRecipe(noneWithPhase)).toThrow(
+      "none checkpoint policy cannot mark checkpoint phases",
+    );
+
+    const phaseWithoutCheckpoint = recipe();
+    phaseWithoutCheckpoint.orderedPhases = phaseWithoutCheckpoint.orderedPhases.map(
+      (phase) => ({ ...phase, checkpoint: false }),
+    );
+    phaseWithoutCheckpoint.recoveryPolicy = "restart_phase";
+    expect(() => compileExecutionRecipe(phaseWithoutCheckpoint)).toThrow(
+      "phase checkpoint policy requires a checkpoint phase",
+    );
+
+    const resumeWithoutCheckpoint = recipe();
+    resumeWithoutCheckpoint.checkpointPolicy = "manual";
+    resumeWithoutCheckpoint.orderedPhases = resumeWithoutCheckpoint.orderedPhases.map(
+      (phase) => ({ ...phase, checkpoint: false }),
+    );
+    expect(() => compileExecutionRecipe(resumeWithoutCheckpoint)).toThrow(
+      "checkpoint recovery requires an admitted checkpoint phase",
+    );
+
+    const validNone = recipe();
+    validNone.checkpointPolicy = "none";
+    validNone.recoveryPolicy = "restart_phase";
+    validNone.orderedPhases = validNone.orderedPhases.map(
+      (phase) => ({ ...phase, checkpoint: false }),
+    );
+    expect(() => compileExecutionRecipe(validNone)).not.toThrow();
+
+    const validManual = recipe();
+    validManual.checkpointPolicy = "manual";
+    expect(() => compileExecutionRecipe(validManual)).not.toThrow();
+  });
+
+'''
+          if marker not in tests or "enforces checkpoint and recovery coherence" in tests:
+            raise SystemExit("checkpoint test anchor moved")
+          test_path.write_text(tests.replace(marker, addition + marker, 1))
+
+          inspection_path = Path("test/execution-recipe-input-inspection.test.ts")
+          inspection = inspection_path.read_text()
+          marker = '\n});\n'
+          addition = r'''
+
+  test("ignores nested decorations that reuse other recipe field names", () => {
+    const recipe = structuredClone(exampleExecutionRecipes()[0]!) as ExecutionRecipe;
+    Object.defineProperty(recipe.parameterSchema[0]!, "title", {
+      value: "caller decoration",
+      enumerable: true,
+    });
+    Object.defineProperty(recipe.orderedPhases[0]!, "maximum", {
+      value: 99,
+      enumerable: true,
+    });
+
+    expect(() => compileExecutionRecipe(recipe)).not.toThrow();
+  });
+
+  test("does not enumerate nested recipe arrays or instantiation parameters", () => {
+    const recipe = structuredClone(exampleExecutionRecipes()[0]!) as ExecutionRecipe;
+    let arrayOwnKeys = 0;
+    recipe.parameterSchema = new Proxy(recipe.parameterSchema, {
+      ownKeys() {
+        arrayOwnKeys += 1;
+        throw new Error("nested array ownKeys must remain unreachable");
+      },
+    });
+    expect(() => compileExecutionRecipe(recipe)).not.toThrow();
+    expect(arrayOwnKeys).toBe(0);
+
+    const cleanRecipe = structuredClone(exampleExecutionRecipes()[0]!) as ExecutionRecipe;
+    const parameters = new Proxy({ sourcePacketId: "packet:1" }, {
+      ownKeys() {
+        throw new Error("parameter ownKeys must remain unreachable");
+      },
+    });
+    expect(() => instantiateExecutionRecipe({
+      recipe: cleanRecipe,
+      project: "stensibly",
+      projectProfile: "repository-maintenance",
+      repository: "teamleaderleo/stensibly",
+      baseRevision: "a".repeat(40),
+      workGeneration: 1,
+      policyRevision: "policy:1",
+      runnerProfile: "runner:1",
+      authorityGeneration: 1,
+      parameters,
+    })).not.toThrow();
+  });
+'''
+          if inspection.count(marker) != 1 or "ignores nested decorations" in inspection:
+            raise SystemExit("inspection test terminator moved")
+          inspection_path.write_text(inspection.replace(marker, addition + marker, 1))
+          PY
+          git diff --check
+
+      - name: Validate complete repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test \
+            test/execution-recipe.test.ts \
+            test/execution-recipe-boundary.test.ts \
+            test/execution-recipe-input-inspection.test.ts
+
+      - name: Publish one workflow-free current-main commit
+        shell: bash
+        env:
+          MAIN: e78ae196c31cc8ba9416bb8d8a050a98cb61a32a
+          CARRIER_SHA: ${{ github.sha }}
+          HEAD_REF: lumen/1146-execution-recipes
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/oriole-1160-checkpoint-coherence.yml
+          rm -f .github/workflows/cedar-1160-context-snapshot-repair.yml
+          git reset --mixed "$MAIN"
+          mapfile -t changed < <(git status --short | sed -E 's/^.. //' | sort)
+          test "${#changed[@]}" -eq 4
+          printf '%s\n' "${changed[@]}" | grep -qx 'src/execution-recipe.ts'
+          printf '%s\n' "${changed[@]}" | grep -qx 'test/execution-recipe.test.ts'
+          printf '%s\n' "${changed[@]}" | grep -qx 'test/execution-recipe-boundary.test.ts'
+          printf '%s\n' "${changed[@]}" | grep -qx 'test/execution-recipe-input-inspection.test.ts'
+          test "$(printf '%s\n' "${changed[@]}" | grep -c '^\.github/' || true)" -eq 0
+          git config user.name "Cedar"
+          git config user.email "actions@users.noreply.github.com"
+          git add src test
+          git diff --cached --check
+          git commit -m "Bound reusable execution recipe inputs"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$CARRIER_SHA"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${CARRIER_SHA}" origin "HEAD:refs/heads/${HEAD_REF}"
