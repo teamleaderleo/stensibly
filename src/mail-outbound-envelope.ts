@@ -1,4 +1,5 @@
 import { sha256, stableJson } from "./canonical-json.js";
+import { createMailPublicHandle } from "./mail-public-handle.js";
 import {
   exactMailDisplayText,
   exactMailThreadIdentifier,
@@ -31,6 +32,7 @@ export interface MailOutboundEnvelopeInput {
   threadState: MailThreadState;
   continuationRoute?: MailContinuationRoute | null;
   references?: readonly MailSourceReference[];
+  publicProjectCode?: string | null;
 }
 
 export interface MailOutboundEnvelope {
@@ -81,9 +83,9 @@ export function renderMailOutboundEnvelope(
   const semantics = admitEnvelopeSemantics(input, thread);
   const materialFingerprint = sha256(stableJson(semantics));
   const launchLine = semantics.continuationRoute === null
-    ? `Continue ${thread.handle}.`
-    : `In ${semantics.continuationRoute.mailProvider}, continue ${thread.handle}. Then refresh the referenced ${semantics.continuationRoute.sourceSystem} state.`;
-  const subject = `[${thread.handle}] ${thread.canonicalSubject}`;
+    ? `Continue ${semantics.handle}.`
+    : `In ${semantics.continuationRoute.mailProvider}, continue ${semantics.handle}. Then refresh the referenced ${semantics.continuationRoute.sourceSystem} state.`;
+  const subject = `[${semantics.handle}] ${thread.canonicalSubject}`;
   const body = renderBody(semantics, launchLine);
   if (Buffer.byteLength(body, "utf8") > maxBodyBytes) {
     throw new RangeError("Mail outbound body exceeds the bounded first-slice size");
@@ -123,10 +125,13 @@ function admitEnvelopeSemantics(
     800,
   );
   const references = admitReferences(input.references ?? []);
+  const handle = input.publicProjectCode === undefined || input.publicProjectCode === null
+    ? thread.handle
+    : createMailPublicHandle(input.publicProjectCode, thread.handle);
   return Object.freeze({
     version: 1,
     threadId: thread.threadId,
-    handle: thread.handle,
+    handle,
     workspace: thread.workspace,
     project: thread.project,
     threadClass: thread.threadClass,
