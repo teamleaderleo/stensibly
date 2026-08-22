@@ -1,4 +1,5 @@
 import {
+  exactMailThreadIdentifier,
   parseMailThreadHandle,
   type MailThreadHandle,
 } from "./mail-thread-contract.js";
@@ -55,8 +56,8 @@ export function createMailPublicHandleAliasRecord(input: {
   internalHandle: string;
   legacyPublicHandles?: readonly string[];
 }): MailPublicHandleAliasRecord {
-  const threadId = exactIdentifier(input.threadId, "Mail thread ID", 240);
-  const project = exactIdentifier(input.project, "Mail project", 120);
+  const threadId = exactMailThreadIdentifier(input.threadId, "Mail thread ID", 240);
+  const project = exactMailThreadIdentifier(input.project, "Mail project", 120);
   const projectCode = parseMailProjectCode(input.projectCode);
   const internalHandle = parseMailThreadHandle(input.internalHandle);
   const preferredPublicHandle = createMailPublicHandle(projectCode, internalHandle);
@@ -122,17 +123,4 @@ export function freezeMailPublicHandleAliasRecord(
 function handleSuffix(handle: string): string {
   const separator = handle.indexOf("-");
   return handle.slice(separator + 1);
-}
-
-function exactIdentifier(value: unknown, label: string, max: number): string {
-  if (
-    typeof value !== "string"
-    || value.length < 1
-    || value.length > max
-    || value !== value.trim()
-    || !/^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*$/u.test(value)
-  ) {
-    throw new TypeError(`${label} is invalid`);
-  }
-  return value;
 }
