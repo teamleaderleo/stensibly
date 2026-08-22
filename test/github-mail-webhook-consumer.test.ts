@@ -10,6 +10,7 @@ import { SqliteMailThreadStore } from "../src/mail-thread-store.ts";
 
 const secret = "github-webhook-secret-for-mail-consumer";
 const repository = "Coreys-Quarry/quarry";
+const canonicalRepository = repository.toLowerCase();
 const headA = "a".repeat(40);
 const headB = "b".repeat(40);
 const base = "c".repeat(40);
@@ -144,14 +145,14 @@ describe("hosted GitHub webhook automatic mail consumer", () => {
     });
     expect(f.publisher.materials).toHaveLength(1);
     expect(f.publisher.materials[0]).toMatchObject({
-      sourceIdentity: `github:${repository}#721`,
+      sourceIdentity: `github:${canonicalRepository}#721`,
       sourceRevision: headA,
       publicProjectCode: "QRY",
       currentMailboxState: {
         operatorAttentionRequired: false,
       },
     });
-    expect(await f.store.getThreadBySource("default", "quarry", `github:${repository}#721`))
+    expect(await f.store.getThreadBySource("default", "quarry", `github:${canonicalRepository}#721`))
       .toMatchObject({
         threadId: "mail_thread_quarry_721",
         handle: "STN-REVIEW:Q7R4",
@@ -169,7 +170,7 @@ describe("hosted GitHub webhook automatic mail consumer", () => {
     const draftResult = await f.consumer.consume(draft);
     expect(draftResult.status).toBe("quiet");
     expect(f.publisher.materials).toHaveLength(0);
-    expect(await f.store.getThreadBySource("default", "quarry", `github:${repository}#721`))
+    expect(await f.store.getThreadBySource("default", "quarry", `github:${canonicalRepository}#721`))
       .toBeNull();
 
     const foreign = await delivery(
