@@ -44,7 +44,8 @@ export type GitHubMailWebhookConsumeResult<Result> =
         | "repository_mismatch"
         | "unsupported_event"
         | "pull_request_unbound"
-        | "current_head_unavailable";
+        | "current_head_unavailable"
+        | "stale_current_head";
     }>
   | GitHubMailAutomaticPublishResult<Result>;
 
@@ -130,10 +131,18 @@ export class GitHubMailWebhookConsumer<Result> {
           prepared.pullRequestNumber,
           prepared.currentHeadRevision,
         );
-    const decision = compileCurrentGitHubMailAttention({
-      thread,
-      signal: prepared.signal,
-    });
+    let decision;
+    try {
+      decision = compileCurrentGitHubMailAttention({
+        thread,
+        signal: prepared.signal,
+      });
+    } catch (error) {
+      if (isStaleCurrentHeadError(error)) {
+        return Object.freeze({ status: "ignored", reason: "stale_current_head" });
+      }
+      throw error;
+    }
     return await this.#automatic.publish(decision);
   }
 }
@@ -300,4 +309,12 @@ function bindingFromThread(
     currentHeadRevision,
     continuesFromThreadId: thread.continuesFromThreadId,
   });
+}
+
+function isStaleCurrentHeadError(error: unknown): boolean {
+  return error instanceof RangeError
+    && (
+      error.message === "GitHub terminal status belongs to a stale pull request revision"
+      || error.message === "GitHub formal review belongs to a stale pull request revision"
+    );
 }
