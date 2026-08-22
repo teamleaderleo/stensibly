@@ -4,6 +4,7 @@ import {
   createGitHubWebhookIngress,
   GitHubWebhookIngressError,
   type GitHubWebhookIngress,
+  type PreparedGitHubWebhookDelivery,
 } from "./github-webhook-ingress.js";
 import type {
   HostedGitHubRepositoryObservationReader,
@@ -71,11 +72,18 @@ export interface HostedGitHubRepositoryObservationSink {
   ): Promise<HostedGitHubRepositoryObservationResult>;
 }
 
+export interface HostedGitHubMailWebhookConsumer {
+  consume(
+    delivery: PreparedGitHubWebhookDelivery,
+  ): Promise<Readonly<{ status: "ignored" | "quiet" | "published" }>>;
+}
+
 export interface HostedProviderCapacityOptions {
   service: ProviderCapacityService;
   githubWebhookSecret: string;
   repositoryObservationSink?: HostedGitHubRepositoryObservationSink;
   repositoryObservationReader?: HostedGitHubRepositoryObservationReader;
+  githubMailConsumer?: HostedGitHubMailWebhookConsumer;
   now?: () => number;
   maxBodyBytes?: number;
 }
@@ -84,9 +92,14 @@ interface NormalizedOptions {
   service: ProviderCapacityService;
   repositoryObservationSink?: HostedGitHubRepositoryObservationSink;
   repositoryObservationReader?: HostedGitHubRepositoryObservationReader;
+  githubMailConsumer?: HostedGitHubMailWebhookConsumer;
   ingress: GitHubWebhookIngress;
   now: () => number;
 }
+
+type HostedGitHubMailWebhookResult = Readonly<{
+  status: "ignored" | "quiet" | "published";
+}>;
 
 export function registerHostedProviderCapacityRoutes(
   app: Hono<StensiblyEnv>,
@@ -124,9 +137,27 @@ export function registerHostedProviderCapacityRoutes(
       }
     }
 
+    let mailResult: HostedGitHubMailWebhookResult | null = null;
+    if (normalized.githubMailConsumer) {
+      try {
+        const result = await normalized.githubMailConsumer.consume(delivery);
+        if (
+          !result
+          || (result.status !== "ignored"
+            && result.status !== "quiet"
+            && result.status !== "published")
+        ) {
+          throw new Error("GitHub mail consumer returned an invalid result");
+        }
+        mailResult = Object.freeze({ status: result.status });
+      } catch {
+        return githubMailAttentionError(context);
+      }
+    }
+
     if (delivery.eventType !== "issue_comment") {
-      return repositoryResult
-        ? repositoryAccepted(context, repositoryResult)
+      return repositoryResult || activeMailResult(mailResult)
+        ? repositoryAccepted(context, repositoryResult, mailResult)
         : ignored(context, "unsupported_event_type");
     }
 
@@ -143,6 +174,7 @@ export function registerHostedProviderCapacityRoutes(
         context,
         "not_pull_request_capacity_observation",
         repositoryResult,
+        mailResult,
       );
     }
     if (
@@ -153,6 +185,7 @@ export function registerHostedProviderCapacityRoutes(
         context,
         "not_coderabbit_capacity_observation",
         repositoryResult,
+        mailResult,
       );
     }
     if (payload.comment.body === null) {
@@ -160,6 +193,7 @@ export function registerHostedProviderCapacityRoutes(
         context,
         "missing_coderabbit_capacity_body",
         repositoryResult,
+        mailResult,
       );
     }
     const capacity = parseCodeRabbitCapacityComment(
@@ -171,6 +205,7 @@ export function registerHostedProviderCapacityRoutes(
         context,
         "unrecognised_coderabbit_capacity_observation",
         repositoryResult,
+        mailResult,
       );
     }
 
@@ -197,6 +232,7 @@ export function registerHostedProviderCapacityRoutes(
         ...(repositoryResult
           ? { repositoryObservation: repositoryAcceptedBody(repositoryResult) }
           : {}),
+        ...automaticMailBody(mailResult),
         capacityObservation: result.observation,
       }, allDuplicate ? 200 : 202);
     } catch (error) {
@@ -268,6 +304,9 @@ function normalizeOptions(options: HostedProviderCapacityOptions): NormalizedOpt
     ...(options.repositoryObservationReader
       ? { repositoryObservationReader: options.repositoryObservationReader }
       : {}),
+    ...(options.githubMailConsumer
+      ? { githubMailConsumer: options.githubMailConsumer }
+      : {}),
     ingress: createGitHubWebhookIngress({
       secret: options.githubWebhookSecret,
       ...(options.maxBodyBytes === undefined
@@ -317,35 +356,55 @@ function repositoryAcceptedBody(
   };
 }
 
+function activeMailResult(
+  result: HostedGitHubMailWebhookResult | null,
+): boolean {
+  return result !== null && result.status !== "ignored";
+}
+
+function automaticMailBody(
+  result: HostedGitHubMailWebhookResult | null,
+): Record<string, unknown> {
+  return activeMailResult(result)
+    ? { automaticMail: { status: result!.status } }
+    : {};
+}
+
 function repositoryAccepted(
   context: Context<StensiblyEnv>,
-  result: HostedGitHubRepositoryObservationResult,
+  result: HostedGitHubRepositoryObservationResult | null,
+  mailResult: HostedGitHubMailWebhookResult | null = null,
 ): Response {
   return context.json({
     accepted: true,
-    duplicate: result.duplicate,
-    repositoryObservation: repositoryAcceptedBody(result),
-  }, result.duplicate ? 200 : 202);
+    duplicate: result?.duplicate ?? false,
+    ...(result ? { repositoryObservation: repositoryAcceptedBody(result) } : {}),
+    ...automaticMailBody(mailResult),
+  }, result?.duplicate === true && !activeMailResult(mailResult) ? 200 : 202);
 }
 
 function ignored(
   context: Context<StensiblyEnv>,
   reason: string,
   repositoryResult: HostedGitHubRepositoryObservationResult | null = null,
+  mailResult: HostedGitHubMailWebhookResult | null = null,
 ): Response {
-  if (!repositoryResult) {
+  if (!repositoryResult && !activeMailResult(mailResult)) {
     return context.json({ accepted: false, ignored: true, reason }, 202);
   }
   return context.json({
     accepted: true,
-    duplicate: repositoryResult.duplicate,
-    repositoryObservation: repositoryAcceptedBody(repositoryResult),
+    duplicate: repositoryResult?.duplicate ?? false,
+    ...(repositoryResult
+      ? { repositoryObservation: repositoryAcceptedBody(repositoryResult) }
+      : {}),
+    ...automaticMailBody(mailResult),
     capacityObservation: {
       accepted: false,
       ignored: true,
       reason,
     },
-  }, repositoryResult.duplicate ? 200 : 202);
+  }, repositoryResult?.duplicate === true && !activeMailResult(mailResult) ? 200 : 202);
 }
 
 function repositoryObservationError(
@@ -355,6 +414,16 @@ function repositoryObservationError(
     error: "GitHub repository observation storage failed",
     code: "backend_failure",
   }, 500);
+}
+
+function githubMailAttentionError(
+  context: Context<StensiblyEnv>,
+): Response {
+  context.header("Retry-After", "60");
+  return context.json({
+    error: "GitHub automatic mail projection failed",
+    code: "temporarily_unavailable",
+  }, 503);
 }
 
 function repositoryObservationReadError(
