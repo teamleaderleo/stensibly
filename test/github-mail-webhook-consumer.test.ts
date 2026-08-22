@@ -188,7 +188,7 @@ describe("hosted GitHub webhook automatic mail consumer", () => {
     f.store.close();
   });
 
-  test("rejects a stale formal review against the verified current PR head", async () => {
+  test("consumes a stale formal review quietly against the verified current PR head", async () => {
     const f = fixture();
     const stale = await delivery(
       "pull_request_review",
@@ -196,9 +196,10 @@ describe("hosted GitHub webhook automatic mail consumer", () => {
       "delivery-review-stale-721",
     );
 
-    await expect(f.consumer.consume(stale)).rejects.toThrow(
-      "GitHub formal review belongs to a stale pull request revision",
-    );
+    expect(await f.consumer.consume(stale)).toEqual({
+      status: "ignored",
+      reason: "stale_current_head",
+    });
     expect(f.publisher.materials).toHaveLength(0);
     f.store.close();
   });
@@ -224,13 +225,14 @@ describe("hosted GitHub webhook automatic mail consumer", () => {
       publicProjectCode: "QRY",
     });
 
-    await expect(f.consumer.consume(await delivery(
+    expect(await f.consumer.consume(await delivery(
       "check_run",
       checkRunPayload(headA, headB),
       "delivery-check-stale-721",
-    ))).rejects.toThrow(
-      "GitHub terminal status belongs to a stale pull request revision",
-    );
+    ))).toEqual({
+      status: "ignored",
+      reason: "stale_current_head",
+    });
     expect(f.publisher.materials).toHaveLength(2);
     f.store.close();
   });
