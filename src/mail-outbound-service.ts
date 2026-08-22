@@ -52,6 +52,7 @@ export interface PublishMailThreadCommand {
   continuationRoute?: MailContinuationRoute | null;
   references?: readonly MailSourceReference[];
   continuesFromHandle?: string | null;
+  publicProjectCode?: string | null;
   mailbox: MailboxBinding;
 }
 
@@ -153,6 +154,7 @@ export class MailOutboundService {
       threadState: command.threadState,
       continuationRoute: command.continuationRoute,
       references: command.references,
+      publicProjectCode: command.publicProjectCode,
     });
 
     const existingProjection = await this.#store.getProviderProjection(
