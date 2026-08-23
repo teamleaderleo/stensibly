@@ -42,6 +42,9 @@
     "STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED": "true",
     "STENSIBLY_GITHUB_DELEGATED_READS_ENABLED": "true",
     "STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED": "true",
+    "STENSIBLY_GITHUB_MAIL_PROJECT": "quarry",
+    "STENSIBLY_GITHUB_MAIL_REPOSITORY": "Coreys-Quarry/quarry",
+    "STENSIBLY_GITHUB_MAIL_PROJECT_CODE": "QRY",
     "STENSIBLY_OUTLOOK_MAILBOX": "cheerleaderleo@outlook.com",
     "STENSIBLY_OUTLOOK_MAILBOX_BINDING_ID": "outlook_operator_primary",
     "STENSIBLY_OUTLOOK_NOTIFICATION_URL": "https://api.stensibly.com/internal/outlook/notifications",
@@ -50,6 +53,7 @@
     "STENSIBLY_GMAIL_MAILBOX": "leoli.4u@gmail.com",
     "STENSIBLY_GMAIL_MAILBOX_BINDING_ID": "gmail_operator_primary",
     "STENSIBLY_GMAIL_WATCH_LABEL_ID": "Label_5",
+    "STENSIBLY_GMAIL_STENSIBLY_LABEL_ID": "Label_6",
     "STENSIBLY_GMAIL_PUBSUB_AUDIENCE": "https://api.stensibly.com/internal/gmail/pubsub"
   },
   "ratelimits": [
