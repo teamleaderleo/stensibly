@@ -5,6 +5,7 @@ import type {
 import {
   crossSourceGitHubObservationFingerprint,
   mapPublicGitHubRepositoryEvent,
+  type PublicGitHubRepositoryObservation,
 } from "./github-public-repository-observation.js";
 import type {
   GitHubPublicEventsClient,
@@ -135,7 +136,11 @@ export class GitHubPublicRepositoryObserver<Result> {
       );
       if (mapped === null) continue;
       supportedEvents += 1;
-      const observation = mapped.observation;
+      // Public Events API objects have stable provider identity while a poll
+      // receipt time changes on every read. Use the immutable event semantic
+      // source time as the synthetic receipt identity so exact provider-event
+      // replays stay byte-identical in the durable observation ledger.
+      const observation = deterministicPublicReplay(mapped.observation);
       const crossFingerprint = crossSourceGitHubObservationFingerprint(observation);
       if (crossSourceFingerprints.has(crossFingerprint)) {
         crossSourceSuppressed += 1;
@@ -191,6 +196,16 @@ export class GitHubPublicRepositoryObserver<Result> {
       ignored,
     });
   }
+}
+
+function deterministicPublicReplay(
+  observation: PublicGitHubRepositoryObservation,
+): PublicGitHubRepositoryObservation {
+  if (observation.receivedAt === observation.sourceTime) return observation;
+  return Object.freeze({
+    ...observation,
+    receivedAt: observation.sourceTime,
+  });
 }
 
 function supportedObservation(
