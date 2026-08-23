@@ -66,8 +66,26 @@ class Ledger implements GitHubPublicObservationLedger {
   }
 }
 
+function eventsPage(options: {
+  initial?: boolean;
+  onAcknowledge?: () => void;
+  values?: readonly unknown[];
+} = {}) {
+  return {
+    status: "events" as const,
+    repository: "coreys-quarry/quarry",
+    polledAt,
+    nextEligibleAt: "2026-08-23T04:01:00.000Z",
+    initial: options.initial ?? false,
+    events: options.values ?? [event()],
+    async acknowledge() {
+      options.onAcknowledge?.();
+    },
+  };
+}
+
 describe("public GitHub repository observer", () => {
-  test("persists a supported event before publishing mail", async () => {
+  test("persists a supported event before publishing and acknowledging", async () => {
     const order: string[] = [];
     const ledger = new Ledger();
     const originalIngest = ledger.ingestRepositoryObservation.bind(ledger);
@@ -79,17 +97,14 @@ describe("public GitHub repository observer", () => {
       repository,
       client: {
         async poll() {
-          return {
-            status: "events" as const,
-            repository: "coreys-quarry/quarry",
-            polledAt,
-            nextEligibleAt: "2026-08-23T04:01:00.000Z",
-            events: [event()],
-          };
+          return eventsPage({ onAcknowledge: () => order.push("ack") });
         },
       },
       ledger,
       mail: {
+        async hasThread() {
+          return false;
+        },
         async consume() {
           order.push("mail");
           return {
@@ -109,31 +124,59 @@ describe("public GitHub repository observer", () => {
       fetchedEvents: 1,
       supportedEvents: 1,
       persistedEvents: 1,
+      baselinedEvents: 0,
       replayedEvents: 0,
       published: 1,
     });
-    expect(order).toEqual(["persist", "mail"]);
+    expect(order).toEqual(["persist", "mail", "ack"]);
   });
 
-  test("replays idempotent mail after an exact durable public duplicate", async () => {
+  test("baselines the first public page durably without historical mail", async () => {
+    const ledger = new Ledger();
+    let mailCalls = 0;
+    let acknowledged = false;
+    const observer = new GitHubPublicRepositoryObserver({
+      repository,
+      client: {
+        async poll() {
+          return eventsPage({
+            initial: true,
+            onAcknowledge: () => { acknowledged = true; },
+          });
+        },
+      },
+      ledger,
+      mail: {
+        async hasThread() {
+          return false;
+        },
+        async consume() {
+          mailCalls += 1;
+          throw new Error("bootstrap must stay quiet");
+        },
+      },
+    });
+    expect(await observer.reconcile()).toMatchObject({
+      persistedEvents: 1,
+      baselinedEvents: 1,
+      published: 0,
+    });
+    expect(mailCalls).toBe(0);
+    expect(acknowledged).toBe(true);
+  });
+
+  test("replays idempotent mail for a duplicate only when its canonical thread exists", async () => {
     const ledger = new Ledger();
     ledger.duplicate = true;
     let mailCalls = 0;
     const observer = new GitHubPublicRepositoryObserver({
       repository,
-      client: {
-        async poll() {
-          return {
-            status: "events" as const,
-            repository: "coreys-quarry/quarry",
-            polledAt,
-            nextEligibleAt: "2026-08-23T04:01:00.000Z",
-            events: [event()],
-          };
-        },
-      },
+      client: { async poll() { return eventsPage(); } },
       ledger,
       mail: {
+        async hasThread() {
+          return true;
+        },
         async consume() {
           mailCalls += 1;
           return {
@@ -146,6 +189,27 @@ describe("public GitHub repository observer", () => {
     });
     expect(await observer.reconcile()).toMatchObject({ replayedEvents: 1, quiet: 1 });
     expect(mailCalls).toBe(1);
+
+    const quietLedger = new Ledger();
+    quietLedger.duplicate = true;
+    const quietObserver = new GitHubPublicRepositoryObserver({
+      repository,
+      client: { async poll() { return eventsPage(); } },
+      ledger: quietLedger,
+      mail: {
+        async hasThread() {
+          return false;
+        },
+        async consume() {
+          throw new Error("replay without a thread must stay quiet");
+        },
+      },
+    });
+    expect(await quietObserver.reconcile()).toMatchObject({
+      replayedEvents: 1,
+      replayWithoutThread: 1,
+      published: 0,
+    });
   });
 
   test("suppresses a public event already represented by signed webhook semantics", async () => {
@@ -165,19 +229,12 @@ describe("public GitHub repository observer", () => {
     let mailCalls = 0;
     const observer = new GitHubPublicRepositoryObserver({
       repository,
-      client: {
-        async poll() {
-          return {
-            status: "events" as const,
-            repository: "coreys-quarry/quarry",
-            polledAt,
-            nextEligibleAt: "2026-08-23T04:01:00.000Z",
-            events: [event()],
-          };
-        },
-      },
+      client: { async poll() { return eventsPage(); } },
       ledger,
       mail: {
+        async hasThread() {
+          return false;
+        },
         async consume() {
           mailCalls += 1;
           throw new Error("mail should be suppressed");
@@ -210,6 +267,9 @@ describe("public GitHub repository observer", () => {
       },
       ledger,
       mail: {
+        async hasThread() {
+          return false;
+        },
         async consume() {
           mailCalls += 1;
           throw new Error("mail should stay quiet");
