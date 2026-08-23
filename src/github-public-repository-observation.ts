@@ -63,7 +63,7 @@ export function mapPublicGitHubRepositoryEvent(
   );
   const receivedAt = canonicalTimestamp(receivedAtValue, "GitHub public event receipt time");
   const payload = record(event.payload, "GitHub public event payload");
-  const payloadDigest = `sha256:${sha256(stableJson(detached))}`;
+  const payloadDigest = sha256(stableJson(detached));
   const deliveryId = `public-event:${id}`;
 
   if (type === "PullRequestEvent") {
@@ -222,7 +222,7 @@ export function crossSourceGitHubObservationFingerprint(
     | "containsRawContent"
   >,
 ): string {
-  return `sha256:${sha256(stableJson({
+  return sha256(stableJson({
     eventType: observation.eventType,
     action: observation.action,
     repository: observation.repository,
@@ -234,7 +234,7 @@ export function crossSourceGitHubObservationFingerprint(
     sourceTime: observation.sourceTime,
     sourceTimeSource: observation.sourceTimeSource,
     containsRawContent: observation.containsRawContent,
-  }))}`;
+  }));
 }
 
 function finalizePublicObservation(input: {
@@ -274,7 +274,7 @@ function finalizePublicObservation(input: {
     observationId: `github-public:${input.eventType}:${input.deliveryId}`,
     deliveryId: input.deliveryId,
     payloadDigest: input.payloadDigest,
-    semanticFingerprint: `sha256:${sha256(stableJson(canonicalSemantics))}`,
+    semanticFingerprint: sha256(stableJson(canonicalSemantics)),
     receivedAt: input.receivedAt,
   });
 }
@@ -307,7 +307,7 @@ function contentRevision(
       name,
       present: false,
       byteLength: 0,
-      sha256: `sha256:${sha256(stableJson({ present: false }))}`,
+      sha256: sha256(stableJson({ present: false })),
     };
   }
   if (typeof value !== "string") {
@@ -325,7 +325,7 @@ function contentRevision(
     name,
     present: true,
     byteLength,
-    sha256: `sha256:${sha256(stableJson({ present: true, content: canonical }))}`,
+    sha256: sha256(stableJson({ present: true, content: canonical })),
   };
 }
 
