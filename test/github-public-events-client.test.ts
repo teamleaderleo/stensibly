@@ -22,7 +22,7 @@ class MemoryStore implements GitHubPublicEventsPollStateStore {
 }
 
 describe("public GitHub Events client", () => {
-  test("persists ETag timing, defers early polls, then sends If-None-Match", async () => {
+  test("advances ETag only after acknowledgement, then defers and sends If-None-Match", async () => {
     const store = new MemoryStore();
     let now = Date.parse("2026-08-23T04:00:00.000Z");
     const requests: Request[] = [];
@@ -53,8 +53,15 @@ describe("public GitHub Events client", () => {
     });
 
     const first = await client.poll();
-    expect(first).toMatchObject({ status: "events", repository: "coreys-quarry/quarry" });
+    expect(first).toMatchObject({
+      status: "events",
+      repository: "coreys-quarry/quarry",
+      initial: true,
+    });
     expect(first.status === "events" ? first.events : []).toHaveLength(1);
+    expect(store.state).toBeNull();
+    if (first.status !== "events") throw new Error("expected events page");
+    await first.acknowledge();
     expect(store.state).toMatchObject({
       repository: "coreys-quarry/quarry",
       etag: 'W/"events-v1"',
@@ -78,6 +85,31 @@ describe("public GitHub Events client", () => {
     expect(requests[1]!.headers.get("authorization")).toBeNull();
     expect(requests[1]!.headers.get("x-github-api-version")).toBe("2022-11-28");
     expect(store.state?.nextEligibleAt).toBe("2026-08-23T04:03:31.000Z");
+  });
+
+  test("leaves the prior cursor unchanged until an events page is acknowledged", async () => {
+    const store = new MemoryStore();
+    store.state = {
+      repository: "coreys-quarry/quarry",
+      etag: 'W/"old"',
+      nextEligibleAt: "2026-08-23T03:59:00.000Z",
+      lastPolledAt: "2026-08-23T03:58:00.000Z",
+    };
+    const client = new GitHubPublicEventsClient({
+      repository,
+      stateStore: store,
+      now: () => Date.parse("2026-08-23T04:00:00.000Z"),
+      fetch: async () => new Response(JSON.stringify([{ id: "2" }]), {
+        status: 200,
+        headers: { ETag: 'W/"new"' },
+      }),
+    });
+    const page = await client.poll();
+    expect(page).toMatchObject({ status: "events", initial: false });
+    expect(store.state?.etag).toBe('W/"old"');
+    if (page.status !== "events") throw new Error("expected events page");
+    await page.acknowledge();
+    expect(store.state?.etag).toBe('W/"new"');
   });
 
   test("rejects response pages above the configured cardinality", async () => {
