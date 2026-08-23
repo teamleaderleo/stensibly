@@ -1,6 +1,9 @@
 import { createHostedAppFromEnv } from "./hosted-app.js";
 import { createHostedGitHubMailConsumerFromEnv } from "./hosted-github-mail-worker.js";
 import {
+  runHostedGitHubPublicRepositoryReconciliation,
+} from "./hosted-github-public-repository-worker.js";
+import {
   enforceOAuthRegistrationAdmission,
   type OAuthRegistrationRateLimiter,
 } from "./mcp-oauth-registration-admission.js";
@@ -60,6 +63,7 @@ export interface CloudflareBindings extends GmailUnattendedEnvironment {
   STENSIBLY_GITHUB_MAIL_PROJECT?: string;
   STENSIBLY_GITHUB_MAIL_REPOSITORY?: string;
   STENSIBLY_GITHUB_MAIL_PROJECT_CODE?: string;
+  STENSIBLY_GITHUB_PUBLIC_EVENTS_FALLBACK_ENABLED?: string;
   STENSIBLY_OUTLOOK_OAUTH_CLIENT_ID?: string;
   STENSIBLY_OUTLOOK_OAUTH_REFRESH_TOKEN?: string;
   STENSIBLY_OUTLOOK_CLIENT_STATE?: string;
@@ -151,9 +155,10 @@ const worker = {
       const results = await Promise.allSettled([
         runOutlookScheduledReconciliation(outlookBindings),
         runGmailScheduledReconciliation(gmailMount),
+        runHostedGitHubPublicRepositoryReconciliation(env),
       ]);
       if (results.some((result) => result.status === "rejected")) {
-        throw new Error("Scheduled mailbox reconciliation failed");
+        throw new Error("Scheduled reconciliation failed");
       }
     })());
   },

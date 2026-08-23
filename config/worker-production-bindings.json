@@ -26,6 +26,7 @@
     { "name": "STENSIBLY_GITHUB_MAIL_PROJECT", "type": "plain_text", "text": "quarry" },
     { "name": "STENSIBLY_GITHUB_MAIL_REPOSITORY", "type": "plain_text", "text": "Coreys-Quarry/quarry" },
     { "name": "STENSIBLY_GITHUB_MAIL_PROJECT_CODE", "type": "plain_text", "text": "QRY" },
+    { "name": "STENSIBLY_GITHUB_PUBLIC_EVENTS_FALLBACK_ENABLED", "type": "plain_text", "text": "true" },
     { "name": "STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS", "type": "secret_text" },
     { "name": "STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS", "type": "secret_text" },
     { "name": "STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS", "type": "secret_text" },

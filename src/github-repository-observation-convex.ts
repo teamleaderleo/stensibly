@@ -2,10 +2,10 @@ import { makeFunctionReference } from "convex/server";
 import type { ConvexCaller } from "./convex-ledger.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
 import {
-  admitGitHubRepositoryObservationEnvelope,
-  admitHostedGitHubRepositoryObservationInput,
-} from "./github-repository-observation-admission.js";
-import type { GitHubRepositoryObservation } from "./github-repository-observation.js";
+  admitAnyGitHubRepositoryObservationEnvelope,
+  admitAnyHostedGitHubRepositoryObservationInput,
+  type AnyGitHubRepositoryObservation,
+} from "./github-repository-observation-any-admission.js";
 import type {
   HostedGitHubRepositoryObservationInput,
   HostedGitHubRepositoryObservationResult,
@@ -47,6 +47,13 @@ export interface ConvexGitHubRepositoryObservationServiceOptions {
   workspace?: string;
 }
 
+type HostedAnyGitHubRepositoryObservationInput = Omit<
+  HostedGitHubRepositoryObservationInput,
+  "observation"
+> & {
+  observation: AnyGitHubRepositoryObservation;
+};
+
 interface ConvexObservationRecord {
   id: string;
   observationId: string;
@@ -74,7 +81,7 @@ interface ReturnAdmissionBudget {
 
 export interface HostedGitHubRepositoryObservationRecord {
   readonly id: string;
-  readonly observation: GitHubRepositoryObservation;
+  readonly observation: AnyGitHubRepositoryObservation;
   readonly createdAt: string;
 }
 
@@ -99,9 +106,9 @@ export class ConvexGitHubRepositoryObservationService
   }
 
   async ingestRepositoryObservation(
-    input: HostedGitHubRepositoryObservationInput,
+    input: HostedAnyGitHubRepositoryObservationInput,
   ): Promise<HostedGitHubRepositoryObservationResult> {
-    const admitted = admitHostedGitHubRepositoryObservationInput(input);
+    const admitted = admitAnyHostedGitHubRepositoryObservationInput(input);
     try {
       const rawResult = await this.#client.mutation(ingestRef, this.#args({
         deliveryId: admitted.deliveryId,
@@ -241,8 +248,8 @@ function admitStoredRecord(
 
 function validateStoredRecord(
   row: ConvexObservationRecord,
-): GitHubRepositoryObservation {
-  const admitted = admitGitHubRepositoryObservationEnvelope({
+): AnyGitHubRepositoryObservation {
+  const admitted = admitAnyGitHubRepositoryObservationEnvelope({
     deliveryId: row.deliveryId,
     eventType: row.eventType,
     payloadDigest: row.payloadDigest,

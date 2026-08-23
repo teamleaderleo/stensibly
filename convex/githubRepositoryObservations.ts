@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import {
-  admitGitHubRepositoryObservationEnvelope,
-  type AdmittedGitHubRepositoryObservation,
-} from "../src/github-repository-observation-admission";
+  admitAnyGitHubRepositoryObservationEnvelope,
+  type AdmittedAnyGitHubRepositoryObservation,
+} from "../src/github-repository-observation-any-admission";
 import {
   findWorkspace,
   normalizeWorkspace,
@@ -29,7 +29,7 @@ export const ingest = mutation({
     if (!workspace) {
       throw new Error("GITHUB_REPOSITORY_OBSERVATION_WORKSPACE_NOT_FOUND");
     }
-    const input = admitGitHubRepositoryObservationEnvelope({
+    const input = admitAnyGitHubRepositoryObservationEnvelope({
       deliveryId: args.deliveryId,
       eventType: args.eventType,
       payloadDigest: args.payloadDigest,
@@ -125,7 +125,7 @@ function isExactReplay(
     receivedAt: number;
     observationJson: string;
   },
-  input: AdmittedGitHubRepositoryObservation,
+  input: AdmittedAnyGitHubRepositoryObservation,
 ): boolean {
   return row.observationId === input.observationId
     && row.payloadDigest === input.payloadDigest
