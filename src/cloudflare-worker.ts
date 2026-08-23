@@ -1,4 +1,5 @@
 import { createHostedAppFromEnv } from "./hosted-app.js";
+import { createHostedGitHubMailConsumerFromEnv } from "./hosted-github-mail-worker.js";
 import {
   enforceOAuthRegistrationAdmission,
   type OAuthRegistrationRateLimiter,
@@ -55,6 +56,10 @@ export interface CloudflareBindings extends GmailUnattendedEnvironment {
   STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED?: string;
   STENSIBLY_GITHUB_DELEGATED_READS_ENABLED?: string;
   STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED?: string;
+  STENSIBLY_GMAIL_STENSIBLY_LABEL_ID?: string;
+  STENSIBLY_GITHUB_MAIL_PROJECT?: string;
+  STENSIBLY_GITHUB_MAIL_REPOSITORY?: string;
+  STENSIBLY_GITHUB_MAIL_PROJECT_CODE?: string;
   STENSIBLY_OUTLOOK_OAUTH_CLIENT_ID?: string;
   STENSIBLY_OUTLOOK_OAUTH_REFRESH_TOKEN?: string;
   STENSIBLY_OUTLOOK_CLIENT_STATE?: string;
@@ -114,7 +119,19 @@ const worker = {
           },
         );
         if (admissionRejection) return admissionRejection;
-        return await createHostedAppFromEnv(stringEnvironment(env)).fetch(observedRequest);
+
+        let githubMailConsumer;
+        if (pathname === "/webhooks/github") {
+          try {
+            githubMailConsumer = createHostedGitHubMailConsumerFromEnv(env);
+          } catch {
+            return new Response("Service Unavailable", { status: 503 });
+          }
+        }
+        return await createHostedAppFromEnv(
+          stringEnvironment(env),
+          githubMailConsumer ? { githubMailConsumer } : {},
+        ).fetch(observedRequest);
       },
       {
         allowedOrigins: splitList(env.STENSIBLY_ALLOWED_ORIGINS),

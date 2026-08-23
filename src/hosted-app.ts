@@ -19,6 +19,7 @@ import {
 import type { HostedSessionHttpAuthOptions, StensiblyEnv } from "./http-auth.js";
 import {
   registerHostedProviderCapacityRoutes,
+  type HostedGitHubMailWebhookConsumer,
   type HostedProviderCapacityOptions,
 } from "./hosted-provider-capacity-api.js";
 import { createHostedSetupStatusObserver } from "./hosted-setup-status.js";
@@ -72,6 +73,10 @@ export interface HostedAppOptions {
   providerCapacity?: HostedProviderCapacityOptions;
   setupStatus?: HostedSetupStatusMountOptions;
   repositorySetupObservations?: ProjectRepositorySetupObservationLedger;
+}
+
+export interface HostedAppFromEnvDependencies {
+  githubMailConsumer?: HostedGitHubMailWebhookConsumer;
 }
 
 export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
@@ -185,6 +190,7 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
 
 export function createHostedAppFromEnv(
   env: Record<string, string | undefined> = process.env,
+  dependencies: HostedAppFromEnvDependencies = {},
 ): Hono<StensiblyEnv> {
   const ledger = createConvexProjectAttachmentLedgerFromEnv(env);
   const authenticator = new ConvexTokenProvider({
@@ -218,7 +224,7 @@ export function createHostedAppFromEnv(
       ? { mcpSetupFirstReadRecorder: mcpSetupEvidence }
       : {}),
     repositorySetupObservations,
-    providerCapacity: hostedProviderCapacityFromEnv(ledger, env),
+    providerCapacity: hostedProviderCapacityFromEnv(ledger, env, dependencies),
     ...(hostedAuth
       ? {
           setupStatus: {
@@ -234,9 +240,15 @@ export function createHostedAppFromEnv(
 export function hostedProviderCapacityFromEnv(
   ledger: ConvexWorkLedger,
   env: Record<string, string | undefined>,
+  dependencies: HostedAppFromEnvDependencies = {},
 ): HostedProviderCapacityOptions | undefined {
   const githubWebhookSecret = trimmed(env.STENSIBLY_GITHUB_WEBHOOK_SECRET);
-  if (!githubWebhookSecret) return undefined;
+  if (!githubWebhookSecret) {
+    if (dependencies.githubMailConsumer) {
+      throw new Error("Hosted GitHub mail requires STENSIBLY_GITHUB_WEBHOOK_SECRET");
+    }
+    return undefined;
+  }
   const repositoryObservationService = new ConvexGitHubRepositoryObservationService({
     client: ledger.client,
     serviceSecret: ledger.serviceSecret,
@@ -250,6 +262,9 @@ export function hostedProviderCapacityFromEnv(
     }),
     repositoryObservationSink: repositoryObservationService,
     repositoryObservationReader: repositoryObservationService,
+    ...(dependencies.githubMailConsumer
+      ? { githubMailConsumer: dependencies.githubMailConsumer }
+      : {}),
     githubWebhookSecret,
   };
 }
