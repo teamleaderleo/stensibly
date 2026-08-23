@@ -20,6 +20,8 @@ extends HostedGitHubMailWorkerEnvironment {
 
 export type HostedGitHubPublicRepositoryObserver = GitHubPublicRepositoryObserver<unknown>;
 
+const publicEventsPageSize = 100;
+
 export function hostedGitHubPublicRepositoryFallbackEnabled(
   env: HostedGitHubPublicRepositoryWorkerEnvironment,
 ): boolean {
@@ -57,6 +59,7 @@ export function createHostedGitHubPublicRepositoryObserverFromEnv(
   const client = new GitHubPublicEventsClient({
     repository: runtime.repository,
     stateStore: sharedGitHubPublicEventsPollState,
+    pageSize: publicEventsPageSize,
   });
   return new GitHubPublicRepositoryObserver({
     repository: runtime.repository,
@@ -78,6 +81,7 @@ export async function runHostedGitHubPublicRepositoryReconciliation(
       repository: result.repository,
       status: result.status,
       fetchedEvents: result.fetchedEvents,
+      pageAtCapacity: result.fetchedEvents === publicEventsPageSize,
       supportedEvents: result.supportedEvents,
       persistedEvents: result.persistedEvents,
       baselinedEvents: result.baselinedEvents,
