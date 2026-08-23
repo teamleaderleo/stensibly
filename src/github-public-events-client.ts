@@ -29,7 +29,9 @@ export type GitHubPublicEventsPollResult =
       repository: string;
       polledAt: string;
       nextEligibleAt: string;
+      initial: boolean;
       events: readonly unknown[];
+      acknowledge(): Promise<void>;
     }>;
 
 export interface GitHubPublicEventsClientOptions {
@@ -60,7 +62,8 @@ const maximumPollSeconds = 24 * 60 * 60;
 
 /**
  * One bounded unauthenticated read of GitHub's public repository Events API.
- * State is external so ETag and next-eligible time survive Worker isolates.
+ * Poll state is caller-owned. A 200 page advances ETag/timing only after the
+ * downstream reconciler explicitly acknowledges successful processing.
  */
 export class GitHubPublicEventsClient {
   readonly #repository: string;
@@ -174,18 +177,28 @@ export class GitHubPublicEventsClient {
       throw new GitHubPublicEventsProviderError("GitHub public Events response exceeded the bounded page");
     }
     const events = Object.freeze([...decoded]);
-    await this.#stateStore.putPollState({
+    const state = Object.freeze({
       repository: this.#repository,
       etag,
       nextEligibleAt,
       lastPolledAt: polledAt,
     });
+    let acknowledgement: Promise<void> | null = null;
+    const acknowledge = (): Promise<void> => {
+      if (acknowledgement !== null) return acknowledgement;
+      acknowledgement = (async () => {
+        await this.#stateStore.putPollState(state);
+      })();
+      return acknowledgement;
+    };
     return Object.freeze({
       status: "events",
       repository: this.#repository,
       polledAt,
       nextEligibleAt,
+      initial: previous === null,
       events,
+      acknowledge,
     });
   }
 
