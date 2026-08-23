@@ -12,6 +12,11 @@ export interface GitHubPublicEventsPollStateStore {
   putPollState(state: GitHubPublicEventsPollState): Promise<GitHubPublicEventsPollState>;
 }
 
+export type GitHubPublicEventsFetch = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
 export type GitHubPublicEventsPollResult =
   | Readonly<{
       status: "deferred";
@@ -37,7 +42,7 @@ export type GitHubPublicEventsPollResult =
 export interface GitHubPublicEventsClientOptions {
   readonly repository: string;
   readonly stateStore: GitHubPublicEventsPollStateStore;
-  readonly fetch?: typeof fetch;
+  readonly fetch?: GitHubPublicEventsFetch;
   readonly apiBaseUrl?: string;
   readonly now?: () => number;
   readonly pageSize?: number;
@@ -68,7 +73,7 @@ const maximumPollSeconds = 24 * 60 * 60;
 export class GitHubPublicEventsClient {
   readonly #repository: string;
   readonly #stateStore: GitHubPublicEventsPollStateStore;
-  readonly #fetch: typeof fetch;
+  readonly #fetch: GitHubPublicEventsFetch;
   readonly #apiBaseUrl: string;
   readonly #now: () => number;
   readonly #pageSize: number;
