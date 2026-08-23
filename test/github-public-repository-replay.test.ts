@@ -61,6 +61,9 @@ class ExactReplayLedger implements GitHubPublicObservationLedger {
       };
       return { duplicate: false };
     }
+    if (this.canonical === null || this.receivedAt === null) {
+      throw new Error("exact replay ledger lost its retained identity");
+    }
     expect(canonical).toBe(this.canonical);
     expect(input.receivedAt).toBe(this.receivedAt);
     return { duplicate: true };
