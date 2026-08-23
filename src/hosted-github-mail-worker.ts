@@ -3,6 +3,7 @@ import { ConvexMailThreadStore } from "./convex-mail-thread-store.js";
 import { GitHubMailWebhookConsumer } from "./github-mail-webhook-consumer.js";
 import { GoogleOAuthRefreshTokenProvider } from "./google-oauth-refresh-token.js";
 import { createHostedGmailOutboundRuntime } from "./hosted-gmail-outbound-runtime.js";
+import type { HostedGmailOutboundService } from "./hosted-gmail-outbound-service.js";
 import type { HostedGitHubMailWebhookConsumer } from "./hosted-provider-capacity-api.js";
 
 export interface HostedGitHubMailWorkerEnvironment {
@@ -20,6 +21,17 @@ export interface HostedGitHubMailWorkerEnvironment {
   STENSIBLY_GITHUB_MAIL_PROJECT_CODE?: string;
 }
 
+export interface HostedGitHubMailRuntime {
+  readonly client: ConvexHttpClient;
+  readonly serviceSecret: string;
+  readonly workspace: string;
+  readonly project: string;
+  readonly repository: string;
+  readonly publicProjectCode: string;
+  readonly store: ConvexMailThreadStore;
+  readonly publisher: HostedGmailOutboundService;
+}
+
 const activationNames = [
   "STENSIBLY_GMAIL_STENSIBLY_LABEL_ID",
   "STENSIBLY_GITHUB_MAIL_PROJECT",
@@ -33,9 +45,9 @@ export function hostedGitHubMailWorkerConfigured(
   return activationNames.some((name) => Boolean(env[name]?.trim()));
 }
 
-export function createHostedGitHubMailConsumerFromEnv(
+export function createHostedGitHubMailRuntimeFromEnv(
   env: HostedGitHubMailWorkerEnvironment,
-): HostedGitHubMailWebhookConsumer | undefined {
+): HostedGitHubMailRuntime | undefined {
   if (!hostedGitHubMailWorkerConfigured(env)) return undefined;
 
   const convexUrl = required(env.CONVEX_URL, "CONVEX_URL");
@@ -103,13 +115,30 @@ export function createHostedGitHubMailConsumerFromEnv(
     serviceSecret,
     workspace,
   });
-  return new GitHubMailWebhookConsumer({
-    store,
-    publisher,
+  return Object.freeze({
+    client,
+    serviceSecret,
     workspace,
     project,
     repository,
     publicProjectCode,
+    store,
+    publisher,
+  });
+}
+
+export function createHostedGitHubMailConsumerFromEnv(
+  env: HostedGitHubMailWorkerEnvironment,
+): HostedGitHubMailWebhookConsumer | undefined {
+  const runtime = createHostedGitHubMailRuntimeFromEnv(env);
+  if (!runtime) return undefined;
+  return new GitHubMailWebhookConsumer({
+    store: runtime.store,
+    publisher: runtime.publisher,
+    workspace: runtime.workspace,
+    project: runtime.project,
+    repository: runtime.repository,
+    publicProjectCode: runtime.publicProjectCode,
   });
 }
 
