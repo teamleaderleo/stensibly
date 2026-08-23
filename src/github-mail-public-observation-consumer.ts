@@ -92,12 +92,23 @@ export class GitHubMailPublicObservationConsumer<Result> {
     });
   }
 
+  async hasThread(input: GitHubMailPublicObservationInput): Promise<boolean> {
+    requirePublicProvenance(input.observation);
+    const repository = normalizeGitHubRepository(input.observation.repository);
+    if (repository !== this.#repository) return false;
+    const pullRequestNumber = input.observation.relationships.pullRequestNumber;
+    if (pullRequestNumber === null) return false;
+    return await this.#store.getThreadBySource(
+      this.#workspace,
+      this.#project,
+      `github:${repository}#${pullRequestNumber}`,
+    ) !== null;
+  }
+
   async consume(
     input: GitHubMailPublicObservationInput,
   ): Promise<GitHubMailPublicObservationConsumeResult<Result>> {
-    if (input.observation.sourceSchema !== "github-public-events") {
-      throw new RangeError("GitHub public observation mail requires public-event provenance");
-    }
+    requirePublicProvenance(input.observation);
     const repository = normalizeGitHubRepository(input.observation.repository);
     if (repository !== this.#repository) {
       return Object.freeze({ status: "ignored", reason: "repository_mismatch" });
@@ -151,6 +162,14 @@ export class GitHubMailPublicObservationConsumer<Result> {
       throw error;
     }
     return await this.#automatic.publish(decision);
+  }
+}
+
+function requirePublicProvenance(
+  observation: PublicGitHubRepositoryObservation,
+): void {
+  if (observation.sourceSchema !== "github-public-events") {
+    throw new RangeError("GitHub public observation mail requires public-event provenance");
   }
 }
 
