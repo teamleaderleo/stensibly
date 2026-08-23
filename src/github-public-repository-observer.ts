@@ -5,7 +5,6 @@ import type {
 import {
   crossSourceGitHubObservationFingerprint,
   mapPublicGitHubRepositoryEvent,
-  type PublicGitHubRepositoryObservation,
 } from "./github-public-repository-observation.js";
 import type {
   GitHubPublicEventsClient,
@@ -34,6 +33,7 @@ export interface GitHubPublicObservationLedger {
 }
 
 export interface GitHubPublicObservationMailConsumer<Result> {
+  hasThread(input: GitHubMailPublicObservationInput): Promise<boolean>;
   consume(
     input: GitHubMailPublicObservationInput,
   ): Promise<GitHubMailPublicObservationConsumeResult<Result>>;
@@ -53,7 +53,9 @@ export type GitHubPublicRepositoryObserverResult = Readonly<{
   fetchedEvents: number;
   supportedEvents: number;
   persistedEvents: number;
+  baselinedEvents: number;
   replayedEvents: number;
+  replayWithoutThread: number;
   crossSourceSuppressed: number;
   published: number;
   quiet: number;
@@ -62,9 +64,9 @@ export type GitHubPublicRepositoryObserverResult = Readonly<{
 
 /**
  * Scheduled fallback reconciler. Provider fetch happens once; each supported
- * event is durably admitted before mail projection. Exact public replays may
- * re-enter the idempotent mail publisher so a crash between persistence and
- * delivery can recover on a later conditional cache miss.
+ * event is durably admitted before mail projection. The first public page is
+ * a quiet baseline only when durable public history is absent. Later exact
+ * replays retry mail only when a canonical thread proves projection began.
  */
 export class GitHubPublicRepositoryObserver<Result> {
   readonly #repository: string;
@@ -99,6 +101,10 @@ export class GitHubPublicRepositoryObserver<Result> {
       this.#repository,
       this.#recentLimit,
     );
+    const hasDurablePublicHistory = recent.some(
+      (row) => row.observation.sourceSchema === "github-public-events",
+    );
+    const bootstrap = poll.initial && !hasDurablePublicHistory;
     const seenObservationIds = new Set(
       recent.map((row) => row.observation.observationId),
     );
@@ -111,7 +117,9 @@ export class GitHubPublicRepositoryObserver<Result> {
 
     let supportedEvents = 0;
     let persistedEvents = 0;
+    let baselinedEvents = 0;
     let replayedEvents = 0;
+    let replayWithoutThread = 0;
     let crossSourceSuppressed = 0;
     let published = 0;
     let quiet = 0;
@@ -134,6 +142,7 @@ export class GitHubPublicRepositoryObserver<Result> {
         continue;
       }
 
+      const existedBefore = seenObservationIds.has(observation.observationId);
       const ingestion = await this.#ledger.ingestRepositoryObservation({
         deliveryId: observation.deliveryId,
         eventType: observation.eventType,
@@ -141,29 +150,41 @@ export class GitHubPublicRepositoryObserver<Result> {
         receivedAt: observation.receivedAt,
         observation,
       });
-      if (ingestion.duplicate || seenObservationIds.has(observation.observationId)) {
-        replayedEvents += 1;
-      } else {
-        persistedEvents += 1;
-      }
+      if (ingestion.duplicate || existedBefore) replayedEvents += 1;
+      else persistedEvents += 1;
       seenObservationIds.add(observation.observationId);
 
-      const mail = await this.#mail.consume({
+      const mailInput = Object.freeze({
         observation,
         currentHeadRevision: mapped.currentHeadRevision,
       });
+      if (bootstrap) {
+        baselinedEvents += 1;
+        continue;
+      }
+      if (ingestion.duplicate || existedBefore) {
+        if (!await this.#mail.hasThread(mailInput)) {
+          replayWithoutThread += 1;
+          continue;
+        }
+      }
+
+      const mail = await this.#mail.consume(mailInput);
       if (mail.status === "published") published += 1;
       else if (mail.status === "quiet") quiet += 1;
       else ignored += 1;
     }
 
+    await poll.acknowledge();
     return Object.freeze({
       status: "reconciled",
       repository: this.#repository,
       fetchedEvents: poll.events.length,
       supportedEvents,
       persistedEvents,
+      baselinedEvents,
       replayedEvents,
+      replayWithoutThread,
       crossSourceSuppressed,
       published,
       quiet,
@@ -174,7 +195,7 @@ export class GitHubPublicRepositoryObserver<Result> {
 
 function supportedObservation(
   observation: AnyGitHubRepositoryObservation,
-): observation is PublicGitHubRepositoryObservation | AnyGitHubRepositoryObservation {
+): boolean {
   return observation.eventType === "pull_request"
     || observation.eventType === "pull_request_review";
 }
@@ -189,7 +210,9 @@ function result(
     fetchedEvents: 0,
     supportedEvents: 0,
     persistedEvents: 0,
+    baselinedEvents: 0,
     replayedEvents: 0,
+    replayWithoutThread: 0,
     crossSourceSuppressed: 0,
     published: 0,
     quiet: 0,
