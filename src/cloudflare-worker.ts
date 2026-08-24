@@ -1,4 +1,5 @@
 import { createHostedAppFromEnv } from "./hosted-app.js";
+import { createHostedDeployGovernorOidcHandlerFromEnv } from "./hosted-deploy-governor-oidc.js";
 import { createHostedDeployGovernorRequestConsumerFromEnv } from "./hosted-deploy-governor-request.js";
 import { createHostedGitHubMailConsumerFromEnv } from "./hosted-github-mail-worker.js";
 import {
@@ -115,6 +116,22 @@ const worker = {
             });
           } catch {
             return new Response("Service Unavailable", { status: 503 });
+          }
+        }
+
+        if (pathname === "/internal/deploy-governor/candidate") {
+          try {
+            const handler = createHostedDeployGovernorOidcHandlerFromEnv(
+              stringEnvironment(env),
+            );
+            return handler
+              ? await handler.handle(observedRequest)
+              : new Response("Not Found", { status: 404 });
+          } catch {
+            return new Response("Service Unavailable", {
+              status: 503,
+              headers: { "Retry-After": "30" },
+            });
           }
         }
 
