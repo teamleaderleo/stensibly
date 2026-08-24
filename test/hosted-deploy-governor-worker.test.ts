@@ -138,16 +138,16 @@ describe("hosted deploy governor dispatch", () => {
   });
 
   test("dispatches exact repository, branch, revision, and delivery identity", async () => {
-    let dispatchBody: Record<string, unknown> | null = null;
+    const dispatchBodies: Record<string, unknown>[] = [];
     const consumer = createHostedDeployGovernorConsumerFromEnv(environment(), {
       fetch: githubFetch((body) => {
-        dispatchBody = body;
+        dispatchBodies.push(body);
       }),
       now: () => Date.parse("2026-08-24T08:00:00.000Z"),
     })!;
 
     expect(await consumer.consume(delivery())).toEqual({ status: "dispatched" });
-    expect(dispatchBody).toEqual({
+    expect(dispatchBodies).toEqual([{
       event_type: "vercel-deploy-candidate",
       client_payload: {
         repository: sourceRepository,
@@ -155,20 +155,20 @@ describe("hosted deploy governor dispatch", () => {
         sha: after,
         delivery_id: "delivery-governor-1",
       },
-    });
+    }]);
   });
 
   test("preserves a non-main branch for central allowlist admission", async () => {
-    let dispatchBody: Record<string, unknown> | null = null;
+    const dispatchBodies: Record<string, unknown>[] = [];
     const consumer = createHostedDeployGovernorConsumerFromEnv(environment(), {
       fetch: githubFetch((body) => {
-        dispatchBody = body;
+        dispatchBodies.push(body);
       }),
       now: () => Date.parse("2026-08-24T08:00:00.000Z"),
     })!;
 
     await consumer.consume(delivery({ ref: "refs/heads/release/v2" }));
-    expect(dispatchBody).toEqual({
+    expect(dispatchBodies).toEqual([{
       event_type: "vercel-deploy-candidate",
       client_payload: {
         repository: sourceRepository,
@@ -176,7 +176,7 @@ describe("hosted deploy governor dispatch", () => {
         sha: after,
         delivery_id: "delivery-governor-1",
       },
-    });
+    }]);
   });
 
   test("fails the webhook path when GitHub does not accept the dispatch", async () => {
