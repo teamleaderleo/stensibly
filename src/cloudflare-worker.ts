@@ -127,20 +127,21 @@ const worker = {
         );
         if (admissionRejection) return admissionRejection;
 
+        const hostedEnv = stringEnvironment(env);
         let githubMailConsumer;
         let deployGovernorConsumer;
         let deployGovernorRequest: Request | undefined;
         if (pathname === "/webhooks/github") {
           try {
             githubMailConsumer = createHostedGitHubMailConsumerFromEnv(env);
-            deployGovernorConsumer = createHostedDeployGovernorRequestConsumerFromEnv(env);
+            deployGovernorConsumer = createHostedDeployGovernorRequestConsumerFromEnv(hostedEnv);
             if (deployGovernorConsumer) deployGovernorRequest = observedRequest.clone();
           } catch {
             return new Response("Service Unavailable", { status: 503 });
           }
         }
         const response = await createHostedAppFromEnv(
-          stringEnvironment(env),
+          hostedEnv,
           githubMailConsumer ? { githubMailConsumer } : {},
         ).fetch(observedRequest);
 
@@ -239,6 +240,8 @@ export function stringEnvironment(env: CloudflareBindings): Record<string, strin
       env.STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED,
     STENSIBLY_GITHUB_DELEGATED_READS_ENABLED: env.STENSIBLY_GITHUB_DELEGATED_READS_ENABLED,
     STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED: env.STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED,
+    STENSIBLY_DEPLOY_GOVERNOR_ENABLED: env.STENSIBLY_DEPLOY_GOVERNOR_ENABLED,
+    STENSIBLY_DEPLOY_GOVERNOR_REPOSITORY: env.STENSIBLY_DEPLOY_GOVERNOR_REPOSITORY,
   };
 }
 
