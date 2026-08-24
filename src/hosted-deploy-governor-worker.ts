@@ -27,6 +27,7 @@ interface HostedDeployGovernorConfiguration {
 
 const fullRevisionPattern = /^[a-f0-9]{40}$/u;
 const githubApiVersion = "2022-11-28";
+const deploySignalWorkflowName = "Production deploy signal";
 
 export function createHostedDeployGovernorConsumerFromEnv(
   env: Record<string, string | undefined>,
@@ -100,7 +101,7 @@ function deployCandidate(
 ): Readonly<{ repository: string; branch: string; sha: string }> | null {
   const pushCandidate = deployCandidateFromPush(delivery);
   if (pushCandidate) return pushCandidate;
-  return deployCandidateFromCheckSuite(delivery);
+  return deployCandidateFromWorkflowRun(delivery);
 }
 
 function deployCandidateFromPush(
@@ -124,31 +125,31 @@ function deployCandidateFromPush(
   });
 }
 
-function deployCandidateFromCheckSuite(
+function deployCandidateFromWorkflowRun(
   delivery: PreparedGitHubWebhookDelivery,
 ): Readonly<{ repository: string; branch: string; sha: string }> | null {
-  if (delivery.eventType !== "check_suite") return null;
+  if (delivery.eventType !== "workflow_run") return null;
   const payload = record(delivery.payload);
   if (!payload || payload.action !== "completed") return null;
 
   const repository = record(payload.repository);
-  const checkSuite = record(payload.check_suite);
-  const app = record(checkSuite?.app);
+  const workflowRun = record(payload.workflow_run);
   if (
     !repository
-    || !checkSuite
-    || app?.slug !== "github-actions"
-    || checkSuite.status !== "completed"
-    || checkSuite.conclusion !== "success"
+    || !workflowRun
+    || workflowRun.name !== deploySignalWorkflowName
+    || workflowRun.status !== "completed"
+    || workflowRun.conclusion !== "success"
+    || workflowRun.event !== "push"
     || typeof repository.full_name !== "string"
-    || typeof checkSuite.head_branch !== "string"
-    || typeof checkSuite.head_sha !== "string"
+    || typeof workflowRun.head_branch !== "string"
+    || typeof workflowRun.head_sha !== "string"
   ) {
     return null;
   }
 
-  const branch = checkSuite.head_branch;
-  const sha = checkSuite.head_sha;
+  const branch = workflowRun.head_branch;
+  const sha = workflowRun.head_sha;
   if (!validBranch(branch) || !fullRevisionPattern.test(sha)) return null;
   return Object.freeze({
     repository: normalizeGitHubRepository(repository.full_name),
