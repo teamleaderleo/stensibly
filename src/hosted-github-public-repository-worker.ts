@@ -6,7 +6,7 @@ import {
   GitHubPublicEventsClient,
   GitHubPublicEventsProviderError,
 } from "./github-public-events-client.js";
-import { sharedGitHubPublicEventsPollState } from "./github-public-events-memory-state.js";
+import { ConvexGitHubPublicEventsPollStateStore } from "./github-public-events-convex-state.js";
 import { GitHubPublicRepositoryObserver } from "./github-public-repository-observer.js";
 import {
   createHostedGitHubMailRuntimeFromEnv,
@@ -58,7 +58,11 @@ export function createHostedGitHubPublicRepositoryObserverFromEnv(
   });
   const client = new GitHubPublicEventsClient({
     repository: runtime.repository,
-    stateStore: sharedGitHubPublicEventsPollState,
+    stateStore: new ConvexGitHubPublicEventsPollStateStore({
+      client: runtime.client,
+      serviceSecret: runtime.serviceSecret,
+      workspace: runtime.workspace,
+    }),
     pageSize: publicEventsPageSize,
   });
   return new GitHubPublicRepositoryObserver({
