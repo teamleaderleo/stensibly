@@ -18,6 +18,9 @@ const ingestRef = makeFunctionReference<"mutation">(
 const listRecentRef = makeFunctionReference<"query">(
   "githubRepositoryObservations:listRecent",
 );
+const markMailProjectedRef = makeFunctionReference<"mutation">(
+  "githubRepositoryObservations:markMailProjected",
+);
 
 const maximumRecentQueryStringBytes = 1024 * 1024;
 const maximumMutationResultStringBytes = 128 * 1024;
@@ -47,6 +50,19 @@ export interface ConvexGitHubRepositoryObservationServiceOptions {
   workspace?: string;
 }
 
+export type GitHubObservationMailProjectionState =
+  | "pending"
+  | "baseline_suppressed"
+  | "projected";
+
+export type GitHubObservationMailProjectionWriteState =
+  | "pending"
+  | "baseline_suppressed";
+
+export interface GitHubObservationMailProjectionOptions {
+  readonly mailProjectionState?: GitHubObservationMailProjectionWriteState;
+}
+
 type HostedAnyGitHubRepositoryObservationInput = Omit<
   HostedGitHubRepositoryObservationInput,
   "observation"
@@ -70,6 +86,7 @@ interface ConvexObservationRecord {
   sourceTimeSource: "provider" | "received";
   receivedAt: number;
   observationJson: string;
+  mailProjectionState: GitHubObservationMailProjectionState | null;
   createdAt: number;
 }
 
@@ -82,6 +99,7 @@ interface ReturnAdmissionBudget {
 export interface HostedGitHubRepositoryObservationRecord {
   readonly id: string;
   readonly observation: AnyGitHubRepositoryObservation;
+  readonly mailProjectionState: GitHubObservationMailProjectionState | null;
   readonly createdAt: string;
 }
 
@@ -107,7 +125,11 @@ export class ConvexGitHubRepositoryObservationService
 
   async ingestRepositoryObservation(
     input: HostedAnyGitHubRepositoryObservationInput,
+    projection?: GitHubObservationMailProjectionOptions,
   ): Promise<HostedGitHubRepositoryObservationResult> {
+    const mailProjectionState = admitMailProjectionState(
+      projection?.mailProjectionState,
+    );
     const admitted = admitAnyHostedGitHubRepositoryObservationInput(input);
     try {
       const rawResult = await this.#client.mutation(ingestRef, this.#args({
@@ -116,6 +138,9 @@ export class ConvexGitHubRepositoryObservationService
         payloadDigest: admitted.payloadDigest,
         receivedAt: admitted.receivedAt,
         observationJson: admitted.observationJson,
+        ...(mailProjectionState === null
+          ? {}
+          : { mailProjectionState }),
       }));
       const result = admitMutationResult(rawResult);
       validateStoredRecord(result.record);
@@ -147,8 +172,25 @@ export class ConvexGitHubRepositoryObservationService
         return Object.freeze({
           id: row.id,
           observation,
+          mailProjectionState: row.mailProjectionState,
           createdAt: new Date(row.createdAt).toISOString(),
         });
+      }));
+    } catch (error) {
+      throw mapStorageError(error);
+    }
+  }
+
+  async markRepositoryObservationMailProjected(
+    input: { observationId: string },
+  ): Promise<void> {
+    const observationId = input?.observationId;
+    if (typeof observationId !== "string" || observationId.length < 1) {
+      throw new TypeError("GitHub observation id is required");
+    }
+    try {
+      await this.#client.mutation(markMailProjectedRef, this.#args({
+        observationId,
       }));
     } catch (error) {
       throw mapStorageError(error);
@@ -242,8 +284,43 @@ function admitStoredRecord(
       dataProperty(value, "observationJson"),
       budget,
     ),
+    mailProjectionState: optionalMailProjectionState(value),
     createdAt: storageTimestamp(dataProperty(value, "createdAt")),
   };
+}
+
+function optionalMailProjectionState(
+  value: unknown,
+): GitHubObservationMailProjectionState | null {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, "mailProjectionState");
+  } catch {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  if (!descriptor || !("value" in descriptor)) return null;
+  const state = descriptor.value;
+  if (state === null) return null;
+  if (
+    state !== "pending"
+    && state !== "baseline_suppressed"
+    && state !== "projected"
+  ) {
+    throw new GitHubRepositoryObservationStorageError();
+  }
+  return state;
+}
+
+export function admitMailProjectionState(
+  value: unknown,
+): "pending" | "baseline_suppressed" | null {
+  if (value === undefined) return null;
+  if (value !== "pending" && value !== "baseline_suppressed") {
+    throw new TypeError(
+      "GitHub observation mail projection state must be pending or baseline_suppressed",
+    );
+  }
+  return value;
 }
 
 function validateStoredRecord(

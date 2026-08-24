@@ -15,6 +15,9 @@ const ingestRef = makeFunctionReference<"mutation">(
 const listRecentRef = makeFunctionReference<"query">(
   "githubRepositoryObservations:listRecent",
 );
+const markMailProjectedRef = makeFunctionReference<"mutation">(
+  "githubRepositoryObservations:markMailProjected",
+);
 
 beforeEach(() => {
   vi.stubEnv("STENSIBLY_SERVICE_SECRET", serviceSecret);
@@ -150,6 +153,90 @@ describe("hosted GitHub repository observations", () => {
       serviceSecret: "wrong",
     })).rejects.toThrow("Unauthorized");
   });
+
+  test("persists the admitted initial mail projection state atomically", async () => {
+    const t = convexTest(schema, modules);
+    await seedWorkspace(t);
+    await t.mutation(ingestRef, { ...input(), mailProjectionState: "pending" });
+    await t.mutation(ingestRef, {
+      ...input({ deliveryId: "delivery-baseline" }),
+      mailProjectionState: "baseline_suppressed",
+    });
+    await t.mutation(ingestRef, input({ deliveryId: "delivery-legacy" }));
+    await expect(t.mutation(ingestRef, {
+      ...input({ deliveryId: "delivery-projected" }),
+      mailProjectionState: "projected",
+    })).rejects.toThrow();
+
+    const recent = await t.query(listRecentRef, queryArgs()) as any[];
+    const stateByDelivery = new Map(
+      recent.map((row) => [row.deliveryId, row.mailProjectionState]),
+    );
+    expect(stateByDelivery.get("delivery-1")).toBe("pending");
+    expect(stateByDelivery.get("delivery-baseline")).toBe("baseline_suppressed");
+    expect(stateByDelivery.get("delivery-legacy")).toBeNull();
+    expect(stateByDelivery.has("delivery-projected")).toBe(false);
+  });
+
+  test("moves one pending row to terminal projected through the guarded transition", async () => {
+    const t = convexTest(schema, modules);
+    await seedWorkspace(t);
+    await t.mutation(ingestRef, { ...input(), mailProjectionState: "pending" });
+    await t.mutation(ingestRef, {
+      ...input({ deliveryId: "delivery-baseline" }),
+      mailProjectionState: "baseline_suppressed",
+    });
+
+    const projected = await t.mutation(
+      markMailProjectedRef,
+      markArgs("github:issues:delivery-1"),
+    ) as any;
+    expect(projected.record.mailProjectionState).toBe("projected");
+
+    await expect(t.mutation(
+      markMailProjectedRef,
+      markArgs("github:issues:delivery-1"),
+    )).rejects.toThrow("GITHUB_REPOSITORY_MAIL_PROJECTION_CONFLICT");
+
+    const recent = await t.query(listRecentRef, queryArgs()) as any[];
+    const stateByDelivery = new Map(
+      recent.map((row) => [row.deliveryId, row.mailProjectionState]),
+    );
+    expect(stateByDelivery.get("delivery-1")).toBe("projected");
+    expect(stateByDelivery.get("delivery-baseline")).toBe("baseline_suppressed");
+  });
+
+  test("fails closed on projection mismatch without mutating another row", async () => {
+    const t = convexTest(schema, modules);
+    await seedWorkspace(t);
+    await t.mutation(ingestRef, { ...input(), mailProjectionState: "pending" });
+    await t.mutation(ingestRef, {
+      ...input({ deliveryId: "delivery-baseline" }),
+      mailProjectionState: "baseline_suppressed",
+    });
+    await t.mutation(ingestRef, input({ deliveryId: "delivery-legacy" }));
+
+    await expect(t.mutation(
+      markMailProjectedRef,
+      markArgs("github:issues:delivery-baseline"),
+    )).rejects.toThrow("GITHUB_REPOSITORY_MAIL_PROJECTION_CONFLICT");
+    await expect(t.mutation(
+      markMailProjectedRef,
+      markArgs("github:issues:delivery-legacy"),
+    )).rejects.toThrow("GITHUB_REPOSITORY_MAIL_PROJECTION_CONFLICT");
+    await expect(t.mutation(
+      markMailProjectedRef,
+      markArgs("github:issues:missing-row"),
+    )).rejects.toThrow("GITHUB_REPOSITORY_MAIL_PROJECTION_MISSING");
+
+    const recent = await t.query(listRecentRef, queryArgs()) as any[];
+    const stateByDelivery = new Map(
+      recent.map((row) => [row.deliveryId, row.mailProjectionState]),
+    );
+    expect(stateByDelivery.get("delivery-1")).toBe("pending");
+    expect(stateByDelivery.get("delivery-baseline")).toBe("baseline_suppressed");
+    expect(stateByDelivery.get("delivery-legacy")).toBeNull();
+  });
 });
 
 function input(overrides: {
@@ -247,6 +334,14 @@ function queryArgs(overrides: Record<string, unknown> = {}) {
     repository: "teamleaderleo/stensibly",
     limit: 50,
     ...overrides,
+  };
+}
+
+function markArgs(observationId: string) {
+  return {
+    serviceSecret,
+    workspace: "test",
+    observationId,
   };
 }
 

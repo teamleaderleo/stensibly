@@ -15,18 +15,25 @@ import type {
   AnyGitHubRepositoryObservation,
 } from "./github-repository-observation-any-admission.js";
 import type {
+  GitHubObservationMailProjectionOptions,
   HostedGitHubRepositoryObservationRecord,
 } from "./github-repository-observation-convex.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
 
 export interface GitHubPublicObservationLedger {
-  ingestRepositoryObservation(input: {
-    deliveryId: string;
-    eventType: string;
-    payloadDigest: string;
-    receivedAt: string;
-    observation: AnyGitHubRepositoryObservation;
-  }): Promise<Readonly<{ duplicate: boolean }>>;
+  ingestRepositoryObservation(
+    input: {
+      deliveryId: string;
+      eventType: string;
+      payloadDigest: string;
+      receivedAt: string;
+      observation: AnyGitHubRepositoryObservation;
+    },
+    projection?: GitHubObservationMailProjectionOptions,
+  ): Promise<Readonly<{ duplicate: boolean }>>;
+  markRepositoryObservationMailProjected(input: {
+    observationId: string;
+  }): Promise<void>;
   listRecentRepositoryObservations(
     repository: string,
     limit?: number,
@@ -34,7 +41,6 @@ export interface GitHubPublicObservationLedger {
 }
 
 export interface GitHubPublicObservationMailConsumer<Result> {
-  hasThread(input: GitHubMailPublicObservationInput): Promise<boolean>;
   consume(
     input: GitHubMailPublicObservationInput,
   ): Promise<GitHubMailPublicObservationConsumeResult<Result>>;
@@ -56,7 +62,7 @@ export type GitHubPublicRepositoryObserverResult = Readonly<{
   persistedEvents: number;
   baselinedEvents: number;
   replayedEvents: number;
-  replayWithoutThread: number;
+  replaySuppressed: number;
   crossSourceSuppressed: number;
   published: number;
   quiet: number;
@@ -66,8 +72,15 @@ export type GitHubPublicRepositoryObserverResult = Readonly<{
 /**
  * Scheduled fallback reconciler. Provider fetch happens once; each supported
  * event is durably admitted before mail projection. The first public page is
- * a quiet baseline only when durable public history is absent. Later exact
- * replays retry mail only when a canonical thread proves projection began.
+ * a quiet baseline only when durable public history is absent, and baseline
+ * admission records `baseline_suppressed` atomically so historical events can
+ * never produce delayed mail. Non-baseline admissions start as `pending`, and
+ * once `mail.consume` returns - including an idempotent replay result - the
+ * row moves to terminal `projected` through a guarded pending-only durable
+ * transition. A crash after durable ingest but before that transition leaves
+ * the row retryable, so the next duplicate converges to exactly one canonical
+ * mail projection, while projected, baseline-suppressed, and legacy null rows
+ * never re-enter the mail engine.
  */
 export class GitHubPublicRepositoryObserver<Result> {
   readonly #repository: string;
@@ -109,6 +122,12 @@ export class GitHubPublicRepositoryObserver<Result> {
     const seenObservationIds = new Set(
       recent.map((row) => row.observation.observationId),
     );
+    const projectionStateById = new Map(
+      recent.map((row) => [
+        row.observation.observationId,
+        row.mailProjectionState,
+      ]),
+    );
     const crossSourceFingerprints = new Set(
       recent
         .filter((row) => row.observation.sourceSchema === "github-webhook")
@@ -120,7 +139,7 @@ export class GitHubPublicRepositoryObserver<Result> {
     let persistedEvents = 0;
     let baselinedEvents = 0;
     let replayedEvents = 0;
-    let replayWithoutThread = 0;
+    let replaySuppressed = 0;
     let crossSourceSuppressed = 0;
     let published = 0;
     let quiet = 0;
@@ -148,12 +167,18 @@ export class GitHubPublicRepositoryObserver<Result> {
       }
 
       const existedBefore = seenObservationIds.has(observation.observationId);
+      // The mail projection state is written atomically with the first durable
+      // insert: baseline pages are suppressed forever, everything else starts
+      // retryable as `pending` until the guarded transition proves the
+      // canonical projection happened.
       const ingestion = await this.#ledger.ingestRepositoryObservation({
         deliveryId: observation.deliveryId,
         eventType: observation.eventType,
         payloadDigest: observation.payloadDigest,
         receivedAt: observation.receivedAt,
         observation,
+      }, {
+        mailProjectionState: bootstrap ? "baseline_suppressed" : "pending",
       });
       if (ingestion.duplicate || existedBefore) replayedEvents += 1;
       else persistedEvents += 1;
@@ -168,13 +193,24 @@ export class GitHubPublicRepositoryObserver<Result> {
         continue;
       }
       if (ingestion.duplicate || existedBefore) {
-        if (!await this.#mail.hasThread(mailInput)) {
-          replayWithoutThread += 1;
+        const priorState = projectionStateById.get(observation.observationId)
+          ?? null;
+        if (priorState !== "pending") {
+          replaySuppressed += 1;
           continue;
         }
       }
 
       const mail = await this.#mail.consume(mailInput);
+      // consume returned without throwing - published, quiet, ignored, or an
+      // idempotent replay - so the canonical delivery identity now owns this
+      // observation. The guarded pending -> projected transition keeps every
+      // later duplicate out of the mail engine; until it lands, the row stays
+      // retryable across crashes.
+      await this.#ledger.markRepositoryObservationMailProjected({
+        observationId: observation.observationId,
+      });
+      projectionStateById.set(observation.observationId, "projected");
       if (mail.status === "published") published += 1;
       else if (mail.status === "quiet") quiet += 1;
       else ignored += 1;
@@ -189,7 +225,7 @@ export class GitHubPublicRepositoryObserver<Result> {
       persistedEvents,
       baselinedEvents,
       replayedEvents,
-      replayWithoutThread,
+      replaySuppressed,
       crossSourceSuppressed,
       published,
       quiet,
@@ -227,7 +263,7 @@ function result(
     persistedEvents: 0,
     baselinedEvents: 0,
     replayedEvents: 0,
-    replayWithoutThread: 0,
+    replaySuppressed: 0,
     crossSourceSuppressed: 0,
     published: 0,
     quiet: 0,
