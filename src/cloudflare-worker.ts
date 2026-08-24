@@ -1,4 +1,5 @@
 import { createHostedAppFromEnv } from "./hosted-app.js";
+import { createHostedDeployGovernorRequestConsumerFromEnv } from "./hosted-deploy-governor-request.js";
 import { createHostedGitHubMailConsumerFromEnv } from "./hosted-github-mail-worker.js";
 import {
   runHostedGitHubPublicRepositoryReconciliation,
@@ -59,6 +60,8 @@ export interface CloudflareBindings extends GmailUnattendedEnvironment {
   STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED?: string;
   STENSIBLY_GITHUB_DELEGATED_READS_ENABLED?: string;
   STENSIBLY_GITHUB_JOB_DETAIL_READS_ENABLED?: string;
+  STENSIBLY_DEPLOY_GOVERNOR_ENABLED?: string;
+  STENSIBLY_DEPLOY_GOVERNOR_REPOSITORY?: string;
   STENSIBLY_GMAIL_STENSIBLY_LABEL_ID?: string;
   STENSIBLY_GITHUB_MAIL_PROJECT?: string;
   STENSIBLY_GITHUB_MAIL_REPOSITORY?: string;
@@ -125,17 +128,33 @@ const worker = {
         if (admissionRejection) return admissionRejection;
 
         let githubMailConsumer;
+        let deployGovernorConsumer;
+        let deployGovernorRequest: Request | undefined;
         if (pathname === "/webhooks/github") {
           try {
             githubMailConsumer = createHostedGitHubMailConsumerFromEnv(env);
+            deployGovernorConsumer = createHostedDeployGovernorRequestConsumerFromEnv(env);
+            if (deployGovernorConsumer) deployGovernorRequest = observedRequest.clone();
           } catch {
             return new Response("Service Unavailable", { status: 503 });
           }
         }
-        return await createHostedAppFromEnv(
+        const response = await createHostedAppFromEnv(
           stringEnvironment(env),
           githubMailConsumer ? { githubMailConsumer } : {},
         ).fetch(observedRequest);
+
+        if (deployGovernorConsumer && deployGovernorRequest && response.ok) {
+          try {
+            await deployGovernorConsumer.consume(deployGovernorRequest);
+          } catch {
+            return new Response("Service Unavailable", {
+              status: 503,
+              headers: { "Retry-After": "60" },
+            });
+          }
+        }
+        return response;
       },
       {
         allowedOrigins: splitList(env.STENSIBLY_ALLOWED_ORIGINS),
