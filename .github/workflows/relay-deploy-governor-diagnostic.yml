@@ -1,0 +1,82 @@
+name: Deploy governor bridge diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/relay-deploy-governor-diagnostic.yml
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    environment:
+      name: production
+    steps:
+      - name: Read live Worker identity and Scrapbook observations
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STENSIBLY_TOKEN: ${{ secrets.STENSIBLY_READ_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${STENSIBLY_TOKEN:-}" ]]; then
+            echo 'STENSIBLY_READ_TOKEN is missing.' >&2
+            exit 1
+          fi
+
+          curl --fail-with-body --silent --show-error \
+            -D /tmp/health-headers \
+            -o /tmp/health.json \
+            'https://api.stensibly.com/health'
+
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $STENSIBLY_TOKEN" \
+            -H 'Accept: application/json' \
+            -o /tmp/observations.json \
+            'https://api.stensibly.com/api/v1/github/repository-observations?repository=teamleaderleo%2Fscrapbook&limit=20'
+
+          version_id="$(awk 'BEGIN{IGNORECASE=1} /^x-stensibly-worker-version-id:/ {gsub("\\r", ""); sub(/^[^:]*:[[:space:]]*/, ""); print; exit}' /tmp/health-headers)"
+          version_tag="$(awk 'BEGIN{IGNORECASE=1} /^x-stensibly-worker-version-tag:/ {gsub("\\r", ""); sub(/^[^:]*:[[:space:]]*/, ""); print; exit}' /tmp/health-headers)"
+          version_created_at="$(awk 'BEGIN{IGNORECASE=1} /^x-stensibly-worker-version-created-at:/ {gsub("\\r", ""); sub(/^[^:]*:[[:space:]]*/, ""); print; exit}' /tmp/health-headers)"
+
+          jq \
+            --arg workerVersionId "$version_id" \
+            --arg workerVersionTag "$version_tag" \
+            --arg workerVersionCreatedAt "$version_created_at" \
+            '{
+              workerVersionId: $workerVersionId,
+              workerVersionTag: $workerVersionTag,
+              workerVersionCreatedAt: $workerVersionCreatedAt,
+              observationCount: (.observations | length),
+              observations: [
+                .observations[]? | {
+                  sourceSchema: .sourceSchema,
+                  eventType: .eventType,
+                  action: .action,
+                  repository: .repository,
+                  deliveryId: .deliveryId,
+                  receivedAt: .receivedAt,
+                  sourceTime: .sourceTime,
+                  ref: .relationships.ref,
+                  revision: .relationships.revision
+                }
+              ]
+            }' /tmp/observations.json >/tmp/receipt.json
+
+          encoded="$(base64 -w 0 </tmp/receipt.json)"
+          path='.smoke/deploy-governor-diagnostic.json'
+          existing_sha="$(gh api "/repos/$REPOSITORY/contents/$path" --jq '.sha' 2>/dev/null || true)"
+          args=(
+            --method PUT
+            -H 'Accept: application/vnd.github+json'
+            -H 'X-GitHub-Api-Version: 2022-11-28'
+            "/repos/$REPOSITORY/contents/$path"
+            -f message='Record deploy-governor bridge diagnostic'
+            -f content="$encoded"
+          )
+          if [[ -n "$existing_sha" ]]; then args+=(-f sha="$existing_sha"); fi
+          gh api "${args[@]}" >/dev/null
