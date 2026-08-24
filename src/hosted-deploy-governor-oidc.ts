@@ -50,10 +50,7 @@ export function createHostedDeployGovernorOidcHandlerFromEnv(
         if (error instanceof GitHubActionsAuthenticationError) {
           return new Response("Unauthorized", { status: 401 });
         }
-        return new Response("Service Unavailable", {
-          status: 503,
-          headers: { "Retry-After": "30" },
-        });
+        return unavailable("oidc-verification");
       }
 
       try {
@@ -68,11 +65,18 @@ export function createHostedDeployGovernorOidcHandlerFromEnv(
         }
         return new Response(null, { status: 204 });
       } catch {
-        return new Response("Service Unavailable", {
-          status: 503,
-          headers: { "Retry-After": "30" },
-        });
+        return unavailable("governor-dispatch");
       }
+    },
+  });
+}
+
+function unavailable(stage: "oidc-verification" | "governor-dispatch"): Response {
+  return new Response(`Service Unavailable: ${stage}`, {
+    status: 503,
+    headers: {
+      "Retry-After": "30",
+      "X-Stensibly-Deploy-Governor-Stage": stage,
     },
   });
 }
