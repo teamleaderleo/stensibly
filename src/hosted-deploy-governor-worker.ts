@@ -25,7 +25,6 @@ interface HostedDeployGovernorConfiguration {
 }
 
 const fullRevisionPattern = /^[a-f0-9]{40}$/u;
-const branchPattern = /^[A-Za-z0-9](?:[A-Za-z0-9._/-]{0,253}[A-Za-z0-9._-])?$/u;
 const githubApiVersion = "2022-11-28";
 
 export function createHostedDeployGovernorConsumerFromEnv(
@@ -103,7 +102,7 @@ function deployCandidate(
     return null;
   }
   const branch = ref.slice("refs/heads/".length);
-  if (!branchPattern.test(branch)) return null;
+  if (!branch || branch.length > 255 || branch.includes("|")) return null;
   return Object.freeze({
     repository: normalizeGitHubRepository(observation.repository),
     branch,
