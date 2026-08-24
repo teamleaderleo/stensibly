@@ -24,6 +24,7 @@ function environment(enabled = "true"): Record<string, string | undefined> {
   return {
     STENSIBLY_DEPLOY_GOVERNOR_ENABLED: enabled,
     STENSIBLY_DEPLOY_GOVERNOR_REPOSITORY: targetRepository,
+    STENSIBLY_DEPLOY_GOVERNOR_REPOSITORIES: sourceRepository,
     STENSIBLY_GITHUB_APP_ID: "12345",
     STENSIBLY_GITHUB_INSTALLATION_ID: "98765",
     STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN: "teamleaderleo",
@@ -34,14 +35,16 @@ function environment(enabled = "true"): Record<string, string | undefined> {
 
 function delivery(input: {
   eventType?: string;
+  repository?: string;
   ref?: string;
   afterRevision?: string;
   deleted?: boolean;
 } = {}): PreparedGitHubWebhookDelivery {
   const eventType = input.eventType ?? "push";
+  const repository = input.repository ?? sourceRepository;
   const payload = eventType === "push"
     ? {
-        repository: { full_name: sourceRepository },
+        repository: { full_name: repository },
         sender: { login: "teamleaderleo" },
         ref: input.ref ?? "refs/heads/main",
         before,
@@ -52,7 +55,7 @@ function delivery(input: {
         size: 1,
         head_commit: { timestamp: "2026-08-24T07:59:00.000Z" },
       }
-    : { repository: { full_name: sourceRepository }, sender: { login: "teamleaderleo" } };
+    : { repository: { full_name: repository }, sender: { login: "teamleaderleo" } };
   const body = new TextEncoder().encode(JSON.stringify(payload));
   const payloadDigest = digestGitHubWebhookPayload(body);
   const observation = mapGitHubRepositoryWebhook({
@@ -119,6 +122,20 @@ describe("hosted deploy governor dispatch", () => {
       }) as unknown as typeof fetch,
     })!;
     expect(await consumer.consume(delivery({ eventType: "ping" }))).toEqual({ status: "ignored" });
+    expect(calls).toBe(0);
+  });
+
+  test("ignores source repositories outside the checked-in governor allowlist", async () => {
+    let calls = 0;
+    const consumer = createHostedDeployGovernorConsumerFromEnv(environment(), {
+      fetch: (async () => {
+        calls += 1;
+        throw new Error("must not call GitHub");
+      }) as unknown as typeof fetch,
+    })!;
+    expect(await consumer.consume(delivery({
+      repository: "teamleaderleo/stensibly",
+    }))).toEqual({ status: "ignored" });
     expect(calls).toBe(0);
   });
 
