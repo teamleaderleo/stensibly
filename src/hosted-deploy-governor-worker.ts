@@ -98,6 +98,14 @@ export function createHostedDeployGovernorConsumerFromEnv(
 function deployCandidate(
   delivery: PreparedGitHubWebhookDelivery,
 ): Readonly<{ repository: string; branch: string; sha: string }> | null {
+  const pushCandidate = deployCandidateFromPush(delivery);
+  if (pushCandidate) return pushCandidate;
+  return deployCandidateFromCheckSuite(delivery);
+}
+
+function deployCandidateFromPush(
+  delivery: PreparedGitHubWebhookDelivery,
+): Readonly<{ repository: string; branch: string; sha: string }> | null {
   const observation = delivery.observation;
   if (!observation || observation.eventType !== "push" || observation.action !== "pushed") {
     return null;
@@ -108,12 +116,55 @@ function deployCandidate(
     return null;
   }
   const branch = ref.slice("refs/heads/".length);
-  if (!branch || branch.length > 255 || branch.includes("|")) return null;
+  if (!validBranch(branch)) return null;
   return Object.freeze({
     repository: normalizeGitHubRepository(observation.repository),
     branch,
     sha,
   });
+}
+
+function deployCandidateFromCheckSuite(
+  delivery: PreparedGitHubWebhookDelivery,
+): Readonly<{ repository: string; branch: string; sha: string }> | null {
+  if (delivery.eventType !== "check_suite") return null;
+  const payload = record(delivery.payload);
+  if (!payload || payload.action !== "completed") return null;
+
+  const repository = record(payload.repository);
+  const checkSuite = record(payload.check_suite);
+  const app = record(checkSuite?.app);
+  if (
+    !repository
+    || !checkSuite
+    || app?.slug !== "github-actions"
+    || checkSuite.status !== "completed"
+    || checkSuite.conclusion !== "success"
+    || typeof repository.full_name !== "string"
+    || typeof checkSuite.head_branch !== "string"
+    || typeof checkSuite.head_sha !== "string"
+  ) {
+    return null;
+  }
+
+  const branch = checkSuite.head_branch;
+  const sha = checkSuite.head_sha;
+  if (!validBranch(branch) || !fullRevisionPattern.test(sha)) return null;
+  return Object.freeze({
+    repository: normalizeGitHubRepository(repository.full_name),
+    branch,
+    sha,
+  });
+}
+
+function validBranch(branch: string): boolean {
+  return Boolean(branch) && branch.length <= 255 && !branch.includes("|");
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function configuration(
