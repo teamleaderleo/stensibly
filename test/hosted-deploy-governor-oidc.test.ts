@@ -156,6 +156,125 @@ test("rejects missing OIDC bearer credentials", async () => {
   expect(response.status).toBe(401);
 });
 
+test("admits only POST and returns method-not-allowed with allow POST", async () => {
+  const handler = createHostedDeployGovernorOidcHandlerFromEnv(environment(), {
+    fetch: (async () => {
+      throw new Error("must not call provider");
+    }) as unknown as typeof fetch,
+    now: () => now,
+  })!;
+  const response = await handler.handle(
+    new Request(deployGovernorOidcAudience, { method: "GET" }),
+  );
+
+  expect(response.status).toBe(405);
+  expect(await response.text()).toBe("Method Not Allowed");
+  expect(response.headers.get("Allow")).toBe("POST");
+});
+
+// Ordinary verifier rejection stays 401: missing or malformed bearers, bad
+// signatures, and JWKS network or non-OK responses are all normalized into
+// GitHubActionsAuthenticationError upstream (src/github-actions-oidc.ts), so
+// they must never reach a staged 503. Only a genuinely unexpected verifier
+// failure escapes that normalization into the oidc-verification stage.
+test("reports oidc-verification stage only when verification fails unexpectedly", async () => {
+  const { keys } = await oidcKeys();
+  let jwksCalls = 0;
+  const fetchImpl = (async () => {
+    jwksCalls += 1;
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error("jwks body failed mid-read"));
+      },
+    }), { headers: { "content-type": "application/json" } });
+  }) as unknown as typeof fetch;
+  const handler = createHostedDeployGovernorOidcHandlerFromEnv(environment(), {
+    fetch: fetchImpl,
+    now: () => now,
+    jwksUrl: "https://token.actions.test/.well-known/jwks",
+  })!;
+  const jwt = await signJwt(keys.privateKey, claims());
+  const response = await handler.handle(new Request(deployGovernorOidcAudience, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${jwt}` },
+  }));
+
+  expect(jwksCalls).toBe(1);
+  await expectStagedServiceUnavailable(response, "oidc-verification");
+});
+
+test("keeps ordinary jwks transport and status failures normalized as unauthorized", async () => {
+  const { keys } = await oidcKeys();
+
+  async function handleWith(fetchImpl: typeof fetch): Promise<Response> {
+    const handler = createHostedDeployGovernorOidcHandlerFromEnv(environment(), {
+      fetch: fetchImpl,
+      now: () => now,
+      jwksUrl: "https://token.actions.test/.well-known/jwks",
+    })!;
+    const jwt = await signJwt(keys.privateKey, claims());
+    return handler.handle(new Request(deployGovernorOidcAudience, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${jwt}` },
+    }));
+  }
+
+  const transportFailure = await handleWith((async () => {
+    throw new Error("jwks unreachable");
+  }) as unknown as typeof fetch);
+  expect(transportFailure.status).toBe(401);
+
+  const nonOkFailure = await handleWith((async (input: RequestInfo | URL) => {
+    if (String(input) === "https://token.actions.test/.well-known/jwks") {
+      return new Response("upstream unavailable", { status: 503 });
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  }) as unknown as typeof fetch);
+  expect(nonOkFailure.status).toBe(401);
+});
+
+test("reports governor-dispatch stage when candidate dispatch fails", async () => {
+  const { keys, publicJwk } = await oidcKeys();
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "https://token.actions.test/.well-known/jwks") {
+      return Response.json({ keys: [publicJwk] });
+    }
+    if (url.includes("/app/installations/98765/access_tokens")) {
+      return Response.json({
+        token: "target-token",
+        expires_at: "2026-08-24T18:30:00.000Z",
+        permissions: { contents: "write" },
+        repository_selection: "selected",
+        repositories: [{ full_name: targetRepository }],
+      }, { status: 201 });
+    }
+    if (url === "https://api.github.test/repos/teamleaderleo/deploy-governor/dispatches") {
+      return new Response(null, { status: 500 });
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  }) as unknown as typeof fetch;
+  const handler = createHostedDeployGovernorOidcHandlerFromEnv(environment(), {
+    fetch: fetchImpl,
+    now: () => now,
+    jwksUrl: "https://token.actions.test/.well-known/jwks",
+  })!;
+  const jwt = await signJwt(keys.privateKey, claims());
+  const response = await handler.handle(new Request(deployGovernorOidcAudience, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${jwt}` },
+  }));
+
+  await expectStagedServiceUnavailable(response, "governor-dispatch");
+});
+
+async function expectStagedServiceUnavailable(response: Response, stage: string): Promise<void> {
+  expect(response.status).toBe(503);
+  expect(response.headers.get("X-Stensibly-Deploy-Governor-Stage")).toBe(stage);
+  expect(response.headers.get("Retry-After")).toBe("30");
+  expect(await response.text()).toBe(`Service Unavailable: ${stage}`);
+}
+
 async function signJwt(privateKey: CryptoKey, payload: Record<string, unknown>): Promise<string> {
   const header = encodeJson({ alg: "RS256", typ: "JWT", kid: "oidc-key" });
   const body = encodeJson(payload);
