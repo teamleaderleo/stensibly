@@ -39,6 +39,12 @@ function delivery(input: {
   ref?: string;
   afterRevision?: string;
   deleted?: boolean;
+  checkSuiteAction?: string;
+  checkSuiteStatus?: string;
+  checkSuiteConclusion?: string | null;
+  checkSuiteAppSlug?: string;
+  checkSuiteBranch?: string;
+  checkSuiteSha?: string;
 } = {}): PreparedGitHubWebhookDelivery {
   const eventType = input.eventType ?? "push";
   const repository = input.repository ?? sourceRepository;
@@ -54,6 +60,21 @@ function delivery(input: {
         forced: false,
         size: 1,
         head_commit: { timestamp: "2026-08-24T07:59:00.000Z" },
+      }
+    : eventType === "check_suite"
+    ? {
+        action: input.checkSuiteAction ?? "completed",
+        repository: { full_name: repository },
+        sender: { login: "github-actions[bot]" },
+        check_suite: {
+          app: { slug: input.checkSuiteAppSlug ?? "github-actions" },
+          status: input.checkSuiteStatus ?? "completed",
+          conclusion: input.checkSuiteConclusion === undefined
+            ? "success"
+            : input.checkSuiteConclusion,
+          head_branch: input.checkSuiteBranch ?? "main",
+          head_sha: input.checkSuiteSha ?? after,
+        },
       }
     : { repository: { full_name: repository }, sender: { login: "teamleaderleo" } };
   const body = new TextEncoder().encode(JSON.stringify(payload));
@@ -113,7 +134,7 @@ describe("hosted deploy governor dispatch", () => {
     expect(createHostedDeployGovernorConsumerFromEnv(environment("false"))).toBeUndefined();
   });
 
-  test("ignores webhook families that are not push candidates without provider access", async () => {
+  test("ignores unrelated webhook families without provider access", async () => {
     let calls = 0;
     const consumer = createHostedDeployGovernorConsumerFromEnv(environment(), {
       fetch: (async () => {
@@ -154,7 +175,7 @@ describe("hosted deploy governor dispatch", () => {
     expect(calls).toBe(0);
   });
 
-  test("dispatches exact repository, branch, revision, and delivery identity", async () => {
+  test("dispatches exact repository, branch, revision, and delivery identity from push", async () => {
     const dispatchBodies: Record<string, unknown>[] = [];
     const consumer = createHostedDeployGovernorConsumerFromEnv(environment(), {
       fetch: githubFetch((body) => {
@@ -173,6 +194,55 @@ describe("hosted deploy governor dispatch", () => {
         delivery_id: "delivery-governor-1",
       },
     }]);
+  });
+
+  test("dispatches successful completed GitHub Actions check suites", async () => {
+    const dispatchBodies: Record<string, unknown>[] = [];
+    const consumer = createHostedDeployGovernorConsumerFromEnv(environment(), {
+      fetch: githubFetch((body) => {
+        dispatchBodies.push(body);
+      }),
+      now: () => Date.parse("2026-08-24T08:00:00.000Z"),
+    })!;
+
+    expect(await consumer.consume(delivery({ eventType: "check_suite" }))).toEqual({
+      status: "dispatched",
+    });
+    expect(dispatchBodies).toEqual([{
+      event_type: "vercel-deploy-candidate",
+      client_payload: {
+        repository: sourceRepository,
+        branch: "main",
+        sha: after,
+        delivery_id: "delivery-governor-1",
+      },
+    }]);
+  });
+
+  test("ignores failed, unfinished, and third-party check suites without provider access", async () => {
+    let calls = 0;
+    const consumer = createHostedDeployGovernorConsumerFromEnv(environment(), {
+      fetch: (async () => {
+        calls += 1;
+        throw new Error("must not call GitHub");
+      }) as unknown as typeof fetch,
+    })!;
+
+    expect(await consumer.consume(delivery({
+      eventType: "check_suite",
+      checkSuiteConclusion: "failure",
+    }))).toEqual({ status: "ignored" });
+    expect(await consumer.consume(delivery({
+      eventType: "check_suite",
+      checkSuiteAction: "requested",
+      checkSuiteStatus: "queued",
+      checkSuiteConclusion: null,
+    }))).toEqual({ status: "ignored" });
+    expect(await consumer.consume(delivery({
+      eventType: "check_suite",
+      checkSuiteAppSlug: "some-ci",
+    }))).toEqual({ status: "ignored" });
+    expect(calls).toBe(0);
   });
 
   test("preserves a non-main branch for central allowlist admission", async () => {
