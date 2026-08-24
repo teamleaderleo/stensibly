@@ -39,12 +39,13 @@ function delivery(input: {
   ref?: string;
   afterRevision?: string;
   deleted?: boolean;
-  checkSuiteAction?: string;
-  checkSuiteStatus?: string;
-  checkSuiteConclusion?: string | null;
-  checkSuiteAppSlug?: string;
-  checkSuiteBranch?: string;
-  checkSuiteSha?: string;
+  workflowAction?: string;
+  workflowName?: string;
+  workflowStatus?: string;
+  workflowConclusion?: string | null;
+  workflowEvent?: string;
+  workflowBranch?: string;
+  workflowSha?: string;
 } = {}): PreparedGitHubWebhookDelivery {
   const eventType = input.eventType ?? "push";
   const repository = input.repository ?? sourceRepository;
@@ -61,19 +62,20 @@ function delivery(input: {
         size: 1,
         head_commit: { timestamp: "2026-08-24T07:59:00.000Z" },
       }
-    : eventType === "check_suite"
+    : eventType === "workflow_run"
     ? {
-        action: input.checkSuiteAction ?? "completed",
+        action: input.workflowAction ?? "completed",
         repository: { full_name: repository },
         sender: { login: "github-actions[bot]" },
-        check_suite: {
-          app: { slug: input.checkSuiteAppSlug ?? "github-actions" },
-          status: input.checkSuiteStatus ?? "completed",
-          conclusion: input.checkSuiteConclusion === undefined
+        workflow_run: {
+          name: input.workflowName ?? "Production deploy signal",
+          status: input.workflowStatus ?? "completed",
+          conclusion: input.workflowConclusion === undefined
             ? "success"
-            : input.checkSuiteConclusion,
-          head_branch: input.checkSuiteBranch ?? "main",
-          head_sha: input.checkSuiteSha ?? after,
+            : input.workflowConclusion,
+          event: input.workflowEvent ?? "push",
+          head_branch: input.workflowBranch ?? "main",
+          head_sha: input.workflowSha ?? after,
         },
       }
     : { repository: { full_name: repository }, sender: { login: "teamleaderleo" } };
@@ -196,7 +198,7 @@ describe("hosted deploy governor dispatch", () => {
     }]);
   });
 
-  test("dispatches successful completed GitHub Actions check suites", async () => {
+  test("dispatches the successful completed production-signal workflow run", async () => {
     const dispatchBodies: Record<string, unknown>[] = [];
     const consumer = createHostedDeployGovernorConsumerFromEnv(environment(), {
       fetch: githubFetch((body) => {
@@ -205,7 +207,7 @@ describe("hosted deploy governor dispatch", () => {
       now: () => Date.parse("2026-08-24T08:00:00.000Z"),
     })!;
 
-    expect(await consumer.consume(delivery({ eventType: "check_suite" }))).toEqual({
+    expect(await consumer.consume(delivery({ eventType: "workflow_run" }))).toEqual({
       status: "dispatched",
     });
     expect(dispatchBodies).toEqual([{
@@ -219,7 +221,7 @@ describe("hosted deploy governor dispatch", () => {
     }]);
   });
 
-  test("ignores failed, unfinished, and third-party check suites without provider access", async () => {
+  test("ignores wrong, failed, unfinished, and non-push workflow runs without provider access", async () => {
     let calls = 0;
     const consumer = createHostedDeployGovernorConsumerFromEnv(environment(), {
       fetch: (async () => {
@@ -229,23 +231,27 @@ describe("hosted deploy governor dispatch", () => {
     })!;
 
     expect(await consumer.consume(delivery({
-      eventType: "check_suite",
-      checkSuiteConclusion: "failure",
+      eventType: "workflow_run",
+      workflowName: "CI",
     }))).toEqual({ status: "ignored" });
     expect(await consumer.consume(delivery({
-      eventType: "check_suite",
-      checkSuiteAction: "requested",
-      checkSuiteStatus: "queued",
-      checkSuiteConclusion: null,
+      eventType: "workflow_run",
+      workflowConclusion: "failure",
     }))).toEqual({ status: "ignored" });
     expect(await consumer.consume(delivery({
-      eventType: "check_suite",
-      checkSuiteAppSlug: "some-ci",
+      eventType: "workflow_run",
+      workflowAction: "in_progress",
+      workflowStatus: "in_progress",
+      workflowConclusion: null,
+    }))).toEqual({ status: "ignored" });
+    expect(await consumer.consume(delivery({
+      eventType: "workflow_run",
+      workflowEvent: "workflow_dispatch",
     }))).toEqual({ status: "ignored" });
     expect(calls).toBe(0);
   });
 
-  test("preserves a non-main branch for central allowlist admission", async () => {
+  test("preserves a non-main push branch for central allowlist admission", async () => {
     const dispatchBodies: Record<string, unknown>[] = [];
     const consumer = createHostedDeployGovernorConsumerFromEnv(environment(), {
       fetch: githubFetch((body) => {
