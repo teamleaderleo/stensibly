@@ -13,6 +13,7 @@ const permanentWorkflows = [
   "ci.yml",
   "deploy-convex.yml",
   "deploy-dashboard.yml",
+  "deploy-status-once.yml",
   "deploy-worker.yml",
   "mcp-stateful-replay-v130-probe.yml",
   "observe-deployment-reconciliation.yml",
