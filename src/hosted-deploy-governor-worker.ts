@@ -17,6 +17,7 @@ export interface HostedDeployGovernorOverrides {
 
 interface HostedDeployGovernorConfiguration {
   targetRepository: string;
+  sourceRepositories: ReadonlySet<string>;
   apiBaseUrl: string;
   appId: string;
   installationId: string;
@@ -48,7 +49,12 @@ export function createHostedDeployGovernorConsumerFromEnv(
   return Object.freeze({
     consume: async (delivery: PreparedGitHubWebhookDelivery) => {
       const candidate = deployCandidate(delivery);
-      if (!candidate) return Object.freeze({ status: "ignored" as const });
+      if (
+        !candidate
+        || !config.sourceRepositories.has(candidate.repository.toLowerCase())
+      ) {
+        return Object.freeze({ status: "ignored" as const });
+      }
 
       const credential = await tokens.getInstallationToken({
         repositoryFullName: config.targetRepository,
@@ -116,14 +122,30 @@ function configuration(
   const targetRepository = normalizeGitHubRepository(
     required(env, "STENSIBLY_DEPLOY_GOVERNOR_REPOSITORY"),
   ).toLowerCase();
+  const sourceRepositories = repositorySet(
+    required(env, "STENSIBLY_DEPLOY_GOVERNOR_REPOSITORIES"),
+  );
   return {
     targetRepository,
+    sourceRepositories,
     apiBaseUrl: apiBaseUrl(env.STENSIBLY_GITHUB_API_BASE_URL),
     appId: required(env, "STENSIBLY_GITHUB_APP_ID"),
     installationId: required(env, "STENSIBLY_GITHUB_INSTALLATION_ID"),
     accountLogin: required(env, "STENSIBLY_GITHUB_PROVIDER_ACCOUNT_LOGIN").toLowerCase(),
     privateKeyPem: required(env, "STENSIBLY_GITHUB_APP_PRIVATE_KEY", false),
   };
+}
+
+function repositorySet(value: string): ReadonlySet<string> {
+  const repositories = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => normalizeGitHubRepository(entry).toLowerCase());
+  if (repositories.length === 0) {
+    throw new Error("Hosted deploy governor requires at least one source repository");
+  }
+  return new Set(repositories);
 }
 
 function apiBaseUrl(value: string | undefined): string {
