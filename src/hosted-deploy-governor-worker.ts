@@ -4,6 +4,19 @@ import type { PreparedGitHubWebhookDelivery } from "./github-webhook-ingress.js"
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
 import { receiverSafeFetch } from "./fetch-implementation.js";
 
+export interface HostedDeployCandidate {
+  readonly repository: string;
+  readonly branch: string;
+  readonly sha: string;
+  readonly deliveryId: string;
+}
+
+export interface HostedDeployGovernorDispatcher {
+  dispatch(
+    candidate: HostedDeployCandidate,
+  ): Promise<Readonly<{ status: "ignored" | "dispatched" }>>;
+}
+
 export interface HostedDeployGovernorWebhookConsumer {
   consume(
     delivery: PreparedGitHubWebhookDelivery,
@@ -29,10 +42,10 @@ const fullRevisionPattern = /^[a-f0-9]{40}$/u;
 const githubApiVersion = "2022-11-28";
 const deploySignalWorkflowName = "Production deploy signal";
 
-export function createHostedDeployGovernorConsumerFromEnv(
+export function createHostedDeployGovernorDispatcherFromEnv(
   env: Record<string, string | undefined>,
   overrides: HostedDeployGovernorOverrides = {},
-): HostedDeployGovernorWebhookConsumer | undefined {
+): HostedDeployGovernorDispatcher | undefined {
   if (!exactBooleanEnv(env, "STENSIBLY_DEPLOY_GOVERNOR_ENABLED")) return undefined;
   const config = configuration(env);
   const fetchImpl = receiverSafeFetch(overrides.fetch);
@@ -48,12 +61,9 @@ export function createHostedDeployGovernorConsumerFromEnv(
   });
 
   return Object.freeze({
-    consume: async (delivery: PreparedGitHubWebhookDelivery) => {
-      const candidate = deployCandidate(delivery);
-      if (
-        !candidate
-        || !config.sourceRepositories.has(candidate.repository.toLowerCase())
-      ) {
+    dispatch: async (candidateInput: HostedDeployCandidate) => {
+      const candidate = normalizeCandidate(candidateInput);
+      if (!config.sourceRepositories.has(candidate.repository.toLowerCase())) {
         return Object.freeze({ status: "ignored" as const });
       }
 
@@ -78,7 +88,7 @@ export function createHostedDeployGovernorConsumerFromEnv(
               repository: candidate.repository,
               branch: candidate.branch,
               sha: candidate.sha,
-              delivery_id: delivery.deliveryId,
+              delivery_id: candidate.deliveryId,
             },
           }),
         },
@@ -92,6 +102,21 @@ export function createHostedDeployGovernorConsumerFromEnv(
         throw new Error(`Deploy governor dispatch failed with GitHub status ${response.status}`);
       }
       return Object.freeze({ status: "dispatched" as const });
+    },
+  });
+}
+
+export function createHostedDeployGovernorConsumerFromEnv(
+  env: Record<string, string | undefined>,
+  overrides: HostedDeployGovernorOverrides = {},
+): HostedDeployGovernorWebhookConsumer | undefined {
+  const dispatcher = createHostedDeployGovernorDispatcherFromEnv(env, overrides);
+  if (!dispatcher) return undefined;
+  return Object.freeze({
+    consume: async (delivery: PreparedGitHubWebhookDelivery) => {
+      const candidate = deployCandidate(delivery);
+      if (!candidate) return Object.freeze({ status: "ignored" as const });
+      return dispatcher.dispatch({ ...candidate, deliveryId: delivery.deliveryId });
     },
   });
 }
@@ -158,8 +183,30 @@ function deployCandidateFromWorkflowRun(
   });
 }
 
+function normalizeCandidate(candidate: HostedDeployCandidate): HostedDeployCandidate {
+  const repository = normalizeGitHubRepository(candidate.repository);
+  const branch = candidate.branch;
+  const sha = candidate.sha;
+  const deliveryId = candidate.deliveryId;
+  if (!validBranch(branch) || !fullRevisionPattern.test(sha)) {
+    throw new Error("Deploy governor candidate is invalid");
+  }
+  if (
+    typeof deliveryId !== "string"
+    || deliveryId.length < 1
+    || deliveryId.length > 1024
+    || /[\u0000-\u001f\u007f-\u009f]/u.test(deliveryId)
+  ) {
+    throw new Error("Deploy governor delivery identity is invalid");
+  }
+  return Object.freeze({ repository, branch, sha, deliveryId });
+}
+
 function validBranch(branch: string): boolean {
-  return Boolean(branch) && branch.length <= 255 && !branch.includes("|");
+  return typeof branch === "string"
+    && Boolean(branch)
+    && branch.length <= 255
+    && !branch.includes("|");
 }
 
 function record(value: unknown): Record<string, unknown> | null {
