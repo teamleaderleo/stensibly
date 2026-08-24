@@ -790,6 +790,16 @@ export default defineSchema({
     .index("by_workspace_subject_received", ["workspaceId", "subjectExternalId", "receivedAt"])
     .index("by_workspace_semantic_received", ["workspaceId", "semanticFingerprint", "receivedAt"]),
 
+  githubPublicEventsPollStates: defineTable({
+    workspaceId: v.id("workspaces"),
+    repository: v.string(),
+    etag: v.union(v.string(), v.null()),
+    nextEligibleAt: v.number(),
+    lastPolledAt: v.union(v.number(), v.null()),
+    updatedAt: v.number(),
+  })
+    .index("by_workspace_repository", ["workspaceId", "repository"]),
+
   apiTokens: defineTable({
     workspaceId: v.id("workspaces"),
     externalId: v.string(),
