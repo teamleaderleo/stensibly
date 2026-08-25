@@ -116,12 +116,15 @@ describe("hosted auth start admission", () => {
         rateLimiter: recordingLimiter([], false),
       },
     );
+    if (!response) throw new Error("Expected a rate-limit rejection");
 
-    expect(response?.status).toBe(429);
-    expect(response?.headers.get("cache-control")).toBe("no-store");
-    expect(response?.headers.get("retry-after")).toBe("60");
-    expect(await response?.text()).not.toContain(clientAddress);
-    expect(JSON.stringify([...response?.headers.entries() ?? []])).not.toContain(clientAddress);
+    expect(response.status).toBe(429);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("retry-after")).toBe("60");
+    expect(await response.text()).not.toContain(clientAddress);
+    const headerValues: string[] = [];
+    response.headers.forEach((value) => headerValues.push(value));
+    expect(headerValues.join("\n")).not.toContain(clientAddress);
   });
 
   test("does not affect other routes, methods, or disabled hosted auth", async () => {
