@@ -11,7 +11,7 @@ const completeInput: WorkerEnrolmentRequestInput = {
   callsign: "  Nightjar  ",
   capabilities: ["repository-read", "Pull-Request-Review"],
   toolAllowlist: ["github.review", "GitHub.Fetch"],
-  projectScope: ["stensibly", "SmolRunner"],
+  projectScope: ["stensibly", "Glaeda"],
   preferredStances: ["integration", "Independent-Review"],
   startedAt: "2026-07-27T00:00:00Z",
   expiresAt: "2026-07-27T02:00:00.000Z",
@@ -30,7 +30,7 @@ describe("worker enrolment request contract", () => {
       callsign: "Nightjar",
       capabilities: ["pull-request-review", "repository-read"],
       toolAllowlist: ["github.fetch", "github.review"],
-      projectScope: ["smolrunner", "stensibly"],
+      projectScope: ["glaeda", "stensibly"],
       preferredStances: ["independent-review", "integration"],
       startedAt: "2026-07-27T00:00:00.000Z",
       expiresAt: "2026-07-27T02:00:00.000Z",
@@ -38,7 +38,7 @@ describe("worker enrolment request contract", () => {
       correlationId: "corr_01",
       causationId: "cause_01",
       grantsAuthority: false,
-      fingerprint: "sha256:70b7f47ffa4e136ae6515bc8d38760f134115db07ea1db98ea961141a34e17d5",
+      fingerprint: "sha256:e55d4ca67cef6e80612ee9e417ecfa2cb44755063fc8ecac92c21027d9945195",
     });
   });
 

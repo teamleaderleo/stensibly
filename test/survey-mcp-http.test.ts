@@ -12,7 +12,7 @@ let app: ReturnType<typeof createServerApp>;
 beforeEach(() => {
   store = new StensiblyStore(":memory:");
   store.createItem({
-    project: "smolrunner",
+    project: "glaeda",
     kind: "task",
     title: "Ready runner work",
     priority: 80,
@@ -50,17 +50,17 @@ describe("remote workspace survey", () => {
     }>(response);
     expect(survey.counts.total).toBe(2);
     expect(survey.projects.map((entry) => entry.project)).toEqual([
+      "glaeda",
       "renderprove",
-      "smolrunner",
     ]);
     expect(survey.fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
   });
 
   test("requires project scope when a token has a project allowlist", async () => {
     const token = createApiToken(store, {
-      name: "SmolRunner surveyor",
+      name: "Glaeda surveyor",
       scopes: ["read"],
-      projects: ["smolrunner"],
+      projects: ["glaeda"],
     });
 
     const missingProject = await mcpRequest(
@@ -73,7 +73,7 @@ describe("remote workspace survey", () => {
     const allowed = await mcpRequest(
       app,
       token.token,
-      toolCall(3, "survey_workspace", { project: "smolrunner" }),
+      toolCall(3, "survey_workspace", { project: "glaeda" }),
     );
     expect(allowed.status).toBe(200);
     const survey = await readToolJson<{
@@ -81,7 +81,7 @@ describe("remote workspace survey", () => {
       projects: Array<{ project: string }>;
     }>(allowed);
     expect(survey.counts.total).toBe(1);
-    expect(survey.projects.map((entry) => entry.project)).toEqual(["smolrunner"]);
+    expect(survey.projects.map((entry) => entry.project)).toEqual(["glaeda"]);
 
     const denied = await mcpRequest(
       app,

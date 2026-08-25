@@ -24,7 +24,7 @@ Elapsed seconds are excluded from the fingerprint. Equivalent material ledger st
 
 ```json
 {
-  "project": "smolrunner",
+  "project": "glaeda",
   "limit": 10,
   "expiringWithinSeconds": 900,
   "previousFingerprint": "sha256:..."

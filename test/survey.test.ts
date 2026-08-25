@@ -8,7 +8,7 @@ describe("workspace survey", () => {
   test("summarizes dispatch candidates, blockers, and lease urgency", () => {
     const survey = buildWorkspaceSurvey([
       item({ id: "ready-low", project: "renderprove", status: "ready", priority: 40 }),
-      item({ id: "ready-high", project: "smolrunner", status: "ready", priority: 90 }),
+      item({ id: "ready-high", project: "glaeda", status: "ready", priority: 90 }),
       item({
         id: "active-expiring",
         project: "stensibly",
@@ -19,7 +19,7 @@ describe("workspace survey", () => {
       }),
       item({
         id: "active-expired",
-        project: "smolrunner",
+        project: "glaeda",
         status: "active",
         priority: 80,
         claimedBy: "chat-2",
@@ -54,8 +54,8 @@ describe("workspace survey", () => {
     expect(survey.attention.urgent).toBe(true);
     expect(survey.notifyRecommended).toBe(true);
     expect(survey.projects.map((entry) => entry.project)).toEqual([
+      "glaeda",
       "renderprove",
-      "smolrunner",
       "stensibly",
     ]);
   });
@@ -95,16 +95,16 @@ describe("workspace survey", () => {
 
   test("can restrict a survey to one project", () => {
     const survey = buildWorkspaceSurvey([
-      item({ id: "one", project: "smolrunner", status: "ready" }),
+      item({ id: "one", project: "glaeda", status: "ready" }),
       item({ id: "two", project: "renderprove", status: "blocked" }),
     ], {
-      project: "smolrunner",
+      project: "glaeda",
       now: baseTime,
     });
 
-    expect(survey.scope.project).toBe("smolrunner");
+    expect(survey.scope.project).toBe("glaeda");
     expect(survey.counts.total).toBe(1);
-    expect(survey.projects.map((entry) => entry.project)).toEqual(["smolrunner"]);
+    expect(survey.projects.map((entry) => entry.project)).toEqual(["glaeda"]);
     expect(survey.dispatchCandidates.map((entry) => entry.id)).toEqual(["one"]);
   });
 });
