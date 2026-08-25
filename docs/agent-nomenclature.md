@@ -161,7 +161,11 @@ run:
 
 Runs produce evidence, events, artifacts, blockers, completion, or a handoff. A run may fail without failing the action, lane, or wave.
 
-Model, harness, branch, worktree, attempt, and execution status belong to the run rather than the lane title, callsign, mantle, or pod.
+Model, reasoning effort, runner profile/version, harness, branch, worktree, attempt, and execution status belong to the run rather than the lane title, callsign, mantle, or pod.
+
+While a run is resumed through a compatible provider conversation or checkpoint, keep one exact runner profile/version. Execution-affecting changes such as provider/model identity or reasoning effort select a successor run with a new profile identity. An intentional fresh context after accumulated conversational clutter also starts a successor run from durable handoff state; it may reuse the same profile/version when the execution identity is unchanged.
+
+Cache reuse and conversational coherence remain runtime concerns. Stensibly preserves the exact run/profile binding, continuation/checkpoint lineage, external references, and durable handoff needed to reuse a compatible hot context or replace it cleanly.
 
 ## Worker and membership metadata
 
