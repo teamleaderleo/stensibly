@@ -14,7 +14,12 @@ import {
   createMcpCapabilityRegistrationGuard,
 } from "./mcp-capability-policy.js";
 import type { McpRequestContext } from "./mcp-context.js";
-import { mcpToolManifestForLedger } from "./mcp-diagnostics.js";
+import type { McpCapabilityExposureProfile } from "./mcp-exposure-selection.js";
+import {
+  compileMcpExposureRegistrationPlan,
+  createMcpExposureRegistrationFilter,
+  type McpExposureRegistrationPlan,
+} from "./mcp-exposure-registration.js";
 import { withSuccessfulMcpReadObservation } from "./mcp-successful-read-observation.js";
 import { asToolResult } from "./mcp-tool-result.js";
 import { registerOperationReceiptTools } from "./operation-receipt-mcp.js";
@@ -46,23 +51,37 @@ const MCP_SERVER_INSTRUCTIONS = [
   "Use get_runner_context before starting or resuming a run so execution begins from a bounded canonical handoff.",
 ].join(" ");
 
+export interface McpServerConstructionOptions {
+  readonly exposureProfile?: McpCapabilityExposureProfile;
+}
+
 export function createMcpServer(
   ledger: WorkLedger,
   context: McpRequestContext = {},
+  options: McpServerConstructionOptions = {},
 ): McpServer {
+  const exposure = compileMcpExposureRegistrationPlan(
+    ledger,
+    options.exposureProfile ?? "full_internal",
+  );
   const rawServer = new McpServer(
-    { name: "stensibly", version: mcpToolManifestForLedger(ledger).serverVersion },
+    { name: "stensibly", version: exposure.manifest.serverVersion },
     { instructions: MCP_SERVER_INSTRUCTIONS },
   );
-  return configureMcpServer(rawServer, ledger, context);
+  return configureMcpServer(rawServer, ledger, context, exposure);
 }
 
 export function createModernMcpServer(
   ledger: WorkLedger,
   context: McpRequestContext = {},
+  options: McpServerConstructionOptions = {},
 ): ModernMcpServer {
+  const exposure = compileMcpExposureRegistrationPlan(
+    ledger,
+    options.exposureProfile ?? "full_internal",
+  );
   const modernServer = new ModernMcpServer(
-    { name: "stensibly", version: mcpToolManifestForLedger(ledger).serverVersion },
+    { name: "stensibly", version: exposure.manifest.serverVersion },
     {
       instructions: MCP_SERVER_INSTRUCTIONS,
       cacheHints: {
@@ -74,7 +93,7 @@ export function createModernMcpServer(
   // Keep protocol and transport objects inside their own SDK era. The v2 server's
   // high-level registerTool API is intentionally backward-compatible, so only the
   // plain registration calls are shared with the existing ChatGPT/v1 catalogue.
-  configureMcpServer(modernServer as unknown as McpServer, ledger, context);
+  configureMcpServer(modernServer as unknown as McpServer, ledger, context, exposure);
   return modernServer;
 }
 
@@ -82,10 +101,15 @@ function configureMcpServer(
   rawServer: McpServer,
   ledger: WorkLedger,
   context: McpRequestContext,
+  exposure: McpExposureRegistrationPlan,
 ): McpServer {
   const registration = createMcpCapabilityRegistrationGuard(rawServer);
-  const server = withSuccessfulMcpReadObservation(
+  const filteredRegistration = createMcpExposureRegistrationFilter(
     registration.server,
+    exposure.manifest.tools,
+  );
+  const server = withSuccessfulMcpReadObservation(
+    filteredRegistration.server,
     context.onSuccessfulReadToolCall,
   );
 
@@ -324,7 +348,7 @@ function configureMcpServer(
   registerContextPacketTools(server, ledger);
   registerContinuationTools(server, ledger);
   registerWorkerEnrolmentTools(server, ledger, context);
-  registration.complete();
+  filteredRegistration.complete(registration.complete());
   return rawServer;
 }
 
