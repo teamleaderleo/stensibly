@@ -2,9 +2,9 @@
 
 This document defines Stensibly's current integration boundary for **Glaeda**, the project formerly named SmolRunner.
 
-The original receipt contract was developed during the historical SmolRunner pilot in #260. Its v1 producer and reference identities are durable compatibility facts. Stensibly therefore uses Glaeda names for the present product-facing integration while continuing to decode exact SmolRunner v1 receipts without reinterpreting their bytes.
+The original receipt contract was developed during the historical SmolRunner pilot in #260. Its v1 producer and reference identities are durable compatibility facts. Stensibly uses Glaeda names for the present product-facing integration while continuing to decode exact SmolRunner v1 receipts with their original identity.
 
-Upstream `teamleaderleo/smolrunner#751` owns the future Glaeda execution-receipt successor. Until that successor is defined, the current Glaeda-facing API decodes the historical SmolRunner v1 generation only.
+Upstream `teamleaderleo/smolrunner#751` owns the future Glaeda execution-receipt successor. Until that successor is defined, the current Glaeda-facing API admits the historical SmolRunner v1 generation only.
 
 ## Compatibility generations
 
@@ -24,13 +24,13 @@ Those fixtures are compatibility evidence. Keep them byte-for-byte truthful to t
 
 ### Current Glaeda-facing integration
 
-`src/glaeda-receipt-intake.ts` is the current module-facing entry point. It exposes Glaeda-named aliases for the existing parser, schemas, transition comparison, and liveness projection while the only admitted wire generation remains SmolRunner v1.
+`src/glaeda-receipt-intake.ts` is the current module-facing entry point. It exposes Glaeda-named parsing, transition comparison, and liveness operations while keeping the admitted wire schemas explicitly labelled as legacy SmolRunner v1.
 
-Calling `parseGlaedaReceiptIntake` therefore means "parse a receipt accepted by the current Glaeda integration boundary"; today that accepted receipt is specifically the historical SmolRunner v1 format.
+Calling `parseGlaedaReceiptIntake` means "parse a receipt accepted by the current Glaeda integration boundary"; today that accepted receipt is specifically the historical SmolRunner v1 format.
 
 ### Future Glaeda successor
 
-When upstream #751 defines a Glaeda producer/schema generation, add it as an explicit second admitted generation. Preserve the SmolRunner v1 decoder for old evidence and branch on the exact supported producer/version contract. Never change old v1 literals in place or silently treat old canonical bytes as Glaeda bytes.
+When upstream #751 defines a Glaeda producer/schema generation, add it as an explicit second admitted generation. Preserve the SmolRunner v1 decoder for old evidence and branch on the exact supported producer/version contract. Old v1 literals and canonical bytes keep their original identity.
 
 ## Ownership split
 
@@ -51,26 +51,82 @@ Glaeda remains authoritative for:
 - bounded progress, continuation barriers, terminal outcome, cleanup, and public receipt evidence;
 - converting private runtime state into its documented public receipt generation.
 
-Neither side gains merge, deployment, credential, spending, or provider-administration authority through receipt intake.
+Receipt intake grants zero merge, deployment, credential, spending, or provider-administration authority.
+
+## Intake identity
+
+Every admitted SmolRunner v1 intake binds the public receipt to an exact Stensibly attempt:
+
+- `attemptId`;
+- workspace, project, and item IDs;
+- exact claim, run, and lease generations;
+- exact execution-envelope version;
+- legacy executor adapter `smolrunner`;
+- approved runner profile;
+- canonical lower-case `owner/repository` identity;
+- requested base and immutable resolved base commit;
+- current published candidate head, when one exists;
+- approved verification profile;
+- opaque legacy SmolRunner workspace receipt reference.
+
+The receipt repeats the envelope version, repository, runner profile, verification profile, workspace receipt, and exact source commit. Cross-boundary drift fails validation.
+
+Candidate heads remain mutable attempt evidence. A later checkpoint may publish a new exact head. Replaying the same checkpoint generation with different head or other semantics conflicts, and a later checkpoint cannot regress from a known head to `null`.
+
+Within one execution ID, the producer version and operation family/schema are immutable. A later checkpoint that changes any of those fields conflicts as changed execution identity.
+
+## Public receipt limits
+
+The admitted legacy receipt contains only bounded machine fields:
+
+- producer and operation versions;
+- exact execution ID and monotonic checkpoint generation;
+- repository, profile, workspace, source commit/tree, and source digest;
+- closed phase and state vocabularies;
+- canonical start, observation, and terminal timestamps;
+- bounded queue, reservation, heartbeat, progress, outcome counts, continuation barriers, deferred actions, and next action;
+- opaque log/artifact references;
+- coverage state;
+- explicit false authority declarations.
+
+Unknown fields fail closed. Filesystem paths, argv, commands, environment values, stdout, stderr, credentials, tokens, source bytes, arbitrary logs, and unrestricted prose stay outside the schema.
 
 ## Replay and conflict
 
-The current parser validates the complete admitted public intake and computes a canonical fingerprint from the validated attempt and receipt semantics. Replay comparison classifies an incoming checkpoint as:
+`parseGlaedaReceiptIntake` validates the complete admitted public intake and computes its canonical fingerprint from the full validated attempt and receipt semantics. The returned transition remains a bounded projection, while fields omitted from that projection—such as detailed counts, continuation arrays, timestamps, and evidence references—still participate in exact replay identity.
+
+`compareGlaedaReceiptTransitions` classifies one incoming checkpoint against the last durable transition:
 
 - `insert` — first accepted checkpoint;
 - `duplicate` — exact same checkpoint generation and complete validated semantic fingerprint;
 - `advance` — exactly the next checkpoint generation, the same immutable execution identity, and an allowed state transition;
 - `stale` — an older checkpoint generation;
-- `conflict` — changed attempt/execution identity, changed same-generation semantics, a checkpoint gap, candidate-head regression, terminal mutation, invalid state order, or observation-time reversal.
+- `conflict` — changed attempt/execution identity, reused checkpoint generation with different semantics, generation gap, candidate-head regression, terminal mutation, invalid state order, or observation-time reversal.
 
-A different execution ID, producer version, operation family, or operation schema never creates an implicit fallback. Fallback or handoff must create an explicitly superseding Stensibly attempt under the owning run policy.
+A different execution ID, producer version, operation family, or operation schema requires an explicit superseding Stensibly attempt or an admitted successor generation under its owning contract.
 
 ## Heartbeat and named waits
 
-Only `starting`, `running`, and `verifying` receipts claim active heartbeat evidence. Stensibly projects `stalledAt` from the earlier of three missed heartbeat intervals after the last durable observation or the receipt's lease expiry.
+Only `starting`, `running`, and `verifying` receipts claim an active heartbeat. The legacy v1 interval is bounded to at most 60 seconds.
 
-`waiting_external` and `continuation_required` remain named waits with explicit next actions. Queue and reservation states remain separately visible.
+For active states, Stensibly projects `stalledAt` as the earlier of:
 
-## Scope
+- three missed heartbeat intervals after the last durable observation; or
+- the receipt's lease expiry.
 
-This integration provides strict receipt admission, deterministic fingerprinting, replay/conflict classification, pure liveness projection, and historical SmolRunner v1 compatibility evidence. It adds no authority, provider mutation, live runner invocation, database ownership, retry command, or fallback executor semantics.
+`waiting_external` and `continuation_required` carry explicit next actions and remain separate from active executor liveness. Queue and reservation states remain separately visible.
+
+## Current scope
+
+This integration provides:
+
+- strict legacy-v1 schemas under explicit SmolRunner-v1 labels;
+- a current Glaeda-facing receipt parser;
+- pure receipt-to-transition mapping;
+- complete-semantic deterministic canonical fingerprints;
+- replay/conflict classification with immutable producer/operation identity;
+- pure liveness projection;
+- historical progress and terminal fixtures;
+- focused non-disclosure, generation-fence, semantic-replay, and rename-compatibility tests.
+
+Database tables, event writers, REST/MCP endpoints, network clients, filesystem reads, background pollers, live Glaeda invocation, retry commands, handoff mutations, and fallback executors remain owned by their dedicated Stensibly contracts.
