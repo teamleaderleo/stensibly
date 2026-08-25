@@ -4,6 +4,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { codexEnvironment, runSolLunaCli, runSolLunaWorker, type SolLunaWorkerOptions } from "../scripts/sol-luna-worker.js";
+import {
+  compileCodexPermissionProfile,
+  parseSupportedCodexCliVersion,
+  permissionProfileConfigArgs,
+  permissionProfileReceiptArgs,
+} from "../scripts/codex-permission-profile.js";
 
 const temporaryRoots: string[] = [];
 const REPOSITORY_PATH = "teamleaderleo/stensibly";
@@ -162,6 +168,7 @@ async function setupFakeCodex(overrides: Partial<{
       runId: "sol-luna-2026-08-25-01-wrapper",
       assignedRole: "implementation worker",
       sandbox: "workspace-write",
+      confinement: "legacy-sandbox",
       codexBin: executable,
     },
   };
@@ -195,6 +202,7 @@ function cliArgs(options: SolLunaWorkerOptions): string[] {
     "--run-id", options.runId,
     "--assigned-role", options.assignedRole,
     "--sandbox", options.sandbox ?? "read-only",
+    "--confinement", options.confinement ?? "permission-profile",
     "--codex-bin", options.codexBin ?? "codex",
   ];
 }
@@ -216,6 +224,52 @@ test("codexEnvironment only forwards the explicit non-secret allowlist", () => {
   });
   expect(environment.OPENAI_API_KEY).toBeUndefined();
   expect(environment.EVIL_PARENT_VARIABLE).toBeUndefined();
+});
+
+test("permission-profile compilation is deterministic and fail-closed", () => {
+  const input = {
+    repository: "/work/repository",
+    gitDir: "/git/worktree",
+    commonGitDir: "/git/common",
+    runtimeDir: "/runtime/worker",
+    outputDir: "/trusted/evidence",
+    workspaceAccess: "read" as const,
+  };
+  const first = compileCodexPermissionProfile(input);
+  const second = compileCodexPermissionProfile(input);
+  const args = permissionProfileConfigArgs(first);
+
+  expect(first).toEqual(second);
+  expect(first.fingerprint).toMatch(/^sha256:[0-9a-f]{64}$/u);
+  expect(first.config).toContain('":root"="deny"');
+  expect(first.config).toContain('":minimal"="read"');
+  expect(first.config).toContain('"."="read"');
+  expect(first.config).toContain('network={enabled=false}');
+  expect(args).toContain("--ignore-user-config");
+  expect(args).toContain("--strict-config");
+  expect(args.join(" ")).not.toContain("--sandbox");
+});
+
+test("permission-profile command receipts retain identity without live absolute paths", () => {
+  const profile = compileCodexPermissionProfile({
+    repository: "/secret/repository",
+    gitDir: "/secret/git/worktree",
+    commonGitDir: "/secret/git/common",
+    runtimeDir: "/secret/runtime",
+    outputDir: "/secret/evidence",
+    workspaceAccess: "read",
+  });
+  const args = permissionProfileReceiptArgs(profile);
+  expect(args.join(" ")).toContain(profile.fingerprint);
+  expect(args.join(" ")).toContain(profile.version);
+  expect(args.join(" ")).not.toContain("/secret/");
+});
+
+test("permission-profile support requires an exact recent Codex CLI version", () => {
+  expect(parseSupportedCodexCliVersion("codex-cli 0.146.0\n")).toBe("0.146.0");
+  expect(parseSupportedCodexCliVersion("codex-cli 0.137.9\n")).toBeNull();
+  expect(parseSupportedCodexCliVersion("codex 0.146.0\n")).toBeNull();
+  expect(parseSupportedCodexCliVersion("Logged in using ChatGPT\n")).toBeNull();
 });
 
 describe("disposable Sol/Luna Codex worker harness", () => {
@@ -273,8 +327,8 @@ describe("disposable Sol/Luna Codex worker harness", () => {
       'model_reasoning_effort="max"',
     ]);
     expect(args).toContain('shell_environment_policy.inherit="none"');
-    expect(args).toContain(`shell_environment_policy.set.HOME="${setup.options.outputDir}/.worker-home"`);
-    expect(args).toContain(`shell_environment_policy.set.TMPDIR="${setup.options.outputDir}/.worker-tmp"`);
+    expect(args).toContain(`shell_environment_policy.set.HOME="${setup.options.outputDir}.runtime/home"`);
+    expect(args).toContain(`shell_environment_policy.set.TMPDIR="${setup.options.outputDir}.runtime/tmp"`);
     expect(args.some((value) => value.startsWith("shell_environment_policy.set.PATH="))).toBe(true);
     expect(args).toContain("--sandbox");
     expect(args).toContain(setup.options.repository);
