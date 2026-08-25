@@ -107,6 +107,10 @@ delivery error was observed", not proof the child consumed the brief.
 - JSONL parsing runs over the retained text. Lines cut by retention bounds fail
   JSON parsing and are skipped deliberately; the raw retained stdout remains
   the authoritative artifact.
+- Each artifact is retained independently. Receipt metadata is published only
+  after that file's write succeeds; a failed retention is represented by
+  `null` and a specific `harnessError`, while successfully retained sibling
+  artifacts remain available.
 
 ## Git evidence and causality
 
@@ -261,8 +265,13 @@ reporting success.
   a direct-edit profile. Durable evidence must live outside both the repository
   and system temp.
 - `legacy-sandbox` remains explicit for direct workspace edits. The separate
-  edit and Git-metadata authority declarations are preflighted before launch;
-  neither authority is inferred from the sandbox name.
+  edit authority declaration is preflighted before launch. The current Codex
+  `workspace-write` sandbox mechanically protects Git metadata, as confirmed by
+  the Run 03G discriminator, so both confinement modes reject
+  `--git-metadata-authority write` instead of promising a capability the child
+  cannot exercise. Git activity is still observed if an out-of-contract or
+  concurrent actor moves the head; authority is never inferred from that
+  evidence.
 - A successful worker result is provisional. The receipt's `integration`
   object remains `not_adjudicated` until Sol settles the promised integration
   gates at the exact semantic head.

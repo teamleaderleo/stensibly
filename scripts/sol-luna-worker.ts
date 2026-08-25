@@ -163,8 +163,8 @@ export interface SolLunaWorkerReceipt {
     readonly tokenUsage: Readonly<Record<string, number>> | null;
   };
   readonly artifacts: {
-    readonly stdoutJsonl: SolLunaStreamArtifact;
-    readonly stderr: SolLunaStreamArtifact;
+    readonly stdoutJsonl: SolLunaStreamArtifact | null;
+    readonly stderr: SolLunaStreamArtifact | null;
     readonly finalWorkerResult: SolLunaArtifact | null;
   };
   readonly integration: {
@@ -328,8 +328,8 @@ function normalizeOptions(input: SolLunaWorkerOptions): Required<SolLunaWorkerOp
   if (confinement === "permission-profile" && editAuthority === "workspace-write") {
     throw new Error("permission-profile confinement supports patch-as-data, not direct workspace writes");
   }
-  if (confinement === "permission-profile" && gitMetadataAuthority === "write") {
-    throw new Error("permission-profile confinement does not grant Git metadata write");
+  if (gitMetadataAuthority === "write") {
+    throw new Error(`${confinement} confinement does not grant Git metadata write`);
   }
   const reasoningEffort = input.reasoningEffort ?? DEFAULT_SOL_LUNA_REASONING_EFFORT;
   if (!isReasoningEffort(reasoningEffort)) throw new Error("reasoning effort must be low, medium, high, xhigh, or max");
@@ -1348,19 +1348,34 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
     ? committedPaths.filter((path) => beforePaths.includes(path))
     : [];
 
-  const artifacts: SolLunaWorkerReceipt["artifacts"] = {
-    stdoutJsonl: streamArtifact(stdoutPath, workerCapture, "stdout"),
-    stderr: streamArtifact(stderrPath, workerCapture, "stderr"),
-    finalWorkerResult: workerResultBytes === null ? null : artifact(workerResultPath, workerResultBytes),
-  };
-
+  let stdoutArtifact: SolLunaStreamArtifact | null = null;
+  let stderrArtifact: SolLunaStreamArtifact | null = null;
+  let finalWorkerResultArtifact: SolLunaArtifact | null = null;
   try {
     await writeFile(stdoutPath, workerCapture?.stdout ?? new Uint8Array());
-    await writeFile(stderrPath, workerCapture?.stderr ?? new Uint8Array());
-    if (workerResultBytes !== null) await writeFile(workerResultPath, workerResultBytes);
+    stdoutArtifact = streamArtifact(stdoutPath, workerCapture, "stdout");
   } catch (error) {
-    harnessError = appendHarnessError(harnessError, `unable to retain worker artifacts: ${errorMessage(error)}`);
+    harnessError = appendHarnessError(harnessError, `unable to retain stdout artifact: ${errorMessage(error)}`);
   }
+  try {
+    await writeFile(stderrPath, workerCapture?.stderr ?? new Uint8Array());
+    stderrArtifact = streamArtifact(stderrPath, workerCapture, "stderr");
+  } catch (error) {
+    harnessError = appendHarnessError(harnessError, `unable to retain stderr artifact: ${errorMessage(error)}`);
+  }
+  if (workerResultBytes !== null) {
+    try {
+      await writeFile(workerResultPath, workerResultBytes);
+      finalWorkerResultArtifact = artifact(workerResultPath, workerResultBytes);
+    } catch (error) {
+      harnessError = appendHarnessError(harnessError, `unable to retain worker-result artifact: ${errorMessage(error)}`);
+    }
+  }
+  const artifacts: SolLunaWorkerReceipt["artifacts"] = {
+    stdoutJsonl: stdoutArtifact,
+    stderr: stderrArtifact,
+    finalWorkerResult: finalWorkerResultArtifact,
+  };
 
   const outcome: SolLunaChildOutcome = childTimedOut
     ? "timeout"

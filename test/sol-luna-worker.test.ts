@@ -27,7 +27,7 @@ interface FakeCodexSetup {
   readonly options: SolLunaWorkerOptions;
 }
 
-type FakeCodexMode = "standard" | "hang-with-descendant" | "noisy" | "write-untracked" | "commit-rename-and-create" | "commit-baseline-dirty" | "commit-revert" | "rewind" | "clean" | "break-git";
+type FakeCodexMode = "standard" | "hang-with-descendant" | "noisy" | "block-stderr-artifact" | "write-untracked" | "commit-rename-and-create" | "commit-baseline-dirty" | "commit-revert" | "rewind" | "clean" | "break-git";
 
 async function shell(command: string, args: readonly string[], cwd: string): Promise<void> {
   const child = Bun.spawn([command, ...args], { cwd, stdout: "pipe", stderr: "pipe" });
@@ -49,6 +49,7 @@ function fakeCodexSource(input: {
   readonly descendantPidPath?: string;
   readonly noisyChunks?: number;
   readonly repository?: string;
+  readonly outputDir?: string;
 }): string {
   const preamble = `#!/usr/bin/env bun
 const argsPath = ${JSON.stringify(input.argsPath)};
@@ -60,6 +61,7 @@ const mode = ${JSON.stringify(input.mode ?? "standard")};
 const descendantPidPath = ${JSON.stringify(input.descendantPidPath ?? "")};
 const noisyChunks = ${input.noisyChunks ?? 0};
 const repository = ${JSON.stringify(input.repository ?? "")};
+const outputDir = ${JSON.stringify(input.outputDir ?? "")};
 
 if (process.argv[2] === "login" && process.argv[3] === "status") {
   if (authMode === "chatgpt") console.log("Logged in using ChatGPT");
@@ -116,6 +118,12 @@ process.exit(0);
 
   const writeUntrackedBody = `
 require("node:fs").writeFileSync(repository + "/worker-untracked.txt", "worker replacement\\n");
+emitSession();
+process.exit(0);
+`;
+
+  const blockStderrArtifactBody = `
+require("node:fs").mkdirSync(outputDir + "/stderr.log");
 emitSession();
 process.exit(0);
 `;
@@ -187,6 +195,7 @@ process.exit(0);
     standard: standardBody,
     "hang-with-descendant": hangBody,
     noisy: noisyBody,
+    "block-stderr-artifact": blockStderrArtifactBody,
     "write-untracked": writeUntrackedBody,
     "commit-rename-and-create": commitBody,
     "commit-baseline-dirty": commitBaselineDirtyBody,
@@ -260,6 +269,7 @@ async function setupFakeCodex(overrides: Partial<{
     descendantPidPath: overrides.descendantPidPath ?? "",
     noisyChunks: overrides.noisyChunks ?? 0,
     repository,
+    outputDir,
   }));
   await chmod(executable, 0o755);
   return {
@@ -352,6 +362,14 @@ test("permission-profile support requires a recent exact Codex CLI version", () 
 test("permission-profile confinement rejects direct workspace writes", async () => {
   const setup = await setupFakeCodex();
   await expect(runSolLunaWorker({ ...setup.options, confinement: "permission-profile" })).rejects.toThrow("patch-as-data");
+  expect(await Bun.file(setup.options.outputDir).exists()).toBe(false);
+});
+
+test("current confinement modes reject unsupported Git metadata write authority", async () => {
+  const setup = await setupFakeCodex();
+  await expect(runSolLunaWorker({ ...setup.options, gitMetadataAuthority: "write" })).rejects.toThrow(
+    "legacy-sandbox confinement does not grant Git metadata write",
+  );
   expect(await Bun.file(setup.options.outputDir).exists()).toBe(false);
 });
 
@@ -521,6 +539,22 @@ describe("disposable Sol/Luna Codex worker harness", () => {
     expect((receipt.artifacts as Record<string, unknown>).stderr).toBeTruthy();
     expect(stderr).toContain("fake worker failure");
     expect(await Bun.file(join(setup.options.outputDir, "receipt.json")).exists()).toBe(true);
+  });
+
+  test("never publishes metadata for an artifact that was not retained", async () => {
+    const setup = await setupFakeCodex({ mode: "block-stderr-artifact" });
+
+    const result = await runSolLunaWorker(setup.options);
+
+    expect(result.receipt.success).toBe(false);
+    expect(result.receipt.child.outcome).toBe("harness_failed");
+    expect(result.receipt.harnessError).toContain("unable to retain stderr artifact");
+    expect(result.receipt.artifacts.stdoutJsonl).not.toBeNull();
+    expect(result.receipt.artifacts.stderr).toBeNull();
+    expect(result.receipt.artifacts.finalWorkerResult).not.toBeNull();
+    expect(await Bun.file(join(setup.options.outputDir, "stdout.jsonl")).exists()).toBe(true);
+    expect(await readdir(join(setup.options.outputDir, "stderr.log"))).toEqual([]);
+    expect(await Bun.file(join(setup.options.outputDir, "worker-result.json")).exists()).toBe(true);
   });
 
   test("a large brief delivered to a child that exits without reading stdin cannot crash the CLI or contradict the receipt", async () => {
@@ -709,7 +743,7 @@ describe("disposable Sol/Luna Codex worker harness", () => {
       process.cwd(),
     );
 
-    const result = await runSolLunaWorker({ ...setup.options, gitMetadataAuthority: "write" });
+    const result = await runSolLunaWorker(setup.options);
     const receipt = await readJson(result.receiptPath);
     const git = receipt.git as Record<string, readonly string[]>;
 
@@ -773,7 +807,7 @@ describe("disposable Sol/Luna Codex worker harness", () => {
     const setup = await setupFakeCodex({ mode: "commit-baseline-dirty" });
     await writeFile(join(setup.options.repository, "tracked.txt"), "pre-existing local modification\n");
 
-    const result = await runSolLunaWorker({ ...setup.options, gitMetadataAuthority: "write" });
+    const result = await runSolLunaWorker(setup.options);
     const git = result.receipt.git;
 
     expect(git.headRelationship).toBe("descendant");
@@ -787,7 +821,7 @@ describe("disposable Sol/Luna Codex worker harness", () => {
   test("retains committed activity when later commits restore the baseline tree", async () => {
     const setup = await setupFakeCodex({ mode: "commit-revert" });
 
-    const result = await runSolLunaWorker({ ...setup.options, gitMetadataAuthority: "write" });
+    const result = await runSolLunaWorker(setup.options);
     const git = result.receipt.git;
 
     expect(git.headRelationship).toBe("descendant");
@@ -801,7 +835,7 @@ describe("disposable Sol/Luna Codex worker harness", () => {
   test("fails closed on non-descendant head movement", async () => {
     const setup = await setupFakeCodex({ mode: "rewind" });
 
-    const result = await runSolLunaWorker({ ...setup.options, gitMetadataAuthority: "write" });
+    const result = await runSolLunaWorker(setup.options);
 
     expect(result.receipt.git.headBefore).not.toBe(result.receipt.git.headAfter);
     expect(result.receipt.git.headRelationship).toBe("non_descendant");
@@ -814,7 +848,7 @@ describe("disposable Sol/Luna Codex worker harness", () => {
   test("fails closed when final Git state is unreadable", async () => {
     const setup = await setupFakeCodex({ mode: "break-git" });
 
-    const result = await runSolLunaWorker({ ...setup.options, gitMetadataAuthority: "write" });
+    const result = await runSolLunaWorker(setup.options);
 
     expect(result.receipt.git.headAfter).toBeNull();
     expect(result.receipt.git.headRelationship).toBe("unknown");
