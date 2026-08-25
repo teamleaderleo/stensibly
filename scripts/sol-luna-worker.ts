@@ -139,8 +139,12 @@ async function captureProcess(
   });
 
   if (options.stdin !== undefined) {
-    child.stdin.write(options.stdin);
-    child.stdin.end();
+    const stdin = child.stdin;
+    if (stdin === undefined) {
+      throw new Error("child stdin was not piped");
+    }
+    stdin.write(options.stdin);
+    stdin.end();
   }
 
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -412,7 +416,7 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
   const stderrPath = resolve(options.outputDir, ARTIFACT_NAMES.stderr);
   const workerResultPath = resolve(options.outputDir, ARTIFACT_NAMES.workerResult);
   const receiptPath = resolve(options.outputDir, ARTIFACT_NAMES.receipt);
-  const emptyBytes = new Uint8Array();
+  const emptyBytes: Uint8Array<ArrayBufferLike> = new Uint8Array();
   let stdoutBytes = emptyBytes;
   let stderrBytes = emptyBytes;
   let workerResultBytes: Uint8Array | null = null;
