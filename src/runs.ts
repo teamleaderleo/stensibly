@@ -6,6 +6,13 @@ import {
   type ExecutionEnvelope,
 } from "./execution-envelope.js";
 import { appendRunEnvelopeReference } from "./run-envelope-events.js";
+import {
+  appendRunnerProfileVersionEvent,
+  bindRunnerProfileVersion,
+  ensureRunProfileVersionSchema,
+  prepareRunnerProfileVersionCreation,
+  withRunnerProfileVersion,
+} from "./run-profile-version-sqlite.js";
 import type { ActorInput } from "./schemas.js";
 import {
   appendExecutionRecord,
@@ -14,7 +21,6 @@ import {
   ensureRunExecutionSchema,
   hasExecutionEnvelope,
   hydrateWorkRun,
-  hydrateWorkRuns,
   requiredExecutionEnvelope,
   type RunExecutionRecord,
 } from "./run-execution-store.js";
@@ -31,6 +37,7 @@ export type {
 } from "./runs-core.js";
 
 export type WorkRun = Core.WorkRun & {
+  runnerProfileVersion: string | null;
   executionEnvelope?: ExecutionEnvelope | null;
   executionRecords?: RunExecutionRecord[];
 };
@@ -38,6 +45,7 @@ export type WorkRun = Core.WorkRun & {
 export interface CreateWorkRunInput
   extends Omit<Core.CreateWorkRunInput, "actor"> {
   actor: ActorInput;
+  runnerProfileVersion?: string | null;
   executionEnvelope?: ExecutionEnvelope;
 }
 
@@ -70,6 +78,7 @@ const actualRecordingCommands = new Set<Core.WorkRunCommand>([
 
 export function ensureRunSchema(store: StensiblyStore): void {
   Core.ensureRunSchema(store);
+  ensureRunProfileVersionSchema(store);
   ensureRunExecutionSchema(store);
 }
 
@@ -79,15 +88,30 @@ export function createWorkRun(
   now = new Date(),
 ): WorkRun {
   ensureRunSchema(store);
-  const { executionEnvelope: _executionEnvelope, ...coreInput } = rawInput;
+  const {
+    executionEnvelope: _executionEnvelope,
+    runnerProfileVersion: _runnerProfileVersion,
+    ...coreInput
+  } = rawInput;
   const transaction = store.db.transaction(() => {
+    const profileBinding = prepareRunnerProfileVersionCreation(store, {
+      idempotencyKey: rawInput.idempotencyKey,
+      runnerProfile: rawInput.runnerProfile,
+      runnerProfileVersion: rawInput.runnerProfileVersion,
+    });
     if (isLegacyRunCreationReplay(store, rawInput.idempotencyKey)) {
       if (rawInput.executionEnvelope !== undefined) {
         throw new ConflictError(
           "Idempotency key belongs to a legacy run creation without an execution envelope; historical runs cannot be retrofitted",
         );
       }
-      return hydrateWorkRun(store, Core.createWorkRun(store, coreInput, now));
+      const run = Core.createWorkRun(store, coreInput, now);
+      bindRunnerProfileVersion(store, {
+        runId: run.id,
+        runnerProfile: run.runnerProfile,
+        binding: profileBinding,
+      });
+      return hydrateVersionedWorkRun(store, run);
     }
 
     const envelope = requiredExecutionEnvelope(
@@ -103,6 +127,11 @@ export function createWorkRun(
       "run creation",
     );
     const run = Core.createWorkRun(store, coreInput, now);
+    bindRunnerProfileVersion(store, {
+      runId: run.id,
+      runnerProfile: run.runnerProfile,
+      binding: profileBinding,
+    });
     bindExecutionEnvelope(
       store,
       run.id,
@@ -110,11 +139,22 @@ export function createWorkRun(
       rawInput.idempotencyKey,
       run.createdAt,
     );
+    if (!profileBinding.replayed) {
+      appendRunnerProfileVersionEvent(store, {
+        runId: run.id,
+        itemId: run.itemId,
+        actorId: run.actorId,
+        generation: run.generation,
+        runnerProfile: run.runnerProfile,
+        runnerProfileVersion: profileBinding.runnerProfileVersion,
+        createdAt: run.createdAt,
+      });
+    }
     appendRunEnvelopeReference(store, {
       run,
       lifecycleEventType: "run.queued",
     });
-    return hydrateWorkRun(store, run);
+    return hydrateVersionedWorkRun(store, run);
   });
   return transaction();
 }
@@ -125,7 +165,7 @@ export function getWorkRun(
   now = new Date(),
 ): WorkRun {
   ensureRunSchema(store);
-  return hydrateWorkRun(store, Core.getWorkRun(store, id, now));
+  return hydrateVersionedWorkRun(store, Core.getWorkRun(store, id, now));
 }
 
 export function listWorkRuns(
@@ -134,7 +174,7 @@ export function listWorkRuns(
   now = new Date(),
 ): WorkRun[] {
   ensureRunSchema(store);
-  return hydrateWorkRuns(store, Core.listWorkRuns(store, input, now));
+  return hydrateVersionedWorkRuns(store, Core.listWorkRuns(store, input, now));
 }
 
 export function listRetryEligibleRuns(
@@ -142,7 +182,7 @@ export function listRetryEligibleRuns(
   now = new Date(),
 ): WorkRun[] {
   ensureRunSchema(store);
-  return hydrateWorkRuns(store, Core.listRetryEligibleRuns(store, now));
+  return hydrateVersionedWorkRuns(store, Core.listRetryEligibleRuns(store, now));
 }
 
 export function heartbeatWorkRun(
@@ -157,7 +197,7 @@ export function heartbeatWorkRun(
       run,
       lifecycleEventType: "run.heartbeat",
     });
-    return hydrateWorkRun(store, run);
+    return hydrateVersionedWorkRun(store, run);
   });
   return transaction();
 }
@@ -190,7 +230,7 @@ export function transitionWorkRun(
       idempotencyKey: coreInput.idempotencyKey,
       createdAt: run.updatedAt,
     });
-    return hydrateWorkRun(store, run);
+    return hydrateVersionedWorkRun(store, run);
   });
   return transaction();
 }
@@ -214,7 +254,7 @@ export function reconcileStaleRuns(
         actual: { estimateErrorReasons: ["lease_expired"] },
         createdAt: run.updatedAt,
       });
-      return hydrateWorkRun(store, run);
+      return hydrateVersionedWorkRun(store, run);
     });
     return { abandoned };
   });
@@ -297,4 +337,18 @@ function validateExecutionActualReplay(
     );
   }
   return actual;
+}
+
+function hydrateVersionedWorkRun(
+  store: StensiblyStore,
+  run: Core.WorkRun,
+): WorkRun {
+  return withRunnerProfileVersion(store, hydrateWorkRun(store, run));
+}
+
+function hydrateVersionedWorkRuns(
+  store: StensiblyStore,
+  runs: Core.WorkRun[],
+): WorkRun[] {
+  return runs.map((run) => hydrateVersionedWorkRun(store, run));
 }
