@@ -12,6 +12,7 @@ import {
   ensureRunProfileVersionSchema,
   prepareRunnerProfileVersionCreation,
   withRunnerProfileVersion,
+  withRunnerProfileVersions,
 } from "./run-profile-version-sqlite.js";
 import type { ActorInput } from "./schemas.js";
 import {
@@ -21,6 +22,7 @@ import {
   ensureRunExecutionSchema,
   hasExecutionEnvelope,
   hydrateWorkRun,
+  hydrateWorkRuns,
   requiredExecutionEnvelope,
   type RunExecutionRecord,
 } from "./run-execution-store.js";
@@ -354,5 +356,5 @@ function hydrateVersionedWorkRuns(
   store: StensiblyStore,
   runs: Core.WorkRun[],
 ): VersionedWorkRun[] {
-  return runs.map((run) => hydrateVersionedWorkRun(store, run));
+  return withRunnerProfileVersions(store, hydrateWorkRuns(store, runs));
 }
