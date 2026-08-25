@@ -69,6 +69,12 @@ describe("Work Pulse frontend lab", () => {
     expect(workPulseFixture.attention).toHaveLength(5);
     expect(workPulseFixture.relations).toHaveLength(7);
     expect(workPulseFixture.events).toHaveLength(7);
+    expect(workPulseFixture.briefs).toHaveLength(3);
+    expect(new Set(workPulseFixture.briefs.map((brief) => brief.attemptId)).size).toBe(3);
+    for (const brief of workPulseFixture.briefs) {
+      expect(brief.grantsAuthority).toBe(false);
+      expect(brief.digest).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    }
     expect(workPulseFixture.views.map((view) => view.id)).toEqual([
       "list",
       "lanes",
@@ -163,6 +169,21 @@ describe("Work Pulse frontend lab", () => {
     expect(app).toContain('document.body.setAttribute("data-scenario", activeScenario)');
     expect(app).toContain('return `${formatted} UTC`;');
     expect(app).not.toContain('"Current execution evidence"');
+  });
+
+  test("renders compiled worker-brief identity without granting authority", () => {
+    expect(app).toContain('"Worker briefs"');
+    expect(app).toContain('workerBriefs(fixture, attemptsById)');
+    expect(app).toContain("requiredAttempt(attemptsById, brief.attemptId)");
+    expect(app).toContain('fact("Digest", brief.digest)');
+    expect(app).toContain('`worker-brief/v1 @ ${brief.compilerVersion}`');
+    expect(app).toContain('fact("Policy snapshot", brief.policySnapshotSha256)');
+    expect(app).toContain('fact("Authority", "none granted")');
+    expect(app).toContain('"Compiled guidance identity per attempt');
+    const serializedFixture = JSON.stringify(workPulseFixture);
+    for (const brief of workPulseFixture.briefs) {
+      expect(serializedFixture).toContain(brief.digest);
+    }
   });
 
   test("contains no live transport, fake progress, or unsafe HTML sink", () => {
