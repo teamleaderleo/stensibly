@@ -1,26 +1,30 @@
 # Institutional memory index
 
-Read only the records relevant to the current subsystem or failure class. The issue, pull request, exact revision, deployment record, and Stensibly ledger remain canonical for live state.
+This is a convenience index for historical records. It does not declare which work, policy, audit, or lesson is currently active.
 
-## Active after-action notes
+Refresh current facts from the owning issue, pull request, provider, Stensibly record, or repository instruction before acting.
 
-| Date | Record | Scope | Review when |
-| --- | --- | --- | --- |
-| 2026-08-19 | [Agent work coordination at high parallelism](notes/2026-08-19-agent-work-coordination-retrospective.md) | Many-agent work selection, authority, review, duplicate/stale work, integration economics, and Stensibly/Cultist composition | Operating protocol changes materially, active-work truth becomes machine-derived, or after the next sustained multi-agent wave |
-| 2026-07-28 | [Use one canonical authority record for recurring production automation](notes/2026-07-28-canonical-authority-for-production-automation.md) | W01 OAuth rollout and production-control workflows | The approval-record and production-effect model becomes server-enforced |
+## Learning notes
 
-## Active postmortems
+| Date | Record | Historical scope |
+| --- | --- | --- |
+| 2026-08-19 | [Agent work coordination at high parallelism](notes/2026-08-19-agent-work-coordination-retrospective.md) | Many-agent work selection, authority, review, duplicate/stale work, integration economics, and Stensibly/Cultist composition at that time |
+| 2026-07-28 | [Use one canonical authority record for recurring production automation](notes/2026-07-28-canonical-authority-for-production-automation.md) | OAuth rollout and production-control workflow evidence from that period |
 
-None yet.
+## Postmortems
 
-## Active audits
+None currently indexed.
 
-None yet.
+## Audits
 
-## Superseded or retired records
+None currently indexed.
 
-None yet.
+## Index semantics
 
-## Index maintenance
+- Entries are historical evidence, even when the original record says `active`.
+- Old protocol versions, wave/pod terms, provider limits, review rules, and current-state claims may be obsolete.
+- The source record and Git history preserve provenance.
+- Adding or changing an archive record does not require an index update for correctness.
+- If reliable discovery later needs a fresh index, generate it from record metadata instead of introducing manual review/freshness obligations.
 
-Update this file in the same pull request that adds, supersedes, or retires a record. Keep summaries short enough that a fresh worker can choose what to read without opening every file.
+Use repository/GitHub search when an unindexed record may be relevant.
