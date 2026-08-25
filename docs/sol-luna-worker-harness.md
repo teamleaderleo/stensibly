@@ -92,14 +92,17 @@ per-path `diff`, `hash-object`), the metadata probes (`--git-dir`,
   askpass helper, credential helper, or hook.
 - **Bounded capture.** The same per-stream `--capture-cap-bytes` ceiling
   applies to Git stdout/stderr.
-- **Bounded truthful failure.** A timed-out, spawn-failed, or non-zero
-  observation becomes a specific `harnessError`; it can never surface as
-  successful empty output. Ancestry truthfulness is preserved: only
+- **Bounded truthful failure.** A timed-out, spawn-failed, or unexpected
+  non-zero observation becomes a specific `harnessError`; it can never surface
+  as successful empty output. The narrow exception is `hash-object` status 128
+  for a worktree path observed absent both immediately before and after the
+  capture, which represents the missing side of a deleted-path snapshot.
+  Ancestry truthfulness is preserved: only
   `merge-base --is-ancestor` exit code 1 maps to `headRelationship:
   "non_descendant"`. A merge-base timeout, spawn failure, or other exit stays
   `headRelationship: "unknown"` with its concrete error recorded.
 - **No schema change.** Git observation limits are runtime options; receipt
-  schema v2 and every field are unchanged.
+  schema v3 and every field are unchanged.
 
 ## Command resolution invariant
 
@@ -114,8 +117,10 @@ command entrypoints:
 2. **One absolute target for path-like entries.** A path-like argv[0] (with a
    slash) is resolved to a single absolute target. That identical target is
    both inspected for a shebang and, when a shebang exists, passed to the
-   interpreter as the script argument. Inspection and execution therefore can
-   never name different files, including for chained shebangs (bounded depth).
+   interpreter as the script argument. Inspection and execution therefore use
+   the same pathname, including for chained shebangs (bounded depth); the
+   harness does not claim inode identity if another process replaces that path
+   between inspection and spawn.
 3. **Kernel-equivalent expansion.** Shebang expansion produces an argv-only
    interpreter invocation (`interpreter [arg] <inspected-target> …`) matching
    kernel behavior where Bun's posix_spawn layer does not perform it.

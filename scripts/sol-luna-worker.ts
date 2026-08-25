@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -988,6 +988,46 @@ async function gitOutput(
   return result.stdout;
 }
 
+type PathPresence = "present" | "absent";
+
+async function observePathPresence(target: string): Promise<PathPresence> {
+  try {
+    await lstat(target);
+    return "present";
+  } catch (error) {
+    if (error instanceof Error && "code" in error &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")) {
+      return "absent";
+    }
+    throw new Error(`unable to observe worktree path ${JSON.stringify(target)}: ${errorMessage(error)}`);
+  }
+}
+
+async function gitWorktreeObject(
+  repository: string,
+  path: string,
+  limits: GitObservationLimits,
+): Promise<ProcessCapture> {
+  const args = ["hash-object", "--no-filters", "--", path] as const;
+  const target = resolve(repository, path);
+  const presenceBefore = await observePathPresence(target);
+  const result = requireSettledGitCapture(
+    await gitCapture(repository, args, limits),
+    args,
+    limits,
+    [0, 128],
+  );
+  const presenceAfter = await observePathPresence(target);
+  if (result.exitCode === 128 &&
+    (presenceBefore !== "absent" || presenceAfter !== "absent")) {
+    throw new Error(
+      `${gitCommandLabel(args)} exited with status 128 without a stable missing worktree path ` +
+      `(before=${presenceBefore}, after=${presenceAfter})`,
+    );
+  }
+  return result;
+}
+
 function resolveGitPath(repository: string, gitPath: string): string {
   return isAbsolute(gitPath) ? resolve(gitPath) : resolve(repository, gitPath);
 }
@@ -1072,12 +1112,10 @@ async function gitSnapshot(repository: string, limits: GitObservationLimits): Pr
   if (head.length === 0) throw new Error("git HEAD was empty");
   const paths = parseStatusPaths(statusBytes);
   const pathStates = await Promise.all(paths.map(async (path) => {
-    const hashObjectArgs = ["hash-object", "--no-filters", "--", path] as const;
     const [staged, unstaged, worktree] = await Promise.all([
       gitOutput(repository, ["diff", "--binary", "--no-ext-diff", "--no-renames", "--cached", head, "--", path], limits),
       gitOutput(repository, ["diff", "--binary", "--no-ext-diff", "--no-renames", "--", path], limits),
-      gitCapture(repository, hashObjectArgs, limits).then((result) =>
-        requireSettledGitCapture(result, hashObjectArgs, limits, [0, 128])),
+      gitWorktreeObject(repository, path, limits),
     ]);
     const hash = createHash("sha256")
       .update("staged\0").update(staged)

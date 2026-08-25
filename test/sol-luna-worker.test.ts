@@ -1218,6 +1218,87 @@ describe("bounded noninteractive Git observations (#1666)", () => {
     expect(await waitFor(() => !pidAlive(fakePid), 10_000)).toBe(true);
   });
 
+  test("hash-object fatal status for an existing dirty path fails closed", async () => {
+    const setup = await setupFakeCodex();
+    await writeFile(join(setup.options.repository, "tracked.txt"), "locally modified\n");
+    const injection = await injectFakeGit(setup.root, [
+      'for arg in "$@"; do',
+      '  if [ "$arg" = "hash-object" ]; then',
+      "    exit 128",
+      "  fi",
+      "done",
+      'exec @REAL_GIT@ "$@"',
+    ].join("\n"));
+
+    const result = await withPathOverride(prependedPath(injection.binDir), () =>
+      runSolLunaWorker(setup.options));
+
+    expect(result.exitCode).toBe(1);
+    expect(result.receipt.success).toBe(false);
+    expect(result.receipt.harnessError).toContain(
+      "git hash-object exited with status 128 without a stable missing worktree path",
+    );
+    expect(result.receipt.git.headBefore).toBeNull();
+    expect(result.receipt.git.dirtyPathsBefore).toEqual([]);
+  });
+
+  test("a path appearing during hash-object cannot be treated as stably missing", async () => {
+    const setup = await setupFakeCodex();
+    const target = join(setup.options.repository, "tracked.txt");
+    await rm(target);
+    const injection = await injectFakeGit(setup.root, [
+      'for arg in "$@"; do',
+      '  if [ "$arg" = "hash-object" ]; then',
+      `    printf '%s\\n' appeared > ${JSON.stringify(target)}`,
+      "    exit 128",
+      "  fi",
+      "done",
+      'exec @REAL_GIT@ "$@"',
+    ].join("\n"));
+
+    const result = await withPathOverride(prependedPath(injection.binDir), () =>
+      runSolLunaWorker(setup.options));
+
+    expect(result.exitCode).toBe(1);
+    expect(result.receipt.harnessError).toContain("before=absent, after=present");
+    expect(result.receipt.git.dirtyPathsBefore).toEqual([]);
+  });
+
+  test("a path disappearing during hash-object cannot be treated as stably missing", async () => {
+    const setup = await setupFakeCodex();
+    const target = join(setup.options.repository, "tracked.txt");
+    await writeFile(target, "locally modified\n");
+    const injection = await injectFakeGit(setup.root, [
+      'for arg in "$@"; do',
+      '  if [ "$arg" = "hash-object" ]; then',
+      `    rm -f -- ${JSON.stringify(target)}`,
+      "    exit 128",
+      "  fi",
+      "done",
+      'exec @REAL_GIT@ "$@"',
+    ].join("\n"));
+
+    const result = await withPathOverride(prependedPath(injection.binDir), () =>
+      runSolLunaWorker(setup.options));
+
+    expect(result.exitCode).toBe(1);
+    expect(result.receipt.harnessError).toContain("before=present, after=absent");
+    expect(result.receipt.git.dirtyPathsBefore).toEqual([]);
+  });
+
+  test("hash-object status 128 retains deleted-path snapshot semantics", async () => {
+    const setup = await setupFakeCodex();
+    await rm(join(setup.options.repository, "tracked.txt"));
+
+    const result = await runSolLunaWorker(setup.options);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.receipt.harnessError).toBeNull();
+    expect(result.receipt.git.dirtyPathsBefore).toEqual(["tracked.txt"]);
+    expect(result.receipt.git.dirtyPathsAfter).toEqual(["tracked.txt"]);
+    expect(result.receipt.git.workerCreatedDirtyPaths).toEqual([]);
+  });
+
   test("Git spawn errors stay unknown relationship and never become non-descendant state", async () => {
     const setup = await setupFakeCodex();
     const emptyBin = join(setup.root, "empty-bin");
