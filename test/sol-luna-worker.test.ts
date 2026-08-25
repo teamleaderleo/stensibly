@@ -10,6 +10,7 @@ import {
   runSolLunaCli,
   runSolLunaWorker,
   type SolLunaWorkerOptions,
+  type SolLunaWorkerReceipt,
 } from "../scripts/sol-luna-worker.js";
 import {
   compileCodexPermissionProfile,
@@ -1100,7 +1101,7 @@ describe("bounded noninteractive Git observations (#1666)", () => {
     const source = [
       "#!/bin/sh",
       `printf '%s\\n' "prompt=\${GIT_TERMINAL_PROMPT-UNSET} nosystem=\${GIT_CONFIG_NOSYSTEM-UNSET} global=\${GIT_CONFIG_GLOBAL-UNSET} cmd=$*" >> ${JSON.stringify(logPath)}`,
-      body.replace("@REAL_GIT@", JSON.stringify(realGit)),
+      body.replaceAll("@REAL_GIT@", JSON.stringify(realGit)),
       "",
     ].join("\n");
     await writeFile(join(binDir, "git"), source);
@@ -1112,15 +1113,54 @@ describe("bounded noninteractive Git observations (#1666)", () => {
     return `${binDir}:${process.env.PATH ?? ""}`;
   }
 
-  async function withPathOverride<T>(path: string, run: () => Promise<T>): Promise<T> {
-    const originalPath = process.env.PATH;
-    process.env.PATH = path;
-    try {
-      return await run();
-    } finally {
-      if (originalPath === undefined) delete process.env.PATH;
-      else process.env.PATH = originalPath;
-    }
+  async function runWithIsolatedPath(
+    setup: FakeCodexSetup,
+    path: string,
+    overrides: Partial<SolLunaWorkerOptions> = {},
+  ): Promise<{ exitCode: number; receipt: SolLunaWorkerReceipt }> {
+    const { exitCode } = await runCliInCwd(
+      { ...setup.options, ...overrides },
+      setup.root,
+      { PATH: path },
+    );
+    const receipt = await readJson(join(setup.options.outputDir, "receipt.json")) as unknown as SolLunaWorkerReceipt;
+    return { exitCode, receipt };
+  }
+
+  function synchronizedHashObjectFailure(
+    target: string,
+    diffMarkers: string,
+    transition: "appear" | "disappear",
+  ): string {
+    const mutation = transition === "appear"
+      ? `printf '%s\\n' appeared > ${JSON.stringify(target)}`
+      : `rm -f -- ${JSON.stringify(target)}`;
+    return [
+      "is_hash=0; is_diff=0; is_target=0",
+      'for arg in "$@"; do',
+      '  [ "$arg" = "hash-object" ] && is_hash=1',
+      '  [ "$arg" = "diff" ] && is_diff=1',
+      '  [ "$arg" = "tracked.txt" ] && is_target=1',
+      "done",
+      'if [ "$is_diff" -eq 1 ] && [ "$is_target" -eq 1 ]; then',
+      '  @REAL_GIT@ "$@"; status=$?',
+      '  if [ "$status" -eq 0 ]; then',
+      `    mkdir ${JSON.stringify(join(diffMarkers, "one"))} 2>/dev/null || mkdir ${JSON.stringify(join(diffMarkers, "two"))}`,
+      "  fi",
+      '  exit "$status"',
+      "fi",
+      'if [ "$is_hash" -eq 1 ] && [ "$is_target" -eq 1 ]; then',
+      "  attempts=0",
+      `  while [ ! -d ${JSON.stringify(join(diffMarkers, "two"))} ]; do`,
+      "    attempts=$((attempts + 1))",
+      '    [ "$attempts" -ge 500 ] && exit 99',
+      "    sleep 0.01",
+      "  done",
+      `  ${mutation}`,
+      "  exit 128",
+      "fi",
+      'exec @REAL_GIT@ "$@"',
+    ].join("\n");
   }
 
   test("every Git observation runs noninteractively with neutralized config through one capture lifecycle", async () => {
@@ -1130,8 +1170,7 @@ describe("bounded noninteractive Git observations (#1666)", () => {
     // diff/hash-object observations to run alongside the metadata probes.
     await writeFile(join(setup.options.repository, "tracked.txt"), "locally modified\n");
     await writeFile(join(setup.options.repository, "scratch-untracked.txt"), "untracked\n");
-    const result = await withPathOverride(prependedPath(injection.binDir), () =>
-      runSolLunaWorker(setup.options));
+    const result = await runWithIsolatedPath(setup, prependedPath(injection.binDir));
     const lines = (await Bun.file(injection.logPath).text()).split("\n").filter((line) => line.length > 0);
 
     expect(result.exitCode).toBe(0);
@@ -1203,8 +1242,11 @@ describe("bounded noninteractive Git observations (#1666)", () => {
       'exec @REAL_GIT@ "$@"',
     ].join("\n"));
     const startedAt = Date.now();
-    const result = await withPathOverride(prependedPath(injection.binDir), () =>
-      runSolLunaWorker({ ...setup.options, gitTimeoutMs: 500 }));
+    const result = await runWithIsolatedPath(
+      setup,
+      prependedPath(injection.binDir),
+      { gitTimeoutMs: 500 },
+    );
     const elapsed = Date.now() - startedAt;
 
     expect(elapsed).toBeLessThan(15_000);
@@ -1230,8 +1272,7 @@ describe("bounded noninteractive Git observations (#1666)", () => {
       'exec @REAL_GIT@ "$@"',
     ].join("\n"));
 
-    const result = await withPathOverride(prependedPath(injection.binDir), () =>
-      runSolLunaWorker(setup.options));
+    const result = await runWithIsolatedPath(setup, prependedPath(injection.binDir));
 
     expect(result.exitCode).toBe(1);
     expect(result.receipt.success).toBe(false);
@@ -1245,19 +1286,15 @@ describe("bounded noninteractive Git observations (#1666)", () => {
   test("a path appearing during hash-object cannot be treated as stably missing", async () => {
     const setup = await setupFakeCodex();
     const target = join(setup.options.repository, "tracked.txt");
+    const diffMarkers = join(setup.root, "appearing-diff-markers");
     await rm(target);
-    const injection = await injectFakeGit(setup.root, [
-      'for arg in "$@"; do',
-      '  if [ "$arg" = "hash-object" ]; then',
-      `    printf '%s\\n' appeared > ${JSON.stringify(target)}`,
-      "    exit 128",
-      "  fi",
-      "done",
-      'exec @REAL_GIT@ "$@"',
-    ].join("\n"));
+    await mkdir(diffMarkers);
+    const injection = await injectFakeGit(
+      setup.root,
+      synchronizedHashObjectFailure(target, diffMarkers, "appear"),
+    );
 
-    const result = await withPathOverride(prependedPath(injection.binDir), () =>
-      runSolLunaWorker(setup.options));
+    const result = await runWithIsolatedPath(setup, prependedPath(injection.binDir));
 
     expect(result.exitCode).toBe(1);
     expect(result.receipt.harnessError).toContain("before=absent, after=present");
@@ -1267,19 +1304,15 @@ describe("bounded noninteractive Git observations (#1666)", () => {
   test("a path disappearing during hash-object cannot be treated as stably missing", async () => {
     const setup = await setupFakeCodex();
     const target = join(setup.options.repository, "tracked.txt");
+    const diffMarkers = join(setup.root, "disappearing-diff-markers");
     await writeFile(target, "locally modified\n");
-    const injection = await injectFakeGit(setup.root, [
-      'for arg in "$@"; do',
-      '  if [ "$arg" = "hash-object" ]; then',
-      `    rm -f -- ${JSON.stringify(target)}`,
-      "    exit 128",
-      "  fi",
-      "done",
-      'exec @REAL_GIT@ "$@"',
-    ].join("\n"));
+    await mkdir(diffMarkers);
+    const injection = await injectFakeGit(
+      setup.root,
+      synchronizedHashObjectFailure(target, diffMarkers, "disappear"),
+    );
 
-    const result = await withPathOverride(prependedPath(injection.binDir), () =>
-      runSolLunaWorker(setup.options));
+    const result = await runWithIsolatedPath(setup, prependedPath(injection.binDir));
 
     expect(result.exitCode).toBe(1);
     expect(result.receipt.harnessError).toContain("before=present, after=absent");
@@ -1303,7 +1336,7 @@ describe("bounded noninteractive Git observations (#1666)", () => {
     const setup = await setupFakeCodex();
     const emptyBin = join(setup.root, "empty-bin");
     await mkdir(emptyBin);
-    const result = await withPathOverride(emptyBin, () => runSolLunaWorker(setup.options));
+    const result = await runWithIsolatedPath(setup, emptyBin);
     const receipt = result.receipt;
 
     expect(result.exitCode).toBe(1);
@@ -1329,8 +1362,7 @@ describe("bounded noninteractive Git observations (#1666)", () => {
       "done",
       'exec @REAL_GIT@ "$@"',
     ].join("\n"));
-    const result = await withPathOverride(prependedPath(injection.binDir), () =>
-      runSolLunaWorker(setup.options));
+    const result = await runWithIsolatedPath(setup, prependedPath(injection.binDir));
     const receipt = result.receipt;
 
     // The rewind moved HEAD off-branch; ancestry could not be established
