@@ -2,6 +2,7 @@ import { canonicalJsonString } from "./idempotency-request-fingerprint.js";
 import {
   admitRunnerAdapterCommandReservationRecord,
   admitRunnerAdapterCommandSettlementRecord,
+  admitStoredRunnerAdapterCommandStableRequest,
   normalizeRunnerAdapterCommandLookupInput,
   normalizeRunnerAdapterCommandReservation,
   normalizeRunnerAdapterCommandSettlement,
@@ -109,7 +110,7 @@ export function reserveSqliteRunnerAdapterCommand(
   const reservedAt = now.toISOString();
   const transaction = store.db.transaction(() => {
     const idempotencyReplay = reservationByIdempotencyKey(store, input.idempotencyKey);
-    if (idempotencyReplay) return replay(idempotencyReplay, stableRequestJson);
+    if (idempotencyReplay) return replay(idempotencyReplay, input);
 
     const commandReplay = reservationByCommandId(store, input.commandId);
     if (commandReplay) {
@@ -238,8 +239,15 @@ function parseReservation(row: ReservationRow): RunnerAdapterCommandReservationR
   return admitRunnerAdapterCommandReservationRecord({ ...request, reservedAt: row.reserved_at });
 }
 
-function replay(row: ReservationRow, stableRequestJson: string): RunnerAdapterCommandReservation {
-  if (row.stable_request_json !== stableRequestJson) {
+function replay(
+  row: ReservationRow,
+  input: ReserveRunnerAdapterCommandInput,
+): RunnerAdapterCommandReservation {
+  const storedStableRequest = JSON.parse(row.stable_request_json) as ReserveRunnerAdapterCommandInput;
+  if (
+    admitStoredRunnerAdapterCommandStableRequest(storedStableRequest)
+      !== canonicalJsonString(runnerAdapterCommandStableRequest(input))
+  ) {
     throw new RunnerAdapterCommandConflictError(
       "Runner adapter command idempotency key was already used for a different command",
     );

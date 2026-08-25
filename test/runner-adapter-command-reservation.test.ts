@@ -60,6 +60,7 @@ describe("runner adapter command reservation", () => {
         actor: runner,
         adapterId: "vercel-ai-sdk",
         profileId: "default",
+        profileVersion: null,
         requestFingerprint: `sha256:${"a".repeat(64)}`,
         commandId: "command-alpha",
         commandFingerprint: `sha256:${"b".repeat(64)}`,

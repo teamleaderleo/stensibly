@@ -8,6 +8,7 @@ import { RunnerAdapterHostV1 } from "../src/runner-adapter-host.ts";
 import {
   VERCEL_AI_SDK_ADAPTER_ID,
   VERCEL_AI_SDK_PROFILE_ID,
+  VERCEL_AI_SDK_PROFILE_VERSION,
   VercelAISDKRunnerAdapter,
   type VercelAISDKCheckpointRecordV1,
   type VercelAISDKCheckpointStore,
@@ -121,6 +122,7 @@ function createFixture(options: { expireDuringModelCall?: boolean } = {}) {
     actor: supervisor,
     runnerType: VERCEL_AI_SDK_ADAPTER_ID,
     runnerProfile: VERCEL_AI_SDK_PROFILE_ID,
+    runnerProfileVersion: VERCEL_AI_SDK_PROFILE_VERSION,
     itemId: item.id,
     leaseSeconds: 300,
     maxAttempts: 1,

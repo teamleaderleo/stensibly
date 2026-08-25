@@ -124,6 +124,56 @@ describe("authoritative runner resume", () => {
     }
   });
 
+  test("resume refuses a drifted durable profile version before adapter or reservation work", async () => {
+    const fixture = await createFixture({ runnerProfileVersion: "fixture@0" });
+    try {
+      const input = fixture.intent("resume:version-drift");
+      const staleFence = `sha256:${"0".repeat(64)}`;
+      await expect(fixture.service.preview(input)).rejects.toMatchObject({
+        code: "runner_authoritative_resume_conflict",
+        reason: "profile_version_mismatch",
+      });
+      await expect(fixture.service.resume({
+        ...input,
+        expectedResumeFenceFingerprint: staleFence,
+      })).rejects.toMatchObject({
+        code: "runner_authoritative_resume_conflict",
+        reason: "profile_version_mismatch",
+      });
+      expect(fixture.adapter.inspectCalls).toBe(0);
+      expect(fixture.adapter.resumeCalls).toBe(0);
+      await expect(fixture.ledger.getRunnerAdapterCommand({ idempotencyKey: input.idempotencyKey }))
+        .resolves.toBeNull();
+    } finally {
+      fixture.store.close();
+    }
+  });
+
+  test("resume refuses historical unknown durable versions instead of inferring them", async () => {
+    const fixture = await createFixture({ runnerProfileVersion: null });
+    try {
+      const input = fixture.intent("resume:version-unknown");
+      const staleFence = `sha256:${"0".repeat(64)}`;
+      await expect(fixture.service.preview(input)).rejects.toMatchObject({
+        code: "runner_authoritative_resume_conflict",
+        reason: "profile_version_unknown",
+      });
+      await expect(fixture.service.resume({
+        ...input,
+        expectedResumeFenceFingerprint: staleFence,
+      })).rejects.toMatchObject({
+        code: "runner_authoritative_resume_conflict",
+        reason: "profile_version_unknown",
+      });
+      expect(fixture.adapter.inspectCalls).toBe(0);
+      expect(fixture.adapter.resumeCalls).toBe(0);
+      const run = await fixture.ledger.getRun(fixture.runId);
+      expect(run.runnerProfileVersion).toBeNull();
+    } finally {
+      fixture.store.close();
+    }
+  });
+
   test("missing terminal observation stays unresolved", async () => {
     const fixture = await createFixture({ omitTerminal: true });
     try {
@@ -213,6 +263,7 @@ describe("authoritative runner resume", () => {
         actor: runner,
         adapterId,
         profileId,
+        profileVersion,
         requestFingerprint,
         commandId: preview.commandId,
         commandFingerprint,
@@ -671,6 +722,7 @@ describe("authoritative runner resume", () => {
           actor: runner,
           adapterId,
           profileId,
+          profileVersion,
           requestFingerprint: `sha256:${"6".repeat(64)}`,
           commandId: `newer-race-${fixture.runId}`,
           commandFingerprint: fingerprint,
@@ -936,6 +988,7 @@ async function createFixture(options: {
   interruptWithNewCheckpoint?: boolean;
   omitTerminal?: boolean;
   privateMarker?: string;
+  runnerProfileVersion?: string | null;
 } = {}) {
   const store = new StensiblyStore(":memory:");
   const ledger = new SqliteWorkLedger(store);
@@ -960,10 +1013,14 @@ async function createFixture(options: {
     approvalMode: "automatic",
     deliveryMode: "supervisor",
   });
+  const fixtureProfileVersion = options.runnerProfileVersion === undefined
+    ? profileVersion
+    : options.runnerProfileVersion;
   const dispatched = dispatchNextWork(store, {
     actor: supervisor,
     runnerType: adapterId,
     runnerProfile: profileId,
+    runnerProfileVersion: fixtureProfileVersion,
     itemId: item.id,
     continuationRef: continuation.id,
     leaseSeconds: 3600,
@@ -977,6 +1034,7 @@ async function createFixture(options: {
     actor: runner,
     runnerType: adapterId,
     runnerProfile: profileId,
+    runnerProfileVersion: fixtureProfileVersion,
     runId: dispatched.run.id,
     leaseSeconds: 3600,
     idempotencyKey: `claim:${dispatched.run.id}`,
@@ -1086,6 +1144,7 @@ async function reservePrior(
     actor: runner,
     adapterId,
     profileId,
+    profileVersion,
     requestFingerprint: `sha256:${digit === "9" ? "8".repeat(64) : digit.repeat(64)}`,
     commandId: `prior-${digit}-${run.id}`,
     commandFingerprint,

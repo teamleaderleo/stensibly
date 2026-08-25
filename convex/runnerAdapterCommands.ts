@@ -22,6 +22,7 @@ import {
   type RunnerAdapterCommandSettlementRecord,
 } from "../src/runner-adapter-command-contracts";
 import { admitRunnerAdapterCommandLookup } from "../src/runner-adapter-command-read";
+import { runnerProfileVersionOrUnknownV1 } from "../src/runner-profile-provenance";
 
 const fingerprintPattern = /^sha256:[a-f0-9]{64}$/u;
 
@@ -67,6 +68,7 @@ export const reserve = mutation({
     actor: actorValidator,
     adapterId: v.string(),
     profileId: v.string(),
+    profileVersion: v.optional(v.union(v.string(), v.null())),
     requestFingerprint: v.string(),
     commandId: v.string(),
     commandFingerprint: v.string(),
@@ -87,7 +89,10 @@ export const reserve = mutation({
       )
       .unique();
     if (replay) {
-      if (!sameCanonical(replay.stableRequest, stableRequest)) {
+      const storedStableRequest = stableRequestFor(
+        normalizeInput({ ...(replay.request as ReservationInput), profileVersion: runnerProfileVersionOrUnknownV1((replay.request as ReservationInput | null)?.profileVersion ?? null) }),
+      );
+      if (!sameCanonical(storedStableRequest, stableRequest)) {
         throw new Error(
           "Runner adapter command idempotency key was already used for a different command",
         );
@@ -219,6 +224,7 @@ type ReservationInput = {
   actor: ActorInput;
   adapterId: string;
   profileId: string;
+  profileVersion?: string | null;
   requestFingerprint: string;
   commandId: string;
   commandFingerprint: string;
@@ -240,6 +246,7 @@ function normalizeInput(args: ReservationInput): ReservationInput {
     },
     adapterId: assertText(args.adapterId, "Runner adapter command adapter ID", 80),
     profileId: assertText(args.profileId, "Runner adapter command profile ID", 79),
+    profileVersion: runnerProfileVersionOrUnknownV1(args.profileVersion ?? null),
     requestFingerprint: fingerprint(args.requestFingerprint, "reservation request"),
     commandId: assertText(args.commandId, "Runner adapter command ID", 160),
     commandFingerprint: fingerprint(args.commandFingerprint, "command"),

@@ -44,6 +44,10 @@ import {
 } from "./runner-adapter-command-sqlite.js";
 import type { RunnerLedger } from "./runner-contracts.js";
 import {
+  compareRunnerProfileProvenanceV1,
+  runnerProfileProvenanceV1,
+} from "./runner-profile-provenance.js";
+import {
   compileRunnerResumeInspectionV1,
   type RunnerResumeAuthorizationRefV1,
   type RunnerResumeCheckpointSourceV1,
@@ -284,6 +288,7 @@ export class RunnerAuthoritativeResumeServiceV1 {
       actor: this.#o.actor,
       adapterId: candidate.command.adapterId,
       profileId: candidate.command.profileId,
+      profileVersion: candidate.command.profileVersion,
       requestFingerprint,
       commandId: candidate.command.commandId,
       commandFingerprint,
@@ -446,6 +451,7 @@ export class RunnerAuthoritativeResumeServiceV1 {
       || existing.command.actor.id !== this.#o.actor.id
       || existing.command.adapterId !== this.#o.descriptor.adapterId
       || existing.command.profileId !== this.#o.profile.id
+      || existing.command.profileVersion !== this.#o.profile.version
       || existing.command.requestFingerprint !== requestFingerprint
     ) {
       throw conflict("idempotency_conflict", "Runner resume idempotency key belongs to a different command request");
@@ -679,6 +685,11 @@ export class RunnerAuthoritativeResumeServiceV1 {
     if (run.runnerType !== this.#o.descriptor.adapterId || run.runnerProfile !== this.#o.profile.id) {
       throw conflict("adapter_profile_mismatch", "Runner resume adapter or profile does not match the durable run");
     }
+    requireExactDurableProfileVersionV1(
+      runnerProfileProvenanceV1(run.runnerProfile, run.runnerProfileVersion),
+      runnerProfileProvenanceV1(this.#o.profile.id, this.#o.profile.version),
+      (reason, message) => conflict(reason, message),
+    );
     if (!project) throw conflict("project_missing", "Runner resume project is unavailable");
     const authority = runAuthorityFence(run);
     if (!authority || authority.holderId !== this.#o.actor.id) {
@@ -930,6 +941,7 @@ class ResumeConsumer {
       || run.itemId !== this.#command.itemId
       || run.generation !== this.#command.runGeneration
       || run.leaseGeneration !== this.#command.leaseGeneration
+      || run.runnerProfileVersion !== this.#command.profileVersion
     ) throw conflict("authority_changed_during_resume", "Runner resume no longer matches current durable run authority");
     requireCompatibleAuthority(
       this.#command.authority,
@@ -1248,6 +1260,25 @@ function requireCompatibleAuthority(
     || Date.parse(current.expiresAt) <= observedMs
     || (requireNoExpiryNarrowing && Date.parse(current.expiresAt) < Date.parse(expected.expiresAt))
   ) throw conflict(reason, "Runner resume authoritative lease generation, holder, or freshness changed");
+}
+
+function requireExactDurableProfileVersionV1(
+  durable: ReturnType<typeof runnerProfileProvenanceV1>,
+  requested: ReturnType<typeof runnerProfileProvenanceV1>,
+  fail: (reason: string, message: string) => Error,
+): void {
+  const compatibility = compareRunnerProfileProvenanceV1(durable, requested);
+  if (compatibility === "exact") return;
+  if (compatibility === "version_unknown" || compatibility === "legacy_unknown_match") {
+    throw fail(
+      "profile_version_unknown",
+      "Runner resume requires an exact durable profile version",
+    );
+  }
+  throw fail(
+    "profile_version_mismatch",
+    "Runner resume profile version changed; start a fresh run instead of resuming",
+  );
 }
 
 function terminalCheckpointLineageIsComplete(

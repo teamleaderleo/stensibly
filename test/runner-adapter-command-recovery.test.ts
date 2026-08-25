@@ -264,6 +264,7 @@ async function createFixture(label: string) {
     actor: runnerA,
     adapterId: "vercel-ai-sdk",
     profileId: "default",
+    profileVersion: null,
     requestFingerprint: `sha256:${"a".repeat(64)}`,
     commandId,
     commandFingerprint,

@@ -496,6 +496,7 @@ function settledPriorCommand(command: RunnerResumeCommandV1): RunnerAdapterComma
       },
       adapterId,
       profileId,
+      profileVersion,
       requestFingerprint: `sha256:${"c".repeat(64)}`,
       commandId: "command-prior-interruption",
       commandFingerprint,

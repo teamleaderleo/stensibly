@@ -386,6 +386,7 @@ async function interruptedFixture(
     actor: runner,
     adapterId,
     profileId,
+    profileVersion: null,
     requestFingerprint: `sha256:${"1".repeat(64)}`,
     commandId: "prior-resume-episode",
     commandFingerprint: `sha256:${"2".repeat(64)}`,

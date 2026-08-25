@@ -47,6 +47,7 @@ describe("Control Room resume inspection assembly", () => {
         actor: runner,
         adapterId: "vercel-ai-sdk",
         profileId: "default",
+        profileVersion: null,
         requestFingerprint: `sha256:${"a".repeat(64)}`,
         commandId: "resume-evidence-command",
         commandFingerprint: `sha256:${"b".repeat(64)}`,

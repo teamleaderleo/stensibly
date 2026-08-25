@@ -64,6 +64,7 @@ describe("SQLite runner adapter command read", () => {
         actor: runner,
         adapterId: "vercel-ai-sdk",
         profileId: "default",
+        profileVersion: null,
         requestFingerprint: `sha256:${"a".repeat(64)}`,
         commandId,
         commandFingerprint,

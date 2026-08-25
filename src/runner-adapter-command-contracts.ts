@@ -1,5 +1,8 @@
 import { actorSchema, type ActorInput } from "./schemas.js";
 import { canonicalJsonString } from "./idempotency-request-fingerprint.js";
+import {
+  runnerProfileVersionOrUnknownV1,
+} from "./runner-profile-provenance.js";
 import { sha256Hex } from "./sha256.js";
 
 const PROJECT_PATTERN = /^[a-z0-9][a-z0-9_-]*$/u;
@@ -14,6 +17,12 @@ export interface ReserveRunnerAdapterCommandInput {
   actor: ActorInput;
   adapterId: string;
   profileId: string;
+  /**
+   * Exact runner profile version consumed by the original command, or null when
+   * the durable run is explicitly version-unknown. Replay identity requires the
+   * same provenance; a changed version needs a successor command.
+   */
+  profileVersion: string | null;
   /** Stable digest of operation inputs, fences, actor, adapter/profile config, and correlation. */
   requestFingerprint: string;
   /** Immutable identity of the full generated command stored only for the winning reservation. */
@@ -141,6 +150,7 @@ export function normalizeRunnerAdapterCommandReservation(
     actor: Object.freeze(actorSchema.parse(input.actor)),
     adapterId: boundedText(input.adapterId, "Runner adapter command adapter ID", 80),
     profileId: boundedText(input.profileId, "Runner adapter command profile ID", 79),
+    profileVersion: runnerProfileVersionOrUnknownV1(input.profileVersion),
     requestFingerprint: patternText(
       input.requestFingerprint,
       "Runner adapter command reservation request fingerprint",
@@ -165,12 +175,27 @@ export function normalizeRunnerAdapterCommandReservation(
 export function admitRunnerAdapterCommandReservationRecord(
   value: RunnerAdapterCommandReservationRecord,
 ): RunnerAdapterCommandReservationRecord {
-  exactKeys(value, [
-    "project", "itemId", "runId", "runGeneration", "leaseGeneration", "actor",
-    "adapterId", "profileId", "requestFingerprint", "commandId", "commandFingerprint",
-    "idempotencyKey", "reservedAt",
-  ], "Runner adapter command reservation record");
-  const normalized = normalizeRunnerAdapterCommandReservation(value);
+  const stored = value as unknown as Record<string, unknown>;
+  // Reservations written before explicit profile versions read back as
+  // explicitly unknown; they are never inferred or upgraded to a concrete version.
+  if (stored.profileVersion === undefined) {
+    const { profileVersion: _legacyUnknown, ...rest } = stored;
+    exactKeys(rest, [
+      "project", "itemId", "runId", "runGeneration", "leaseGeneration", "actor",
+      "adapterId", "profileId", "requestFingerprint", "commandId", "commandFingerprint",
+      "idempotencyKey", "reservedAt",
+    ], "Runner adapter command reservation record");
+  } else {
+    exactKeys(stored, [
+      "project", "itemId", "runId", "runGeneration", "leaseGeneration", "actor",
+      "adapterId", "profileId", "profileVersion", "requestFingerprint", "commandId",
+      "commandFingerprint", "idempotencyKey", "reservedAt",
+    ], "Runner adapter command reservation record");
+  }
+  const normalized = normalizeRunnerAdapterCommandReservation({
+    ...(value as ReserveRunnerAdapterCommandInput),
+    profileVersion: runnerProfileVersionOrUnknownV1(value.profileVersion),
+  });
   return Object.freeze({
     ...normalized,
     reservedAt: canonicalTimestamp(value.reservedAt, "Runner adapter command reservation time"),
@@ -182,6 +207,37 @@ export function runnerAdapterCommandStableRequest(
 ) {
   const { commandId: _commandId, commandFingerprint: _commandFingerprint, ...stable } = input;
   return stable;
+}
+
+/**
+ * Canonical replay identity for a stored stable request. Historical rows are
+ * re-normalized before comparison so a legacy reservation replays as explicitly
+ * unknown instead of falsely conflicting with its own retry. Stable requests
+ * omit command identity, so those fields are neutral placeholders here.
+ */
+export function admitStoredRunnerAdapterCommandStableRequest(
+  stored: unknown,
+): string {
+  const raw = (stored ?? {}) as Partial<ReserveRunnerAdapterCommandInput>;
+  return canonicalJsonString(
+    runnerAdapterCommandStableRequest(
+      normalizeRunnerAdapterCommandReservation({
+        project: raw.project ?? "",
+        itemId: raw.itemId ?? "",
+        runId: raw.runId ?? "",
+        runGeneration: raw.runGeneration ?? 0,
+        leaseGeneration: raw.leaseGeneration ?? 0,
+        actor: raw.actor as ReserveRunnerAdapterCommandInput["actor"],
+        adapterId: raw.adapterId ?? "",
+        profileId: raw.profileId ?? "",
+        profileVersion: runnerProfileVersionOrUnknownV1(raw.profileVersion ?? null),
+        requestFingerprint: raw.requestFingerprint ?? "",
+        commandId: "stable-replay-command-identity-omitted",
+        commandFingerprint: `sha256:${"0".repeat(64)}`,
+        idempotencyKey: raw.idempotencyKey ?? "",
+      }),
+    ),
+  );
 }
 
 export function normalizeRunnerAdapterCommandSettlement(

@@ -327,6 +327,7 @@ describe("Convex work ledger", () => {
       actor,
       adapterId: "vercel-ai-sdk",
       profileId: "default",
+      profileVersion: null,
       requestFingerprint: `sha256:${"a".repeat(64)}`,
       commandId: "command_1",
       commandFingerprint: `sha256:${"b".repeat(64)}`,

@@ -152,6 +152,7 @@ export class RunnerAdapterHostV1 {
       actor: this.#options.actor,
       runnerType: this.#options.descriptor.adapterId,
       runnerProfile: this.#options.profile.id,
+      runnerProfileVersion: this.#options.profile.version,
       leaseSeconds: this.#options.leaseSeconds,
       idempotencyKey: hostIdempotencyKey("claim", operationId),
       ...(input.project ? { project: boundedProject(input.project) } : {}),
@@ -283,6 +284,7 @@ export class RunnerAdapterHostV1 {
       actor: this.#options.actor,
       adapterId: command.adapterId,
       profileId: command.profileId,
+      profileVersion: command.profileVersion,
       requestFingerprint,
       commandId: command.commandId,
       commandFingerprint,
@@ -753,6 +755,11 @@ function assertRunBinding(
   ) {
     throw new RangeError("Durable run does not match the runner adapter profile");
   }
+  if (run.runnerProfileVersion !== options.profile.version) {
+    throw new RangeError(
+      "Durable run does not match the runner adapter profile version; start a successor run",
+    );
+  }
   if (run.actorId !== options.actor.id || run.leaseOwnerId !== options.actor.id) {
     throw new RangeError("Durable run authority holder does not match the runner host actor");
   }
@@ -768,6 +775,7 @@ function assertReplayRunIdentity(
     || run.itemId !== claimed.itemId
     || run.runnerType !== options.descriptor.adapterId
     || run.runnerProfile !== options.profile.id
+    || run.runnerProfileVersion !== options.profile.version
   ) {
     throw new RangeError("Runner command replay no longer matches the durable run identity");
   }
@@ -788,6 +796,7 @@ function assertReservationBinding(
     || command.actor.id !== options.actor.id
     || command.adapterId !== options.descriptor.adapterId
     || command.profileId !== options.profile.id
+    || command.profileVersion !== options.profile.version
   ) {
     throw new RangeError("Runner adapter command reservation no longer matches the host claim");
   }
