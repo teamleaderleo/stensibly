@@ -12,6 +12,10 @@ interface RunProfileVersionRow {
   runner_profile_version: string | null;
 }
 
+interface BatchRunProfileVersionRow extends RunProfileVersionRow {
+  id: string;
+}
+
 const initializedStores = new WeakSet<StensiblyStore>();
 
 export function ensureRunProfileVersionSchema(store: StensiblyStore): void {
@@ -128,18 +132,36 @@ export function withRunnerProfileVersion<Run extends { id: string; runnerProfile
   run: Run,
 ): Run & { runnerProfileVersion: string | null } {
   ensureRunProfileVersionSchema(store);
-  const row = runProfileVersionRow(store, run.id);
-  const durable = runnerProfileProvenanceV1(
-    row.runner_profile,
-    row.runner_profile_version,
-  );
-  if (durable.profileId !== run.runnerProfile) {
-    throw new ConflictError("Durable runner profile disagrees with the run projection");
+  return attachRunnerProfileVersion(run, runProfileVersionRow(store, run.id));
+}
+
+export function withRunnerProfileVersions<Run extends { id: string; runnerProfile: string }>(
+  store: StensiblyStore,
+  runs: readonly Run[],
+): Array<Run & { runnerProfileVersion: string | null }> {
+  ensureRunProfileVersionSchema(store);
+  if (runs.length === 0) return [];
+
+  const ids = runs.map((run) => run.id);
+  if (new Set(ids).size !== ids.length) {
+    throw new ConflictError("Run projection contains duplicate run identities");
   }
-  return {
-    ...run,
-    runnerProfileVersion: durable.profileVersion,
-  };
+  const rows = store.db
+    .query<BatchRunProfileVersionRow, [string]>(`
+      SELECT id, runner_profile, runner_profile_version
+      FROM work_runs
+      WHERE id IN (SELECT value FROM json_each(?1))
+    `)
+    .all(JSON.stringify(ids));
+  if (rows.length !== runs.length) {
+    throw new ConflictError("Run profile version projection is incomplete");
+  }
+  const rowsById = new Map(rows.map((row) => [row.id, row] as const));
+  return runs.map((run) => {
+    const row = rowsById.get(run.id);
+    if (!row) throw new ConflictError(`Run ${run.id} does not exist`);
+    return attachRunnerProfileVersion(run, row);
+  });
 }
 
 export function appendRunnerProfileVersionEvent(
@@ -177,6 +199,23 @@ export function appendRunnerProfileVersionEvent(
       `run-profile-provenance:${input.runId}`,
       input.createdAt,
     );
+}
+
+function attachRunnerProfileVersion<Run extends { id: string; runnerProfile: string }>(
+  run: Run,
+  row: RunProfileVersionRow,
+): Run & { runnerProfileVersion: string | null } {
+  const durable = runnerProfileProvenanceV1(
+    row.runner_profile,
+    row.runner_profile_version,
+  );
+  if (durable.profileId !== run.runnerProfile) {
+    throw new ConflictError("Durable runner profile disagrees with the run projection");
+  }
+  return {
+    ...run,
+    runnerProfileVersion: durable.profileVersion,
+  };
 }
 
 function runProfileVersionRow(
