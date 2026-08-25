@@ -1,402 +1,156 @@
-# Agent and work-group nomenclature
+# Agent and execution identity
 
-## Status
+## Purpose
 
-**Provisional convention for dogfooding and iteration.**
+Use names only where they distinguish facts with different correctness, recovery, or authority semantics.
 
-This note defines a shared naming and display convention for human-agent work in Stensibly. It is intentionally easier to revise than the durable ledger schema. Real usage should drive later changes.
+Stensibly does **not** require a universal work hierarchy such as `Project → wave → lane → action → run`. Terms such as wave, lane, campaign, phase, or stream may remain useful human descriptions, but they are optional labels unless a concrete product contract gives them an invariant that existing records cannot express.
 
-Related work:
+Related:
 
-- #230 — temporary agent task groups and bounded integration
-- #248 — delegation waves and independent lanes
-- #272 — durable pods and operating context
-- #278 — pod charter, practice, memory, and lifecycle
-- #280 — wave, lane, action, and run as separate work scales
-- `docs/product-model.md` — authority and responsibility remain distinct from names and assignments
+- #45 — durable coordination without a permanent manager layer
+- #46 — deterministic wake conditions
+- #214 — end-to-end executable work-cycle proof
+- #280 — closed work-scale taxonomy experiment
+- `docs/product-model.md` — responsibility and authority remain distinct
 
-## Decision
-
-Use a **broad-to-granular work address**:
-
-> **Project → wave → lane → action → run**
-
-Pod membership, temporary stance, callsign, mantle, durable actor identity, and authority are separate metadata. They may be displayed beside a work address, but they are not part of the work hierarchy and must not be used as substitutes for authority evidence.
-
-A complete human-readable heading can be:
-
-> **Stensibly · W01 Production OAuth Enablement · Client Lifecycle · Add expiry cleanup · r03**
-
-A compact machine-oriented path can be:
-
-```text
-stensibly/production-oauth/client-lifecycle/add-expiry-cleanup/r03
-```
-
-This follows the same principle as a collection, book, chapter, section, and revision: durable context comes first, followed by progressively more specific work.
-
-## Why broad context comes first
-
-The ledger is usually entered through context:
-
-1. Which project contains the work?
-2. Which meaningful outcome is being pursued?
-3. Which coherent thread contains this work?
-4. What directly executable action is next?
-5. Which bounded attempt produced the current evidence?
-
-Broad-first ordering keeps related records together in exports, URLs, logs, audit views, and lexicographic sorting:
-
-```text
-stensibly/production-oauth/client-lifecycle/add-expiry-cleanup/r01
-stensibly/production-oauth/client-lifecycle/add-expiry-cleanup/r02
-stensibly/production-oauth/security-acceptance/review-expiry-pr/r01
-stensibly/guarded-pilot/supervisor-runtime/start-one-runner/r01
-scrapbook/navigation-rework/activity-geometry/verify-transition/r01
-```
-
-Granular-first ordering would group records by ephemeral runs, workers, or tool sessions instead of the durable body of work.
-
-## Work scales
+## Canonical identities
 
 ### Project
 
-The durable body of work.
+The durable product/repository coordination boundary.
 
-```yaml
-project:
-  slug: stensibly
-  title: Stensibly
-```
+A project groups policy, repository attachments, work, and provider scope. Project identity may outlive every current worker and run.
 
-Projects outlive waves, lanes, actions, runs, pods, processes, and conversations.
+### Work item / responsibility
 
-### Wave
+The durable thing that still needs an outcome.
 
-A longer-lived coordinated span pursuing one meaningful outcome. A wave may involve several repositories, pods, lanes, and successive workers.
+A work item identifies the user-visible or project-visible outcome. Responsibility identifies the current obligation/generation to produce the next result when that distinction is required by the owning contract.
 
-```yaml
-wave:
-  sequence: 1
-  slug: production-oauth
-  title: Production OAuth Enablement
-  goal: Enable production OAuth and connect the ChatGPT app
-```
-
-Suggested display:
-
-```text
-W01 · Production OAuth Enablement
-```
-
-A wave should carry a goal, success or stopping conditions, active commitments, current summary, and lineage. It may last across many chats and runs.
-
-A wave is not a temporary worker group. Several groups or pods may contribute to one wave, and one pod may contribute to several waves within approved scope.
-
-### Lane
-
-A medium-lived coherent work thread within a wave. A lane groups related work that benefits from stable context and explicit handoffs.
-
-```yaml
-lane:
-  key: A
-  slug: client-lifecycle
-  title: Dynamic-client lifecycle
-```
-
-Example lanes within one wave:
-
-```text
-A · Dynamic-client lifecycle
-B · Independent security acceptance
-C · Production configuration and verification
-```
-
-Lane letters are compact contextual labels. They do not imply priority, seniority, quality, execution order, worker identity, or permanent membership.
-
-A lane can move between workers and pods without becoming a new lane. The lane is work, not a seat occupied by one worker.
-
-### Action
-
-A small, directly executable next step that one eligible worker can normally claim, complete, or hand off without another decomposition round.
-
-```yaml
-action:
-  slug: add-expiry-cleanup
-  title: Add the dynamic-client expiry cleanup
-  issue: 220
-```
-
-Examples:
-
-- add the client-expiry index;
-- reproduce one registration-limit failure;
-- review PR #281 at an exact head;
-- run deployed OAuth metadata checks;
-- update a rollout checklist with observed results.
-
-An action may correspond to a GitHub issue, issue subtask, Stensibly item, checklist entry, or generated continuation. Not every action needs a separate GitHub issue.
-
-Actions should remain small enough to claim and verify. A lane may contain sequential and parallel actions, and one action may require several runs.
+Do not create another `action` identity when an existing work item, continuation, command, or decision already names the executable unit precisely enough.
 
 ### Run
 
-One bounded execution attempt by one worker against one action or lane checkpoint.
+One bounded execution attempt.
 
-```yaml
-run:
-  id: run_01J3M8Q2Y6
-  waveId: wave_stensibly_production-oauth
-  laneId: lane_client-lifecycle
-  actionId: action_add-expiry-cleanup
-  actorId: actor_openai_codex_7f3a
-  attempt: 3
-  claimGeneration: 2
-  harness: codex
-  model: gpt-5.6-thinking
-  repository: teamleaderleo/stensibly
-  branch: feature/oauth-client-expiry
-  status: running
-```
+Run-scoped facts include, when relevant:
 
-Runs produce evidence, events, artifacts, blockers, completion, or a handoff. A run may fail without failing the action, lane, or wave.
+- exact work/responsibility generation;
+- worker/actor reference;
+- runner profile and exact profile version;
+- provider/model/reasoning configuration;
+- repository/base/candidate identities;
+- lease/authority generation;
+- checkpoint/continuation lineage;
+- terminal execution state.
 
-Model, reasoning effort, runner profile/version, harness, branch, worktree, attempt, and execution status belong to the run rather than the lane title, callsign, mantle, or pod.
+A failed or replaced run does not erase the durable work item. A compatible hot resume keeps the exact execution profile required by the runner contract; an execution-affecting profile change creates a successor run.
 
-While a run is resumed through a compatible provider conversation or checkpoint, keep one exact runner profile/version. Execution-affecting changes such as provider/model identity or reasoning effort select a successor run with a new profile identity. An intentional fresh context after accumulated conversational clutter also starts a successor run from durable handoff state; it may reuse the same profile/version when the execution identity is unchanged.
+### Worker / actor
 
-Cache reuse and conversational coherence remain runtime concerns. Stensibly preserves the exact run/profile binding, continuation/checkpoint lineage, external references, and durable handoff needed to reuse a compatible hot context or replace it cleanly.
+The principal or durable worker reference that performed an action.
 
-## Worker and membership metadata
+Shared transport identities such as one GitHub account may represent several workers. Preserve the exact worker/run identity that the owning action contract uses for attribution.
+
+Worker identity grants no authority by itself.
 
 ### Callsign
 
-An optional, human-friendly voice or nickname used during a bounded collaboration.
+Human-readable display metadata for distinguishing concurrent/disposable workers.
 
-```yaml
-workerDisplay:
-  callsign: Nightjar
-```
+A callsign is useful for reading comments, receipts, and handoffs. It is never the canonical lookup key for work, identity continuity, competence, responsibility, or permission.
 
-Callsigns should be short, pronounceable, visually distinctive, and safe to discard. A callsign is display metadata. It is not an identifier, credential, authority grant, responsibility record, competence claim, or durable permission.
+Prefer the pool-backed deterministic default from #1676 when available instead of requiring a worker to invent a name.
 
-### Mantle
+### Continuation / handoff
 
-An optional reusable descriptive identity or working style. A mantle may persist across waves, but it remains descriptive and versioned rather than authoritative.
+A durable successor reference carrying the smallest state needed for another worker/run to continue current responsibility.
 
-```yaml
-mantle:
-  name: Lantern
-  version: 2
-```
+Continuity belongs to durable work and exact source references, not to one conversation or callsign.
 
-### Pod
+### Authority / approval
 
-A durable operating unit that retains a mission, policy, knowledge, responsibilities, practice, and learning across worker sessions, repositories, waves, and temporary task groups.
+Permission remains a separate typed fact with its own generation, expiry, target, and effect constraints.
 
-```yaml
-pod:
-  slug: foundry
-  title: Foundry
-  mission: Build and review bounded production-ready systems
-```
+Names, assignment, issue labels, callsigns, model profiles, and human-readable roles never substitute for authority evidence.
 
-A pod may have temporary participants, become dormant, fork, merge, or dissolve under an explicit lifecycle. The pod does not disappear merely because one worker or run ends.
+## Optional descriptive labels
 
-Pod membership is orthogonal to the work address. A pod may contribute to several lanes, and a lane may pass between pods. Moving work or joining a pod does not transfer authority implicitly.
+Humans may use words such as:
 
-### Temporary task group
+- wave;
+- lane;
+- campaign;
+- phase;
+- stream;
+- reviewer;
+- coordinator;
+- manager.
 
-A bounded execution group formed around one shared deliverable, integration checkpoint, or short-lived coordination need. It has explicit membership, scope, stopping conditions, and a dissolution or handoff point.
+Use them as prose when they make a large effort easier to discuss. Do not require them in every header, handoff, run, issue, or schema.
 
-```yaml
-taskGroup:
-  slug: oauth-rollout-check
-  deliverable: Verify one guarded OAuth rollout candidate
-  stoppingCondition: Record an independent verdict and handoff
-```
+Before promoting one into a durable field, name the exact failure it prevents and prove existing project/work/run/dependency/continuation records cannot express the needed invariant.
 
-A temporary task group may operate within one pod, include participants from several pods, or have no pod affiliation. It can contribute to a lane without becoming the lane, and it dissolves or hands off when its bounded purpose ends.
+## Display guidance
 
-Pods and temporary task groups both remain outside the canonical work address and separate from actor identity, responsibility, claims, and authority.
+Prefer the shortest display that preserves the facts relevant to the reader.
 
-### Actor
-
-The durable principal that performs work. An actor may be a human, agent, or service.
-
-```yaml
-actor:
-  id: actor_openai_codex_7f3a
-  name: Codex Worker 7f3a
-  kind: agent
-  capabilities:
-    - repository-edit
-    - browser-test
-    - pull-request-review
-```
-
-Actor IDs should remain stable and machine-oriented. Actor names should remain readable. Neither should encode a temporary lane, callsign, mantle, pod, model, branch, or current authority grant.
-
-Being named, assigned, or affiliated does not itself establish authority.
-
-## What letters and numbers mean
-
-Use letters as compact labels for **parallel work threads within a wave**:
+A normal work update can be:
 
 ```text
-A · Dynamic-client lifecycle
-B · Independent security acceptance
-C · Production rollout and verification
+Issue: #1676
+Run: run_...
+Worker: Kestrel
+Candidate: <exact revision when relevant>
+Next: <one executable action>
 ```
 
-Use numbers only where sequence is real:
+A provider-effect receipt should emphasize the effect identity, authority generation, idempotency identity, and observed settlement instead of a work taxonomy.
 
-- wave `W01`;
-- attempt `r03`;
-- claim generation `7`;
-- event sequence `12`;
-- schema or mantle version `v2`.
+A review should emphasize the exact candidate/input set and verdict. Independent review is consequence/uncertainty-based; it is not implied by a named reviewer lane.
 
-Do not use `Agent 1`, `Agent 2`, and similar labels as primary identities unless those numbers represent a genuine ordered series. Prefer the lane title, executable action, run ID, and exact revision.
+## Programmatic rule
 
-## Canonical and contextual display forms
+If a value can be reconstructed safely from canonical records, derive it in a view instead of asking workers to repeat it.
 
-The ledger should store distinct fields rather than requiring every interface to repeat one long string.
-
-### Full canonical heading
+If a repeated naming or coordination distinction affects correctness, encode the smallest invariant directly:
 
 ```text
-Stensibly · W01 Production OAuth Enablement · A Client Lifecycle · Add expiry cleanup · r03
+conflicting responsibility -> atomic claim/generation
+future eligibility -> wake condition
+fresh worker continuation -> context/continuation compiler
+external effect -> command + receipt + reconciliation
+human choice -> exact decision input fingerprint
+stale review -> exact reviewed input identity
 ```
 
-### Work and worker sign-off
+Do not create an organizational layer as a proxy for one of these invariants.
+
+## Legacy prose
+
+Historical issues, comments, and documents may refer to waves, lanes, pods, task groups, mantles, supervisors, or other experiments. Treat those terms as historical/descriptive unless a current canonical contract explicitly depends on them.
+
+Do not mechanically rewrite historical evidence merely to match current vocabulary.
+
+## Adoption
+
+Current code and new documentation should default to:
 
 ```text
-Work: Stensibly / W01 Production OAuth Enablement / Client Lifecycle / Add expiry cleanup / r03
-Worker: Nightjar · Lantern mantle v2 · Foundry pod
+project
+work/responsibility
+run
+worker/actor
+continuation when needed
+authority/approval when needed
 ```
 
-### Breadcrumb
+Add more identity only after a concrete failure demonstrates a missing distinction.
 
-```text
-Stensibly › Production OAuth Enablement › Client Lifecycle › Add expiry cleanup › Run 03
-```
+## Deletion rule
 
-### Lane card within an already visible wave
+When a naming convention stops carrying a unique invariant or repeatedly duplicates existing state, remove the requirement and keep the historical text in Git.
 
-```text
-A · Dynamic-client lifecycle
-Current action: Add expiry cleanup
-```
-
-### Dispatch queue entry
-
-```text
-Add expiry cleanup
-Production OAuth Enablement · Client Lifecycle
-```
-
-### Search result
-
-```text
-Add expiry cleanup
-Stensibly · Production OAuth Enablement · Client Lifecycle
-```
-
-### Activity event
-
-```text
-Nightjar completed exact-head review of Add expiry cleanup.
-```
-
-Broad-to-granular is the canonical work identity order. A contextual interface may lead with the most useful local fact when its ancestors are already visible.
-
-## Review convention
-
-Every implementation lane should perform:
-
-1. its own scope and correctness review;
-2. one named independent review where practical;
-3. wave-level reconciliation before integration.
-
-A review should reference exact work and revision records rather than inventing a separate reviewer-agent identity:
-
-```yaml
-review:
-  reviewerLane: security-acceptance
-  subjectLane: client-lifecycle
-  subjectAction: add-expiry-cleanup
-  subjectRun: run_01J3M8Q2Y6
-  subjectRevision: fc595c8
-  verdict: accepted_with_notes
-```
-
-Reviewer lane and worker identity remain separate. A replacement worker can continue the same review lane without changing the subject work address.
-
-## Compact update and handoff header
-
-Use this form for progress reports, reviews, and handoffs:
-
-```text
-W01/A · Dynamic-client lifecycle
-Action: Add expiry cleanup
-Run: r03 · Claim generation: 2
-Revision: fc595c8
-Status: ready-for-independent-review
-Worker: Nightjar · Lantern mantle v2 · Foundry pod
-Reviewer lane: W01/B · Independent security acceptance
-```
-
-Then record:
-
-- completed scope;
-- changed files or artifacts;
-- commands, checks, and results;
-- confidence and remaining uncertainty;
-- disagreements and blockers;
-- next lane or action owner;
-- next action.
-
-## Publishing analogy
-
-| Publishing concept | Stensibly concept |
-| --- | --- |
-| Series or collection | Workspace or project |
-| Book | Wave |
-| Chapter | Lane |
-| Section or assignment | Action |
-| Revision or production pass | Run |
-| Author byline | Actor, callsign, or mantle metadata |
-| Publishing house or standing editorial organisation | Pod |
-| Temporary production crew | Temporary task group |
-| Manuscript and citations | Artifacts and evidence |
-| Editorial review | Independent review record |
-| Publication | Accepted shared deliverable |
-
-The analogy is a display and organisation aid. It does not replace Stensibly's authority, responsibility, claim, run, event, artifact, and approval contracts.
-
-## Canonical rule
-
-> **Order durable work context from broad to granular. Keep work hierarchy separate from worker affiliation. Put ephemeral execution metadata last.**
-
-Field by field:
-
-> **Projects identify durable bodies of work. Waves identify outcomes. Lanes identify coherent threads. Actions identify claimable next steps. Run IDs identify executions. Callsigns and mantles identify voices. Pods identify durable affiliations. Temporary task groups identify bounded collaboration. Actor IDs identify principals. Authority grants identify permission.**
-
-These facts must not be collapsed into one agent name.
-
-## Adoption and revision
-
-Use this convention first in dogfood projects and temporary task groups. Do not migrate the schema merely to encode a display preference.
-
-Observe whether:
-
-- `action` is clearer than `task` or `work item`;
-- waves need explicit versions or phases;
-- lanes are stable enough to deserve durable identifiers;
-- users confuse lanes with worker seats;
-- GitHub issues map cleanly to waves, lanes, or actions;
-- fresh workers receive enough hierarchy without excessive paperwork;
-- a useful smaller unit below run emerges from repeated coordination friction.
-
-Revise the convention when actual use shows that a field is consistently omitted, confused, or poorly sorted. Any later schema proposal should cite observed examples and preserve compatibility with existing actor, item, run, event, artifact, authority, and approval records.
+— Kestrel
+  Intention: name only the identities that software must distinguish
