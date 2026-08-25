@@ -13,342 +13,262 @@ Convex agent skills for common tasks can be installed with
 
 # Agent entry point
 
-**Operating protocol:** `stensibly-agent-ops/0.5.0`  
-**Active instruction experiment:** `documentation-brief/1` — #666  
-**Status:** internal dogfood  
-**Standing project policy:** `STENSIBLY.md`  
-**Change lifecycle:** `docs/operating-instruction-lifecycle.md`
+**Standing project policy:** `STENSIBLY.md`
 
 Stensibly is the durable coordination and product layer for a one-person,
-many-agent studio. Chats, model sessions, and processes are temporary. Outcomes,
-work, evidence, decisions, deployments, and reusable knowledge must survive them.
+many-agent studio. Chats, model sessions, and worker processes are disposable.
+Durable work, authority, commands, receipts, decisions, continuations, and provider
+objects survive them.
 
-## Start here
+## Start from current sources
 
-Before substantive repository work:
+Before substantive work:
 
 1. When authenticated `enrol_worker` is available, enrol with the project and one
-   stable per-chat `workerSessionId`, omit `callsign`, and use exactly the callsign
-   and sigil Stensibly returns. Optionally pass one broad `callsignCategory`. Supply
-   an explicit callsign only when the operator deliberately asks for one. If hosted
-   enrolment is unavailable, use the GitHub registry/manual fallback.
-2. Read this file.
-3. Read `STENSIBLY.md`. It is the narrower standing project policy and may grant
-   authority for internal dogfood effects.
-4. Read `docs/current-wave.md`.
-5. Read `README.md`, `docs/product-model.md`, and relevant generated guidelines.
-6. Read `docs/documentation-system.md` before creating or materially revising a
-   campaign record, durable decision, operating instruction, or shared documentation
-   convention.
-7. Inspect the relevant issues, pull requests, reviews, current deployments, and
-   exact-head handoffs.
+   stable per-chat `workerSessionId`, omit `callsign`, and use exactly the returned
+   callsign and sigil. Optionally pass one broad `callsignCategory`. Use an explicit
+   callsign only for deliberate operator direction. When hosted enrolment is
+   unavailable, use the documented manual fallback.
+2. Read this file and `STENSIBLY.md`.
+3. Read generated/tool-specific guidance for the code or workflow you will actually
+   touch.
+4. Inspect the current issue, pull request, repository/provider state, and existing
+   work before creating another candidate.
+5. Read deeper product/design/history documents only when they affect the current
+   decision.
 
-## Mail continuation bootstrap
+Do not require a broad startup reading list or a hand-maintained current-wave packet
+when the needed facts can be fetched from their canonical owners.
 
 For mail-based continuation, read [`docs/mail-continuation.md`](docs/mail-continuation.md)
 before provider lookup. Source-explicit launch wording controls the first lookup; when
 it names Gmail, search Gmail for the exact `STN-*` handle first. Refresh referenced
-GitHub state before acting. Ordinary relay chats use official mail and GitHub surfaces
-and keep the Stensibly developer connector out.
+GitHub state before acting.
 
-When older prompts or documents conflict, use the newest repository protocol and
-standing project policy, then record the drift.
+When older prompts or documents conflict, current repository policy and direct
+operator direction control current work. Historical text remains evidence of the
+older decision.
 
-Inspect existing work for dependencies, useful continuations, and overlap before
-committing to a lane. Existing work provides context and options. New work may start
-whenever it advances a current outcome, has a clear bounded fence, and avoids harmful
-overlap. Choose finishing, reviewing, repairing, integrating, deploying, or dogfooding
-existing work when that is the higher-value move.
+## Durable identities
 
-## Default posture: be ambitious
+Keep machine identities separate where they carry different correctness semantics:
 
-Own a meaningful outcome rather than one tiny action. Maintain a small explicit
-portfolio, continue at natural boundaries, and use blocked time on another
-non-conflicting lane. A human ping is not required merely because the previous
-step ended.
+- **project** — durable product/repository policy boundary;
+- **work item / responsibility generation** — outcome still owed and its current
+  accepted obligation;
+- **run** — one bounded execution attempt;
+- **worker / actor** — attributable principal/session reference;
+- **continuation** — durable successor state after a worker disappears;
+- **authority / approval** — permission for a bounded action/effect;
+- **callsign** — human-readable display metadata only.
 
-When the next covered step is available, continue through:
+`wave`, `lane`, `campaign`, `phase`, `reviewer`, `coordinator`, and similar words may
+be useful prose. They are optional labels unless a current machine contract gives
+them a distinct invariant.
 
-- implementation;
-- self-review or independent review when it materially helps;
-- integration and merge;
-- deployment or configuration;
-- real product use;
-- verification and evidence;
-- fix-forward repair;
-- cleanup and durable handoff.
+See `docs/agent-nomenclature.md` for the compact identity model.
 
-Do not stop at a proposal, issue, documentation packet, pull request, or rollout
-plan when the actual outcome can be completed under the standing policy.
+## Callsigns
 
-## Internal dogfood context
+Use one stable callsign for a live interactive worker when human-readable attribution
+helps. The name grants zero identity continuity, responsibility, competence, or
+authority.
 
-This project currently serves the operator and participating agents. The hosted
-Stensibly installation is an internal dogfood environment, even when repository
-text calls it `production`.
+The normal hosted path is programmatic: call `enrol_worker(project, workerSessionId)`,
+omit `callsign`, optionally provide `callsignCategory`, and use exactly the accepted
+callsign, sigil, lease generation, and `workerRef`. The existing lease boundary owns
+collisions and replay. Manual/explicit callsigns remain an override and fallback.
 
-`STENSIBLY.md` grants standing authority for reviewed, reversible internal
-dogfood work, including merges, deployments, enablement, protected-workflow
-credential use, bounded test data, migrations with recovery, OAuth journeys,
-project-scoped writes, and operational verification. Review may be performed by
-the implementing worker when the standing policy allows self-review.
+Keep run/session provenance when continuing earlier work. A callsign is display
+metadata; it never proves that a fresh chat is the previous worker.
 
-Do not invent a fresh approval requirement merely because an action touches the
-live dogfood environment.
+## Work selection and claims
 
-Fresh operator approval is still required for consequences outside that standing
-grant, including material spend, secret exposure, widening access beyond the
-operator and participating agents, external publication or contact, destructive
-non-test data changes, irreversible migrations without recovery, and legal or
-financial effects outside the project.
+Choose useful work from current evidence. Prefer, when applicable:
 
-## Active operator direction
+1. repair a demonstrated correctness/authority/recovery defect;
+2. finish, verify, integrate, deploy, reconcile, or retire already-active work;
+3. clear a concrete dependency;
+4. take a bounded unclaimed issue with an explicit consequence and stopping
+   condition;
+5. explore when the result can change an implementation or product decision.
 
-Current direct operator direction outranks older repository ceremony. An explicit
-instruction in the active chat to proceed, fix, merge, deploy, test, connect, or
-finish a covered internal-dogfood outcome counts as the integration decision for
-that action.
+Inspect overlap before editing shared mutable surfaces. Parallel work is welcome when
+its files/contracts/effects are disjoint enough to reconcile cheaply.
 
-Do not make the operator wait for another agent merely to create reviewer
-independence. For covered reversible internal work, the same worker may implement,
-self-review, integrate, merge, deploy, verify, and fix forward. The worker must
-still inspect the exact candidate, confirm relevant checks, assess actual runtime,
-data, privacy, compatibility, and recovery consequences, and record a concrete
-integration decision.
+Use the owning atomic claim/responsibility mechanism when shared effects require one
+current owner. Labels, GitHub assignment, callsigns, branches, or prose do not
+substitute for claim/authority generation.
 
-Independent review is a tool for reducing real uncertainty, not a ritual gate. Use
-it when another perspective is likely to catch a material issue, when the operator
-requests it, or when the action crosses into Tier 3. Do not manufacture
-independence by changing callsigns, chats, or labels.
+Do not maintain a separate portfolio queue or repeatedly ask a manager process to
+select ordinary work.
 
-## Operating model
+## Own the useful cycle
 
-Workers are ephemeral generalists. Do not assign permanent employee-style
-identities. A worker may take a temporary stance such as implementation, review,
-exploration, synthesis, coordination, rollout, or recovery.
-
-Keep these dimensions separate:
-
-- **Pod:** durable collective context and lineage.
-- **Wave:** a meaningful longer-running outcome.
-- **Lane:** a coherent thread within a wave.
-- **Action:** one executable step.
-- **Run:** one bounded worker attempt.
-- **Callsign:** session-local attribution.
-
-Names, roles, callsigns, mantles, GitHub assignment, and shared account identity do
-not create durable identity or exclusive ownership.
-
-## Callsign and provenance
-
-Every interactive worker uses one short, pronounceable, visually distinctive
-callsign for the live chat.
-
-- Do not invent the name when authenticated `enrol_worker` is available. Call it
-  with the project and stable per-chat `workerSessionId`, omit `callsign`, and use
-  exactly the returned callsign and sigil.
-- A broad `callsignCategory` is optional. It selects a vocabulary bucket only and
-  implies no role, personality, competence, model quality, or authority.
-- An explicit callsign is an override for deliberate operator direction, not the
-  normal path.
-- If hosted enrolment is unavailable, use the GitHub callsign registry/manual
-  fallback and preserve exact run/session provenance.
-- Do not silently inherit a prior worker's callsign.
-- Describe continuation from a handoff explicitly.
-- Use the callsign in substantive comments, reviews, PR descriptions, and handoffs.
-- Do not treat a callsign or sigil as authority, competence, continuity, or a
-  private-memory claim.
-
-Routine sign-off:
+For covered internal work, continue through the steps the outcome actually needs:
 
 ```text
-— <Callsign> · <pod context, if useful>
-  Intention: <current meaningful outcome, if useful>
+investigate
+-> implement/repair
+-> deterministic verification
+-> review when it adds a discriminator
+-> integrate
+-> deploy/configure when needed
+-> real use/readback
+-> fix-forward/recover
+-> complete or leave one exact continuation
 ```
 
-Add exact revisions, run IDs, and work references when they improve review or
-continuation.
+A proposal, issue, plan, branch, or pull request is an intermediate artifact when the
+actual outcome can be completed under current authority.
 
-## Work selection
+Blocked time may move to another non-conflicting executable item. Avoid waiting-only
+reviewer/manager lanes.
 
-Use this value order when choosing among eligible lanes. It guides prioritisation
-while allowing new bounded work to start at any point:
+## Internal dogfood authority
 
-1. the primary current-wave outcome and demonstrated blockers;
-2. integration, deployment, verification, and real dogfood use of reviewed work;
-3. review, self-review, or acceptance that closes existing work;
-4. repair or recovery of active or dormant work;
-5. adjacent product work that advances the wave;
-6. exploration when higher-value executable work is unavailable.
+The hosted installation is an internal dogfood environment even when repository text
+calls it `production`.
 
-Avoid replacing an active coherent implementation without reconciling it. Parallel
-workers should take non-overlapping implementation, review, deployment, evidence,
-reproduction, or product lanes.
+`STENSIBLY.md` grants standing authority for reviewed, reversible internal dogfood
+work within its exact boundary, including ordinary merges, deployments, bounded test
+data, covered migrations with recovery, OAuth journeys, project-scoped writes, and
+operational verification.
 
-## Autonomous portfolio execution
+Direct operator instruction to proceed/fix/merge/deploy/test/finish a covered action
+counts as the integration decision for that action.
 
-Maintain one primary outcome and up to three useful secondary lanes. Use fewer when
-the primary work is broad or uncertain.
+Fresh operator approval is still required for effects outside the standing grant,
+including material spend, secret exposure, access widening beyond the operator and
+participating agents, external publication/contact, destructive non-test data
+changes, irreversible migration without recovery, and legal/financial effects.
 
-For each lane, keep enough durable context to identify:
+## Review policy
 
-- outcome and exact target;
-- current owner and overlap fence;
-- relevant branch, revision, deployment, or evidence;
-- selected risk tier;
-- next executable action;
-- block, wake, recovery, integration, or completion condition.
+Use deterministic checks for defect classes they can decide. Use human/agent semantic
+review when product meaning, authority, privacy, security, durability, broad novel
+behavior, or another consequence leaves a real discriminator.
 
-At completion, block, CI result, review verdict, merge, deployment, or dogfood
-finding, choose the next highest-value eligible action without waiting for central
-assignment.
+Self-review is sufficient for covered reversible work when deterministic evidence and
+scope leave no meaningful independent question. Independent/specialist review is
+useful when another perspective can materially reduce residual uncertainty or the
+operator requests it.
 
-## Dormant-work recovery
+Never manufacture independence by changing callsign/chat/label.
 
-Quiet attention does not erase provenance, responsibility, branches, findings, or
-committed effects. It does loosen presumed exclusivity.
+Bind review to its complete declared input set: candidate/source revision, relevant
+base/merge context, policy/contract version, and external evidence where applicable.
+A moved `main` alone does not invalidate an unchanged review when the reviewed input
+set remains equivalent; a material reviewed-input change does.
 
-A recovery worker may continue, repair, partition, review, integrate, or create a
-bounded competing candidate after reconciling:
+Before integration, refresh the exact facts that can change the decision: candidate
+head, merge/base relation, required checks, unresolved substantive findings, current
+authority, and provider state where relevant.
 
-- the prior holder and exact last evidence;
-- current state and overlap;
-- the continuation relationship;
-- newly accepted responsibility;
-- what remains with the prior worker;
-- the clearing or integration condition.
+## External effects and ambiguous outcomes
 
-Do not impersonate the prior worker. Keep the work recoverable by another fresh
-chat.
+External/provider writes use the owning command/receipt/reconciliation boundary:
 
-## Risk-tiered review, merge, and deployment
+- bind exact target, inputs, authority generation, and idempotency identity before
+  dispatch;
+- exact replay returns the stored outcome;
+- changed replay conflicts;
+- read back canonical provider state when the action contract requires it;
+- if the remote outcome is ambiguous, reconcile before retry;
+- provider acknowledgement alone never proves complete settlement.
 
-Choose review depth from real consequences, scope, reversibility, and uncertainty.
-Deployment alone does not determine the tier. `STENSIBLY.md` controls when
-operator-directed self-review is sufficient.
+Do not add a second status ledger around provider objects. Query current mutable
+provider state when it can change the next action.
 
-### Tier 0 — mechanical
+Some provider/platform effects require an explicit trigger even after a repository
+mutation. For example, the Bun lock writer must explicitly dispatch exact-SHA CI
+because a workflow-token-authored branch push does not start another workflow. Keep
+such triggers fenced to the exact resulting revision and prevent recursion through
+the event contract.
 
-Documentation, formatting, generated refreshes, narrow test fixtures, and
-repository-only configuration with no runtime or public-contract effect.
+## Continuation and wakeups
 
-- Independent review is optional.
-- The author or integration worker may merge after exact diff inspection and
-  relevant checks.
+Future work should resume from durable conditions rather than worker polling.
 
-### Tier 1 — bounded internal dogfood change
+- #46 owns deterministic wake-condition semantics;
+- #327 owns explicit cross-item material-event → wake-intent compilation;
+- runner liveness belongs to the execution-attempt owner;
+- effect ambiguity belongs to receipt/reconciliation owners.
 
-Small reversible runtime, UI, protocol, deployment, or configuration changes with
-narrow impact and strong verification.
+A wake makes work eligible. It grants zero responsibility or authority by itself.
 
-- Self-review is normally sufficient when the change is covered by the standing
-  policy or current operator direction.
-- Seek independent review only when it materially reduces uncertainty.
-- Merge and deploy promptly once green, mergeable, unchanged, and free of concrete
-  blockers.
+Use scheduled polling only for explicit time conditions or sources without a reliable
+event path. Avoid general “check whether the worker progressed” loops.
 
-### Tier 2 — elevated internal change
+## Context and recovery
 
-Authentication, authorisation, privacy, schema, durable state, retention,
-cross-project isolation, broad compatibility, dependencies, or uncertain recovery.
+When a worker disappears, recover from canonical work/provider records plus the
+smallest purpose-bound continuation/context packet available. #311 owns the intended
+compiler boundary.
 
-- Require deliberate exact-candidate review, relevant checks, an explicit
-  integration decision, and a credible recovery or fix-forward path.
-- Current direct operator direction satisfies the integration-decision requirement
-  for covered internal dogfood work, and the implementing or integration worker may
-  perform the review.
-- Add an independent or specialist reviewer only when actual residual uncertainty,
-  consequences, or operator direction justify it.
-- After the decision, merge, deploy, and dogfood under `STENSIBLY.md` rather than
-  waiting for ceremonial approval.
+Historical accepted GitHub context under #492 proves what a run consumed. Refetch
+current mutable GitHub/provider state before a consequential action.
 
-### Tier 3 — external or materially consequential effect
+A handoff should preserve only facts another worker cannot cheaply reconstruct, such
+as:
 
-Use Tier 3 for effects outside the internal dogfood grant: material spend, access
-widening beyond the operator and participating agents, external publication or
-contact, secret exposure, destructive non-test data operations, irreversible
-migration without recovery, or comparable legal/financial consequences.
+- non-obvious result/decision and why;
+- exact irreversible or ambiguous effect identity;
+- exact candidate/artifact when it is the work product;
+- unresolved blocker/uncertainty;
+- one next action or clearing condition.
 
-Tier 3 requires fresh operator approval unless a narrower standing grant covers the
-exact effect.
+Current CI, PR, deployment, roster, and queue state should normally be fetched from
+their owners instead of copied into handoff prose.
 
-Before merging a change, re-fetch the exact head, current base, CI, mergeability,
-reviews, and unresolved threads when present. Re-inspect concrete blockers rather
-than treating stale comments as automatic gates. Any acceptance or self-review
-expires when the head moves materially.
+## Merge, deployment, and recovery
 
-## Deployment and failure handling
+Merge/deploy when the current candidate is accepted under the relevant policy and the
+required exact evidence is green. Deployment is a normal completion step when needed
+to verify or deliver the outcome.
 
-Deployment is a normal completion step when it is needed to verify or deliver the
-outcome.
-
-- Use protected workflows and environments.
-- Keep secret values out of logs, comments, chat, and retained artifacts.
-- Verify the actual hosted surfaces after deployment.
-- Prefer fix-forward when the state is healthy enough to repair safely.
-- Roll back after a demonstrated regression, failed verification, or unsafe partial
-  state when rollback is the better recovery.
-- Do not disable a working feature merely because disablement appears more
-  conservative.
-
-A rollback plan is evidence of recoverability, not a reason to avoid shipping.
+- use protected workflows/environments for privileged effects;
+- keep secrets out of logs/comments/chat/artifacts;
+- verify the actual hosted surface after deployment;
+- prefer fix-forward when the state is safe to repair;
+- roll back after demonstrated regression/unsafe partial state when rollback is the
+  better recovery.
 
 ## Communication
 
-Write updates like a teammate:
+Write updates for decisions and continuation, not for occupancy reporting.
 
-- lead with what changed, what was learned, and what happens next;
-- report live deployments and product behaviour when relevant;
-- do not append blanket inventories of actions not taken;
-- do not repeat unchanged cautions;
-- mention a boundary only when it changes the next action;
-- distinguish a concrete blocker from an imperfection that can safely ship and be
-  repaired.
+Lead with what changed, what was learned, and the next useful action. Include an exact
+revision/receipt/source reference when it changes review or recovery. Omit repeated
+status that a reader can fetch directly.
 
-Meaningful issue or pull-request descriptions, claims, handoffs, campaign updates,
-and durable decisions should preserve five concepts near the top:
+For a meaningful PR/issue/decision, these concepts are usually enough:
 
 ```text
-In simple words / purpose: <what this means without recent context, the larger outcome, and why now>
-Change: <behavior, contract, result, or decision>
-Proof: <evidence available or required>
-Next: <next action, integration state, or clearing condition>
+Purpose: why this exists
+Change: what behavior/contract changed
+Proof: evidence that decides acceptance
+Next: remaining action or clearing condition
 ```
 
-Use separate `In simple words` and `Purpose` headings only when each adds distinct
-information. Literal headings may be combined or omitted; the concepts must remain
-legible. Add `Decision`, `Fence`, `Risk`, or `Recovery` only when they materially
-improve review or continuation. Routine progress updates remain one or two sentences.
-Keep the first screen current and link to exact evidence below. Use
-`docs/documentation-system.md` for audiences, zoom levels, campaign records, and
-durable decision guidance.
+Add risk/recovery/authority detail only when it changes the decision.
 
-## Completion and handoff
+## Improve by deleting process
 
-A run is incomplete until another worker can continue without the transcript.
-Record the subset that materially helps:
+Use Git for instruction history. A meaningful policy change should cite the concrete
+failure/product decision, make the smallest useful diff, and state a deletion/revert
+condition when the procedure is temporary.
 
-- plain-language result, purpose, and relationship to the larger outcome;
-- completed outcome and changed files;
-- exact issue, PR, branch, revision, deployment, and artifacts;
-- tests, checks, dogfood results, and failures;
-- review and integration state;
-- live configuration or effect state when relevant;
-- residual risks and accepted imperfections;
-- non-obvious decision rationale or a link to its durable record;
-- exact next action and recovery condition.
+Move repeated rules into software when possible:
 
-Do not pad handoffs with unrelated non-actions. Merge, deploy, complete, release,
-block, or hand off work explicitly.
+```text
+observed failure
+-> temporary instruction/default
+-> repeated evidence
+-> typed state / deterministic check / generated projection / safer API
+-> delete or shrink the prose procedure
+```
 
-## Improvement
-
-After meaningful work, record reusable findings and improve the protocol when it
-causes stalls, repeated operator correction, duplicate work, unnecessary approval,
-or missed ambition.
-
-Use `docs/operating-instruction-lifecycle.md` for durable protocol changes and
-`docs/documentation-system.md` for documentation goals, record types, and decision
-history, but do not let process prevent an operator-directed correction from becoming
-effective. Preserve superseded wording in Git history rather than keeping it active
-in the current instructions.
+Do not create periodic retrospectives, surveys, worker scorecards, copied status
+reports, or permanent manager roles by default. Open the smallest owning defect when
+a concrete failure shows a missing invariant.
