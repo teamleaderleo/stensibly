@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { runnerProfileProvenanceV1 } from "../src/runner-profile-provenance";
 import {
   appendEvent,
   assertLeaseSeconds,
@@ -39,6 +40,7 @@ export const queue = mutation({
     expectedGeneration: v.number(),
     runnerType: v.string(),
     runnerProfile: v.string(),
+    runnerProfileVersion: v.optional(v.union(v.string(), v.null())),
     leaseSeconds: v.optional(v.number()),
     maxAttempts: v.optional(v.number()),
     retryBackoffSeconds: v.optional(v.number()),
@@ -65,6 +67,7 @@ export const runPolicy = mutation({
     supervisor: actorValidator,
     runnerType: v.string(),
     runnerProfile: v.string(),
+    runnerProfileVersion: v.optional(v.union(v.string(), v.null())),
     project: v.optional(v.string()),
     limit: v.optional(v.number()),
     leaseSeconds: v.optional(v.number()),
@@ -138,6 +141,7 @@ export const runPolicy = mutation({
           expectedGeneration: continuation.generation,
           runnerType: input.runnerType,
           runnerProfile: input.runnerProfile,
+          runnerProfileVersion: input.runnerProfileVersion,
           leaseSeconds: input.leaseSeconds,
           maxAttempts: input.maxAttempts,
           retryBackoffSeconds: input.retryBackoffSeconds,
@@ -198,7 +202,7 @@ async function queueOne(
         return legacySupervisorReplay(replay.result);
       }
       requireSameRequest(replay.request, request, "continuation supervisor request");
-      return replay.result;
+      return normalizeSupervisorReplay(replay.result);
     }
   }
 
@@ -355,6 +359,9 @@ async function queueOne(
   const runnerProfile = continuation.action.kind === "dispatch_item"
     ? continuation.action.runnerProfile ?? input.runnerProfile
     : input.runnerProfile;
+  const runnerProfileVersion = runnerProfile === input.runnerProfile
+    ? input.runnerProfileVersion
+    : null;
   const queuedRunId = await ctx.db.insert("queuedRuns", {
     workspaceId: workspace._id,
     projectId: target.projectId,
@@ -364,6 +371,7 @@ async function queueOne(
     actorExternalId: supervisor.externalId,
     runnerType: input.runnerType,
     runnerProfile,
+    ...(runnerProfileVersion === null ? {} : { runnerProfileVersion }),
     status: "queued",
     generation: 1,
     leaseGeneration: 1,
@@ -420,6 +428,7 @@ async function queueOne(
       leaseExpiresAt: new Date(leaseExpiresAt).toISOString(),
       runnerType: input.runnerType,
       runnerProfile,
+      runnerProfileVersion,
       source: "supervisor_dispatch",
       readyPromiseWakeups: 0,
       envelopeSchemaVersion: input.executionEnvelope.schemaVersion,
@@ -607,14 +616,18 @@ async function touchCurrentItem(ctx: any, itemId: any, now: number) {
 
 function normalizeQueueInput(input: any) {
   const id = safeText(input.id, "Continuation ID", 240);
-  const runnerProfile = safeText(input.runnerProfile, "Runner profile", 160);
+  const provenance = runnerProfileProvenanceV1(
+    input.runnerProfile,
+    input.runnerProfileVersion,
+  );
   return {
     id,
     actor: normalizeActor(input.actor, "Approval actor"),
     supervisor: normalizeSupervisor(input.supervisor),
     expectedGeneration: positiveInteger(input.expectedGeneration, "Expected generation"),
     runnerType: safeText(input.runnerType, "Runner type", 80),
-    runnerProfile,
+    runnerProfile: provenance.profileId,
+    runnerProfileVersion: provenance.profileVersion,
     leaseSeconds: assertLeaseSeconds(input.leaseSeconds ?? 900),
     maxAttempts: positiveInteger(input.maxAttempts ?? 3, "Maximum attempts", 20),
     retryBackoffSeconds: positiveInteger(
@@ -625,7 +638,7 @@ function normalizeQueueInput(input: any) {
     ),
     executionEnvelope: normalizeExecutionEnvelope(
       input.executionEnvelope,
-      executionObjective(id, runnerProfile),
+      executionObjective(id, provenance.profileId),
     ),
     idempotencyKey: safeOptionalText(input.idempotencyKey, "Idempotency key", 240),
     policyMode: input.policyMode ?? "human",
@@ -633,10 +646,15 @@ function normalizeQueueInput(input: any) {
 }
 
 function normalizePolicyInput(input: any) {
+  const provenance = runnerProfileProvenanceV1(
+    input.runnerProfile,
+    input.runnerProfileVersion,
+  );
   return {
     supervisor: normalizeSupervisor(input.supervisor),
     runnerType: safeText(input.runnerType, "Runner type", 80),
-    runnerProfile: safeText(input.runnerProfile, "Runner profile", 160),
+    runnerProfile: provenance.profileId,
+    runnerProfileVersion: provenance.profileVersion,
     project: input.project ? assertSlug(input.project, "Project") : undefined,
     limit: positiveInteger(input.limit ?? 20, "Policy limit", 100),
     leaseSeconds: assertLeaseSeconds(input.leaseSeconds ?? 900),
@@ -658,6 +676,9 @@ function queueRequest(input: ReturnType<typeof normalizeQueueInput>) {
     expectedGeneration: input.expectedGeneration,
     runnerType: input.runnerType,
     runnerProfile: input.runnerProfile,
+    ...(input.runnerProfileVersion === null
+      ? {}
+      : { runnerProfileVersion: input.runnerProfileVersion }),
     leaseSeconds: input.leaseSeconds,
     maxAttempts: input.maxAttempts,
     retryBackoffSeconds: input.retryBackoffSeconds,
@@ -671,7 +692,7 @@ function legacyQueueRequest(input: ReturnType<typeof normalizeQueueInput>) {
   return legacy;
 }
 
-function legacySupervisorReplay(value: unknown) {
+function normalizeSupervisorReplay(value: unknown) {
   const result = record(value);
   const run = record(result?.run);
   if (!result || !run) {
@@ -681,6 +702,17 @@ function legacySupervisorReplay(value: unknown) {
     ...result,
     run: {
       ...run,
+      ...(run.runnerProfileVersion === undefined ? { runnerProfileVersion: null } : {}),
+    },
+  };
+}
+
+function legacySupervisorReplay(value: unknown) {
+  const result = normalizeSupervisorReplay(value);
+  return {
+    ...result,
+    run: {
+      ...record(result.run),
       executionEnvelope: null,
       executionRecords: [],
     },
@@ -771,6 +803,7 @@ function publicQueuedRun(
     actorId: run.actorExternalId,
     runnerType: run.runnerType,
     runnerProfile: run.runnerProfile,
+    runnerProfileVersion: run.runnerProfileVersion ?? null,
     externalRunId: run.externalRunId ?? null,
     status: run.status,
     generation: run.generation,
