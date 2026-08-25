@@ -99,6 +99,7 @@ describe("hosted GitHub repository observation read route", () => {
         return Object.freeze([Object.freeze({
           id: "observation-row-read-route",
           observation: observation(),
+          mailProjectionState: null,
           createdAt: "2026-08-01T00:00:02.000Z",
         })]);
       },
@@ -125,7 +126,14 @@ describe("hosted GitHub repository observation read route", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(calls).toEqual([{ repository, limit: 10 }]);
-    expect(await response.json()).toMatchObject({
+    const body = await response.json();
+    expect(Object.keys(body.observations[0]).sort()).toEqual([
+      "createdAt",
+      "id",
+      "observation",
+    ]);
+    expect("mailProjectionState" in body.observations[0]).toBe(false);
+    expect(body).toMatchObject({
       observations: [{
         id: "observation-row-read-route",
         createdAt: "2026-08-01T00:00:02.000Z",

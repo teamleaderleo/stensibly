@@ -42,23 +42,54 @@ function event(id = "20001") {
   };
 }
 
+type ProjectionState = "pending" | "baseline_suppressed" | "projected" | null;
+
 class Ledger implements GitHubPublicObservationLedger {
-  readonly rows: Array<{ id: string; observation: AnyGitHubRepositoryObservation; createdAt: string }> = [];
-  duplicate = false;
+  readonly rows: Array<{
+    id: string;
+    observation: AnyGitHubRepositoryObservation;
+    mailProjectionState: ProjectionState;
+    createdAt: string;
+  }> = [];
   ingestions = 0;
+  marks = 0;
 
   async ingestRepositoryObservation(input: {
     observation: AnyGitHubRepositoryObservation;
-  }) {
+  }, projection?: { readonly mailProjectionState?: "pending" | "baseline_suppressed" }) {
     this.ingestions += 1;
-    if (!this.duplicate) {
-      this.rows.unshift({
-        id: `row-${this.ingestions}`,
-        observation: input.observation,
-        createdAt: polledAt,
-      });
+    const existing = this.rows.find((candidate) =>
+      candidate.observation.observationId === input.observation.observationId
+      && candidate.observation.deliveryId === input.observation.deliveryId
+      && candidate.observation.payloadDigest === input.observation.payloadDigest);
+    if (existing) {
+      // Mirrors the Convex duplicate path: the exact durable row - with its
+      // live projection state - is returned to the observer.
+      return {
+        duplicate: true,
+        mailProjectionState: existing.mailProjectionState,
+      };
     }
-    return { duplicate: this.duplicate };
+    const mailProjectionState = projection?.mailProjectionState ?? null;
+    this.rows.unshift({
+      id: `row-${this.ingestions}`,
+      observation: input.observation,
+      mailProjectionState,
+      createdAt: polledAt,
+    });
+    return { duplicate: false, mailProjectionState };
+  }
+
+  async markRepositoryObservationMailProjected(input: {
+    observationId: string;
+  }) {
+    this.marks += 1;
+    const row = this.rows.find((candidate) =>
+      candidate.observation.observationId === input.observationId);
+    if (!row || row.mailProjectionState !== "pending") {
+      throw new Error("GITHUB_REPOSITORY_MAIL_PROJECTION_CONFLICT");
+    }
+    row.mailProjectionState = "projected";
   }
 
   async listRecentRepositoryObservations() {
@@ -84,14 +115,59 @@ function eventsPage(options: {
   };
 }
 
+function eventObservation(): AnyGitHubRepositoryObservation {
+  const mapped = mapPublicGitHubRepositoryEvent(event(), repository, polledAt);
+  if (!mapped) throw new Error("fixture event must map");
+  return mapped.observation;
+}
+
+function secondEvent() {
+  const first = event("20002");
+  return {
+    ...first,
+    payload: {
+      ...first.payload,
+      number: 782,
+      pull_request: { ...first.payload.pull_request, number: 782 },
+    },
+  };
+}
+
+// A durable row can sit outside the bounded recent window while remaining
+// exactly reachable through duplicate ingest; this ledger reproduces that
+// split so suppression cannot silently depend on the snapshot.
+class OutOfWindowLedger extends Ledger {
+  override async listRecentRepositoryObservations() {
+    return [];
+  }
+}
+
+class AuthoritativeLegacyLedger extends Ledger {
+  override async ingestRepositoryObservation(
+    _input: { observation: AnyGitHubRepositoryObservation },
+    _projection?: {
+      readonly mailProjectionState?: "pending" | "baseline_suppressed";
+    },
+  ) {
+    this.ingestions += 1;
+    return { duplicate: true, mailProjectionState: null };
+  }
+}
+
 describe("public GitHub repository observer", () => {
   test("persists a supported event before publishing and acknowledging", async () => {
     const order: string[] = [];
     const ledger = new Ledger();
     const originalIngest = ledger.ingestRepositoryObservation.bind(ledger);
-    ledger.ingestRepositoryObservation = async (input) => {
+    ledger.ingestRepositoryObservation = async (input, projection) => {
       order.push("persist");
-      return await originalIngest(input);
+      return await originalIngest(input, projection);
+    };
+    const originalMark = ledger.markRepositoryObservationMailProjected
+      .bind(ledger);
+    ledger.markRepositoryObservationMailProjected = async (input) => {
+      order.push("mark");
+      return await originalMark(input);
     };
     const observer = new GitHubPublicRepositoryObserver({
       repository,
@@ -102,9 +178,6 @@ describe("public GitHub repository observer", () => {
       },
       ledger,
       mail: {
-        async hasThread() {
-          return false;
-        },
         async consume() {
           order.push("mail");
           return {
@@ -128,7 +201,9 @@ describe("public GitHub repository observer", () => {
       replayedEvents: 0,
       published: 1,
     });
-    expect(order).toEqual(["persist", "mail", "ack"]);
+    expect(order).toEqual(["persist", "mail", "mark", "ack"]);
+    expect(ledger.rows[0]?.mailProjectionState).toBe("projected");
+    expect(ledger.marks).toBe(1);
   });
 
   test("baselines the first public page durably without historical mail", async () => {
@@ -147,9 +222,6 @@ describe("public GitHub repository observer", () => {
       },
       ledger,
       mail: {
-        async hasThread() {
-          return false;
-        },
         async consume() {
           mailCalls += 1;
           throw new Error("bootstrap must stay quiet");
@@ -163,20 +235,165 @@ describe("public GitHub repository observer", () => {
     });
     expect(mailCalls).toBe(0);
     expect(acknowledged).toBe(true);
+    expect(ledger.rows[0]?.mailProjectionState).toBe("baseline_suppressed");
+    expect(ledger.marks).toBe(0);
   });
 
-  test("replays idempotent mail for a duplicate only when its canonical thread exists", async () => {
+  test("a crash after the durable pending insert retries once and reaches projected", async () => {
     const ledger = new Ledger();
-    ledger.duplicate = true;
+    let consumeCalls = 0;
+    let publishes = 0;
+    const observer = new GitHubPublicRepositoryObserver({
+      repository,
+      client: { async poll() { return eventsPage(); } },
+      ledger,
+      mail: {
+        async consume() {
+          consumeCalls += 1;
+          if (consumeCalls === 1) {
+            throw new Error("simulated crash after durable ingest");
+          }
+          publishes += 1;
+          return {
+            status: "published" as const,
+            sourceObservationId: "github-public:pull_request:public-event:20001",
+            materialFingerprint: `sha256:${"5".repeat(64)}`,
+            threadId: "mail_thread_781",
+            handle: "STN-REVIEW:Q781",
+            result: {},
+          };
+        },
+      },
+    });
+
+    await expect(observer.reconcile()).rejects.toThrow(
+      "simulated crash after durable ingest",
+    );
+    expect(ledger.rows[0]?.mailProjectionState).toBe("pending");
+
+    expect(await observer.reconcile()).toMatchObject({
+      replayedEvents: 1,
+      replaySuppressed: 0,
+      published: 1,
+    });
+    expect(consumeCalls).toBe(2);
+    expect(publishes).toBe(1);
+    expect(ledger.rows[0]?.mailProjectionState).toBe("projected");
+  });
+
+  test("a crash after the delivery effect still converges without a second mail", async () => {
+    const ledger = new Ledger();
+    let consumeCalls = 0;
+    let sends = 0;
+    let threadReserved = false;
+    let markCalls = 0;
+    const observer = new GitHubPublicRepositoryObserver({
+      repository,
+      client: { async poll() { return eventsPage(); } },
+      ledger,
+      mail: {
+        async consume() {
+          consumeCalls += 1;
+          if (threadReserved) {
+            // Idempotent replay through the existing delivery-effect identity.
+            return {
+              status: "published" as const,
+              sourceObservationId: "github-public:pull_request:public-event:20001",
+              materialFingerprint: `sha256:${"5".repeat(64)}`,
+              threadId: "mail_thread_781",
+              handle: "STN-REVIEW:Q781",
+              result: { duplicate: true },
+            };
+          }
+          threadReserved = true;
+          sends += 1;
+          return {
+            status: "published" as const,
+            sourceObservationId: "github-public:pull_request:public-event:20001",
+            materialFingerprint: `sha256:${"5".repeat(64)}`,
+            threadId: "mail_thread_781",
+            handle: "STN-REVIEW:Q781",
+            result: { duplicate: false },
+          };
+        },
+      },
+    });
+    const originalMark = ledger.markRepositoryObservationMailProjected
+      .bind(ledger);
+    ledger.markRepositoryObservationMailProjected = async (input) => {
+      markCalls += 1;
+      if (markCalls === 1) {
+        throw new Error("simulated crash after send before transition");
+      }
+      return await originalMark(input);
+    };
+
+    await expect(observer.reconcile()).rejects.toThrow(
+      "simulated crash after send before transition",
+    );
+    expect(sends).toBe(1);
+    expect(ledger.rows[0]?.mailProjectionState).toBe("pending");
+
+    expect(await observer.reconcile()).toMatchObject({
+      replayedEvents: 1,
+      replaySuppressed: 0,
+      published: 1,
+    });
+    expect(consumeCalls).toBe(2);
+    expect(sends).toBe(1);
+    expect(ledger.rows[0]?.mailProjectionState).toBe("projected");
+
+    expect(await observer.reconcile()).toMatchObject({
+      replayedEvents: 1,
+      replaySuppressed: 1,
+      published: 0,
+    });
+    expect(consumeCalls).toBe(2);
+  });
+
+  test("duplicates of an already projected row are suppressed without consuming", async () => {
+    const ledger = new Ledger();
+    ledger.rows.unshift({
+      id: "row-projected",
+      observation: eventObservation(),
+      mailProjectionState: "projected",
+      createdAt: polledAt,
+    });
     let mailCalls = 0;
     const observer = new GitHubPublicRepositoryObserver({
       repository,
       client: { async poll() { return eventsPage(); } },
       ledger,
       mail: {
-        async hasThread() {
-          return true;
+        async consume() {
+          mailCalls += 1;
+          throw new Error("projected rows must not re-enter the mail engine");
         },
+      },
+    });
+    expect(await observer.reconcile()).toMatchObject({
+      replayedEvents: 1,
+      replaySuppressed: 1,
+      published: 0,
+    });
+    expect(mailCalls).toBe(0);
+    expect(ledger.marks).toBe(0);
+  });
+
+  test("replays idempotent mail for a pending duplicate and then projects it", async () => {
+    const ledger = new Ledger();
+    ledger.rows.unshift({
+      id: "row-pending",
+      observation: eventObservation(),
+      mailProjectionState: "pending",
+      createdAt: polledAt,
+    });
+    let mailCalls = 0;
+    const observer = new GitHubPublicRepositoryObserver({
+      repository,
+      client: { async poll() { return eventsPage(); } },
+      ledger,
+      mail: {
         async consume() {
           mailCalls += 1;
           return {
@@ -187,29 +404,208 @@ describe("public GitHub repository observer", () => {
         },
       },
     });
-    expect(await observer.reconcile()).toMatchObject({ replayedEvents: 1, quiet: 1 });
+    expect(await observer.reconcile()).toMatchObject({
+      replayedEvents: 1,
+      quiet: 1,
+      replaySuppressed: 0,
+    });
     expect(mailCalls).toBe(1);
+    expect(ledger.rows[0]?.mailProjectionState).toBe("projected");
+  });
 
-    const quietLedger = new Ledger();
-    quietLedger.duplicate = true;
-    const quietObserver = new GitHubPublicRepositoryObserver({
+  test("an out-of-window pending duplicate retries from the exact ingest result", async () => {
+    // Regression for the #1648 crash window: the durable row crashed as
+    // `pending` before any mail projection and sits outside the bounded
+    // recent snapshot, so only the ingest response knows it is retryable.
+    const ledger = new OutOfWindowLedger();
+    ledger.rows.unshift({
+      id: "row-crashed",
+      observation: eventObservation(),
+      mailProjectionState: "pending",
+      createdAt: polledAt,
+    });
+    let consumeCalls = 0;
+    let publishes = 0;
+    const observer = new GitHubPublicRepositoryObserver({
       repository,
       client: { async poll() { return eventsPage(); } },
-      ledger: quietLedger,
+      ledger,
       mail: {
-        async hasThread() {
-          return false;
-        },
         async consume() {
-          throw new Error("replay without a thread must stay quiet");
+          consumeCalls += 1;
+          publishes += 1;
+          return {
+            status: "published" as const,
+            sourceObservationId: "github-public:pull_request:public-event:20001",
+            materialFingerprint: `sha256:${"7".repeat(64)}`,
+            threadId: "mail_thread_781",
+            handle: "STN-REVIEW:Q781",
+            result: {},
+          };
         },
       },
     });
-    expect(await quietObserver.reconcile()).toMatchObject({
+
+    expect(await observer.reconcile()).toMatchObject({
       replayedEvents: 1,
-      replayWithoutThread: 1,
+      replaySuppressed: 0,
+      published: 1,
+    });
+    expect(consumeCalls).toBe(1);
+    expect(publishes).toBe(1);
+    expect(ledger.marks).toBe(1);
+    expect(ledger.rows[0]?.mailProjectionState).toBe("projected");
+
+    // A later duplicate of the now-projected row is suppressed from the exact
+    // durable state without another mail attempt.
+    expect(await observer.reconcile()).toMatchObject({
+      replayedEvents: 1,
+      replaySuppressed: 1,
       published: 0,
     });
+    expect(consumeCalls).toBe(1);
+    expect(ledger.marks).toBe(1);
+  });
+
+  test("bootstrap consumes an exact pending duplicate and baselines only new history", async () => {
+    const ledger = new OutOfWindowLedger();
+    ledger.rows.unshift({
+      id: "row-crashed",
+      observation: eventObservation(),
+      mailProjectionState: "pending",
+      createdAt: polledAt,
+    });
+    let consumeCalls = 0;
+    const observer = new GitHubPublicRepositoryObserver({
+      repository,
+      client: {
+        async poll() {
+          return eventsPage({
+            initial: true,
+            values: [secondEvent(), event()],
+          });
+        },
+      },
+      ledger,
+      mail: {
+        async consume() {
+          consumeCalls += 1;
+          return {
+            status: "published" as const,
+            sourceObservationId: "github-public:pull_request:public-event:20001",
+            materialFingerprint: `sha256:${"8".repeat(64)}`,
+            threadId: "mail_thread_781",
+            handle: "STN-REVIEW:Q781",
+            result: {},
+          };
+        },
+      },
+    });
+
+    expect(await observer.reconcile()).toMatchObject({
+      supportedEvents: 2,
+      persistedEvents: 1,
+      baselinedEvents: 1,
+      replayedEvents: 1,
+      replaySuppressed: 0,
+      published: 1,
+    });
+    expect(consumeCalls).toBe(1);
+    expect(ledger.marks).toBe(1);
+    expect(
+      ledger.rows.find((row) =>
+        row.observation.observationId.endsWith("20001")
+      )?.mailProjectionState,
+    ).toBe("projected");
+    expect(
+      ledger.rows.find((row) =>
+        row.observation.observationId.endsWith("20002")
+      )?.mailProjectionState,
+    ).toBe("baseline_suppressed");
+  });
+
+  test("keeps baseline-suppressed and legacy duplicates permanently quiet", async () => {
+    const suppressedLedger = new Ledger();
+    suppressedLedger.rows.unshift({
+      id: "row-baseline",
+      observation: eventObservation(),
+      mailProjectionState: "baseline_suppressed",
+      createdAt: polledAt,
+    });
+    let suppressedMailCalls = 0;
+    const suppressedObserver = new GitHubPublicRepositoryObserver({
+      repository,
+      client: { async poll() { return eventsPage(); } },
+      ledger: suppressedLedger,
+      mail: {
+        async consume() {
+          suppressedMailCalls += 1;
+          throw new Error("baseline-supplied history must stay quiet");
+        },
+      },
+    });
+    expect(await suppressedObserver.reconcile()).toMatchObject({
+      replayedEvents: 1,
+      replaySuppressed: 1,
+      published: 0,
+    });
+    expect(suppressedMailCalls).toBe(0);
+
+    const legacyLedger = new Ledger();
+    legacyLedger.rows.unshift({
+      id: "row-legacy",
+      observation: eventObservation(),
+      mailProjectionState: null,
+      createdAt: polledAt,
+    });
+    let legacyMailCalls = 0;
+    const legacyObserver = new GitHubPublicRepositoryObserver({
+      repository,
+      client: { async poll() { return eventsPage(); } },
+      ledger: legacyLedger,
+      mail: {
+        async consume() {
+          legacyMailCalls += 1;
+          throw new Error("legacy rows must stay quiet");
+        },
+      },
+    });
+    expect(await legacyObserver.reconcile()).toMatchObject({
+      replayedEvents: 1,
+      replaySuppressed: 1,
+      published: 0,
+    });
+    expect(legacyMailCalls).toBe(0);
+  });
+
+  test("authoritative legacy null cannot be revived by a pending recent snapshot", async () => {
+    const ledger = new AuthoritativeLegacyLedger();
+    ledger.rows.unshift({
+      id: "stale-window-row",
+      observation: eventObservation(),
+      mailProjectionState: "pending",
+      createdAt: polledAt,
+    });
+    let mailCalls = 0;
+    const observer = new GitHubPublicRepositoryObserver({
+      repository,
+      client: { async poll() { return eventsPage(); } },
+      ledger,
+      mail: {
+        async consume() {
+          mailCalls += 1;
+          throw new Error("authoritative legacy rows must stay quiet");
+        },
+      },
+    });
+
+    expect(await observer.reconcile()).toMatchObject({
+      replayedEvents: 1,
+      replaySuppressed: 1,
+      published: 0,
+    });
+    expect(mailCalls).toBe(0);
+    expect(ledger.marks).toBe(0);
   });
 
   test("suppresses a public event already represented by signed webhook semantics", async () => {
@@ -225,16 +621,18 @@ describe("public GitHub repository observer", () => {
     } as unknown as AnyGitHubRepositoryObservation;
     expect(crossSourceGitHubObservationFingerprint(webhookLike))
       .toBe(crossSourceGitHubObservationFingerprint(mapped.observation));
-    ledger.rows.push({ id: "webhook-row", observation: webhookLike, createdAt: polledAt });
+    ledger.rows.push({
+      id: "webhook-row",
+      observation: webhookLike,
+      mailProjectionState: null,
+      createdAt: polledAt,
+    });
     let mailCalls = 0;
     const observer = new GitHubPublicRepositoryObserver({
       repository,
       client: { async poll() { return eventsPage(); } },
       ledger,
       mail: {
-        async hasThread() {
-          return false;
-        },
         async consume() {
           mailCalls += 1;
           throw new Error("mail should be suppressed");
@@ -267,9 +665,6 @@ describe("public GitHub repository observer", () => {
       },
       ledger,
       mail: {
-        async hasThread() {
-          return false;
-        },
         async consume() {
           mailCalls += 1;
           throw new Error("mail should stay quiet");

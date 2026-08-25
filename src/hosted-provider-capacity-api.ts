@@ -282,10 +282,18 @@ export function registerHostedProviderCapacityRoutes(
         }, 400);
       }
       try {
-        const observations = await normalized.repositoryObservationReader!
+        const rows = await normalized.repositoryObservationReader!
           .listRecentRepositoryObservations(repository, limit);
         context.header("Cache-Control", "no-store");
-        return context.json({ observations });
+        // Mail projection state stays inside the ledger/observer seam; the
+        // authenticated read route only exposes admitted observation content.
+        return context.json({
+          observations: rows.map((row) => ({
+            id: row.id,
+            observation: row.observation,
+            createdAt: row.createdAt,
+          })),
+        });
       } catch (error) {
         return repositoryObservationReadError(context, error);
       }

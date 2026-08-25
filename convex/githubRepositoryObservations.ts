@@ -14,6 +14,11 @@ import { serviceArgs } from "./lib/validators";
 const maximumRecent = 100;
 const repositoryPattern = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/u;
 
+export const mailProjectionStates = v.union(
+  v.literal("pending"),
+  v.literal("baseline_suppressed"),
+);
+
 export const ingest = mutation({
   args: {
     ...serviceArgs,
@@ -22,6 +27,7 @@ export const ingest = mutation({
     payloadDigest: v.string(),
     receivedAt: v.number(),
     observationJson: v.string(),
+    mailProjectionState: v.optional(mailProjectionStates),
   },
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
@@ -76,6 +82,9 @@ export const ingest = mutation({
       sourceTimeSource: input.sourceTimeSource,
       receivedAt: input.receivedAt,
       observationJson: input.observationJson,
+      ...(args.mailProjectionState === undefined
+        ? {}
+        : { mailProjectionState: args.mailProjectionState }),
       createdAt: Date.now(),
     });
     const inserted = await ctx.db.get("githubRepositoryObservations", id);
@@ -83,6 +92,40 @@ export const ingest = mutation({
       throw new Error("GITHUB_REPOSITORY_OBSERVATION_MISSING");
     }
     return { duplicate: false, record: publicRecord(inserted) };
+  },
+});
+
+export const markMailProjected = mutation({
+  args: {
+    ...serviceArgs,
+    observationId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    requireServiceSecret(args.serviceSecret);
+    const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
+    if (!workspace) {
+      throw new Error("GITHUB_REPOSITORY_OBSERVATION_WORKSPACE_NOT_FOUND");
+    }
+    const row = await ctx.db
+      .query("githubRepositoryObservations")
+      .withIndex("by_workspace_observation", (q) =>
+        q.eq("workspaceId", workspace._id).eq("observationId", args.observationId),
+      )
+      .unique();
+    if (!row) {
+      throw new Error("GITHUB_REPOSITORY_MAIL_PROJECTION_MISSING");
+    }
+    if (row.mailProjectionState !== "pending") {
+      throw new Error("GITHUB_REPOSITORY_MAIL_PROJECTION_CONFLICT");
+    }
+    await ctx.db.patch("githubRepositoryObservations", row._id, {
+      mailProjectionState: "projected",
+    });
+    const updated = await ctx.db.get("githubRepositoryObservations", row._id);
+    if (!updated) {
+      throw new Error("GITHUB_REPOSITORY_OBSERVATION_MISSING");
+    }
+    return { record: publicRecord(updated) };
   },
 });
 
@@ -127,6 +170,8 @@ function isExactReplay(
   },
   input: AdmittedAnyGitHubRepositoryObservation,
 ): boolean {
+  // The mail projection state is deliberately excluded from replay identity:
+  // it records downstream projection eligibility, not observation content.
   return row.observationId === input.observationId
     && row.payloadDigest === input.payloadDigest
     && row.semanticFingerprint === input.semanticFingerprint
@@ -158,6 +203,7 @@ function publicRecord(row: {
   sourceTimeSource: string;
   receivedAt: number;
   observationJson: string;
+  mailProjectionState?: "pending" | "baseline_suppressed" | "projected";
   createdAt: number;
 }) {
   return {
@@ -176,6 +222,7 @@ function publicRecord(row: {
     sourceTimeSource: row.sourceTimeSource,
     receivedAt: row.receivedAt,
     observationJson: row.observationJson,
+    mailProjectionState: row.mailProjectionState ?? null,
     createdAt: row.createdAt,
   };
 }

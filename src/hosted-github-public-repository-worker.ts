@@ -90,7 +90,7 @@ export async function runHostedGitHubPublicRepositoryReconciliation(
       persistedEvents: result.persistedEvents,
       baselinedEvents: result.baselinedEvents,
       replayedEvents: result.replayedEvents,
-      replayWithoutThread: result.replayWithoutThread,
+      replaySuppressed: result.replaySuppressed,
       crossSourceSuppressed: result.crossSourceSuppressed,
       published: result.published,
       quiet: result.quiet,
