@@ -14,6 +14,8 @@
     "callsigns": "bun src/callsigns.ts",
     "callsign-catalog": "bun src/callsign-catalog-cli.ts",
     "sol-luna:worker": "bun scripts/sol-luna-worker.ts",
+    "codex-roots:probe": "bun scripts/codex-root-harness-probe.ts",
+    "codex-roots:memory-probe": "bun scripts/codex-root-memory-probe.ts",
     "verify:hosted": "bun src/verify-hosted-cli.ts",
     "verify:oauth": "bun src/verify-oauth-hosted.ts",
     "verify:oauth-abuse": "bun src/verify-oauth-abuse.ts",
