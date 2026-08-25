@@ -131,8 +131,8 @@ async function claimedFixture(project: string) {
   });
   const dispatched = dispatchNextWork(store, {
     actor: supervisor,
-    runnerType: "generic-mcp",
-    runnerProfile: "codex-default",
+    runnerType: "vercel-ai-sdk",
+    runnerProfile: "default",
     itemId: item.id,
     leaseSeconds: 900,
     idempotencyKey: `dispatch-${project}`,
@@ -140,8 +140,8 @@ async function claimedFixture(project: string) {
   if (!dispatched) throw new Error("Resume inspection fixture did not dispatch");
   const run = await ledger.claimRunnerWork({
     actor: runner,
-    runnerType: "generic-mcp",
-    runnerProfile: "codex-default",
+    runnerType: "vercel-ai-sdk",
+    runnerProfile: "default",
     project,
     runId: dispatched.run.id,
     leaseSeconds: 900,

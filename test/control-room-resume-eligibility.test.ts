@@ -351,8 +351,9 @@ async function interruptedFixture(
   });
   const dispatched = dispatchNextWork(store, {
     actor: supervisor,
-    runnerType: "generic-mcp",
-    runnerProfile: "codex-default",
+    runnerType: adapterId,
+    runnerProfile: profileId,
+    runnerProfileVersion: profileVersion,
     itemId: item.id,
     leaseSeconds: 900,
     idempotencyKey: `dispatch-${project}`,
@@ -360,8 +361,9 @@ async function interruptedFixture(
   if (!dispatched) throw new Error("Resume eligibility fixture did not dispatch");
   const run = await ledger.claimRunnerWork({
     actor: runner,
-    runnerType: "generic-mcp",
-    runnerProfile: "codex-default",
+    runnerType: adapterId,
+    runnerProfile: profileId,
+    runnerProfileVersion: profileVersion,
     project,
     runId: dispatched.run.id,
     leaseSeconds: 900,
@@ -386,7 +388,7 @@ async function interruptedFixture(
     actor: runner,
     adapterId,
     profileId,
-    profileVersion: null,
+    profileVersion,
     requestFingerprint: `sha256:${"1".repeat(64)}`,
     commandId: "prior-resume-episode",
     commandFingerprint: `sha256:${"2".repeat(64)}`,

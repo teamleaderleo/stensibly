@@ -34,16 +34,16 @@ describe("runner adapter command reservation", () => {
       });
       dispatchNextWork(store, {
         actor: supervisor,
-        runnerType: "generic-mcp",
-        runnerProfile: "codex-default",
+        runnerType: "vercel-ai-sdk",
+        runnerProfile: "default",
         itemId: item.id,
         leaseSeconds: 900,
         idempotencyKey: "dispatch-command-reservation",
       });
       const run = await ledger.claimRunnerWork({
         actor: runner,
-        runnerType: "generic-mcp",
-        runnerProfile: "codex-default",
+        runnerType: "vercel-ai-sdk",
+        runnerProfile: "default",
         project: "orchestration",
         leaseSeconds: 900,
         idempotencyKey: "claim-command-reservation",
