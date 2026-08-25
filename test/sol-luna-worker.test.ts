@@ -3,7 +3,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { runSolLunaCli, runSolLunaWorker, type SolLunaWorkerOptions } from "../scripts/sol-luna-worker.js";
+import { codexEnvironment, runSolLunaCli, runSolLunaWorker, type SolLunaWorkerOptions } from "../scripts/sol-luna-worker.js";
 
 const temporaryRoots: string[] = [];
 const REPOSITORY_PATH = "teamleaderleo/stensibly";
@@ -18,11 +18,25 @@ interface FakeCodexSetup {
   readonly argsPath: string;
   readonly stdinPath: string;
   readonly resultPath: string;
+  readonly envPath: string;
+  readonly workerCreatedPath: string;
   readonly options: SolLunaWorkerOptions;
 }
 
 async function shell(command: string, args: readonly string[], cwd: string): Promise<void> {
-  const child = Bun.spawn([command, ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([command, "-c", "core.fsmonitor=false", ...args], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      HOME: process.env.HOME ?? cwd,
+      TMPDIR: cwd,
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_SYSTEM: "/dev/null",
+      GIT_CONFIG_NOSYSTEM: "1",
+    },
+  });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
@@ -37,6 +51,9 @@ function fakeCodexSource(input: {
   readonly resultPath: string;
   readonly authMode: "chatgpt" | "api-key";
   readonly workerExit: number;
+  readonly workerMode: "normal" | "timeout";
+  readonly envPath: string;
+  readonly workerCreatedPath: string;
 }): string {
   return `#!/usr/bin/env bun
 const argsPath = ${JSON.stringify(input.argsPath)};
@@ -44,6 +61,10 @@ const stdinPath = ${JSON.stringify(input.stdinPath)};
 const resultPath = ${JSON.stringify(input.resultPath)};
 const authMode = ${JSON.stringify(input.authMode)};
 const workerExit = ${input.workerExit};
+const workerMode = ${JSON.stringify(input.workerMode)};
+const envPath = ${JSON.stringify(input.envPath)};
+const workerCreatedPath = ${JSON.stringify(input.workerCreatedPath)};
+await Bun.write(envPath, JSON.stringify(process.env));
 
 if (process.argv[2] === "login" && process.argv[3] === "status") {
   if (authMode === "chatgpt") console.log("Logged in using ChatGPT");
@@ -51,6 +72,8 @@ if (process.argv[2] === "login" && process.argv[3] === "status") {
   process.exit(authMode === "chatgpt" ? 0 : 1);
 }
 
+if (workerMode === "timeout") await new Promise((resolve) => setTimeout(resolve, 500));
+if (workerCreatedPath) await Bun.write(workerCreatedPath, "worker-created\\n");
 if (argsPath) await Bun.write(argsPath, JSON.stringify(process.argv.slice(2)));
 if (stdinPath) await Bun.write(stdinPath, await Bun.stdin.text());
 if (resultPath) {
@@ -72,6 +95,7 @@ process.exit(workerExit);
 async function setupFakeCodex(overrides: Partial<{
   readonly authMode: "chatgpt" | "api-key";
   readonly workerExit: number;
+  readonly workerMode: "normal" | "timeout";
 }> = {}): Promise<FakeCodexSetup> {
   const root = await mkdtemp(join(tmpdir(), "sol-luna-worker-test-"));
   temporaryRoots.push(root);
@@ -83,6 +107,8 @@ async function setupFakeCodex(overrides: Partial<{
   const argsPath = join(root, "args.json");
   const stdinPath = join(root, "stdin.bin");
   const resultPath = join(root, "result.json");
+  const envPath = join(root, "codex-env.json");
+  const workerCreatedPath = join(repository, "worker-created.txt");
   await mkdirRepository(repository);
   await writeFile(brief, "Canonical brief bytes\nline two\n");
   await writeFile(schema, JSON.stringify({ type: "object" }));
@@ -115,6 +141,9 @@ async function setupFakeCodex(overrides: Partial<{
     resultPath,
     authMode: overrides.authMode ?? "chatgpt",
     workerExit: overrides.workerExit ?? 0,
+    workerMode: overrides.workerMode ?? "normal",
+    envPath,
+    workerCreatedPath,
   }));
   await chmod(executable, 0o755);
   return {
@@ -123,6 +152,8 @@ async function setupFakeCodex(overrides: Partial<{
     argsPath,
     stdinPath,
     resultPath,
+    envPath,
+    workerCreatedPath,
     options: {
       repository,
       brief,
@@ -168,6 +199,25 @@ function cliArgs(options: SolLunaWorkerOptions): string[] {
   ];
 }
 
+test("codexEnvironment only forwards the explicit non-secret allowlist", () => {
+  const environment = codexEnvironment({
+    PATH: "/safe/bin",
+    HOME: "/safe/home",
+    CODEX_HOME: "/safe/codex",
+    OPENAI_API_KEY: "secret",
+    OPENAI_ADMIN_KEY: "secret",
+    EVIL_PARENT_VARIABLE: "must-not-pass",
+  });
+
+  expect(environment).toEqual({
+    PATH: "/safe/bin",
+    HOME: "/safe/home",
+    CODEX_HOME: "/safe/codex",
+  });
+  expect(environment.OPENAI_API_KEY).toBeUndefined();
+  expect(environment.EVIL_PARENT_VARIABLE).toBeUndefined();
+});
+
 describe("disposable Sol/Luna Codex worker harness", () => {
   test("refuses API-key authentication before launching a worker and writes a receipt", async () => {
     const setup = await setupFakeCodex({ authMode: "api-key" });
@@ -205,10 +255,15 @@ describe("disposable Sol/Luna Codex worker harness", () => {
     expect(receipt.git).toMatchObject({
       headBefore: expect.stringMatching(/^[0-9a-f]{40}$/u),
       headAfter: expect.stringMatching(/^[0-9a-f]{40}$/u),
-      changedPaths: [],
+      baselineDirtyPaths: [],
+      workerCreatedDirtyPaths: ["worker-created.txt"],
+      commitsMade: [],
+      committedPaths: [],
+      finalDirtyPaths: ["worker-created.txt"],
+      changedPaths: ["worker-created.txt"],
     });
     expect(Buffer.from(stdin).toString("utf8")).toBe(await Bun.file(setup.options.brief).text());
-    expect(args).toEqual([
+    expect(args.slice(0, 7)).toEqual([
       "exec",
       "--ephemeral",
       "--json",
@@ -216,15 +271,20 @@ describe("disposable Sol/Luna Codex worker harness", () => {
       "gpt-5.6-luna",
       "--config",
       'model_reasoning_effort="max"',
-      "--sandbox",
-      "workspace-write",
-      "--cd",
-      setup.options.repository,
-      "--output-schema",
-      setup.options.outputSchema,
-      "-",
     ]);
+    expect(args).toContain('shell_environment_policy.inherit="none"');
+    expect(args).toContain(`shell_environment_policy.set.HOME="${setup.options.outputDir}/.worker-home"`);
+    expect(args).toContain(`shell_environment_policy.set.TMPDIR="${setup.options.outputDir}/.worker-tmp"`);
+    expect(args.some((value) => value.startsWith("shell_environment_policy.set.PATH="))).toBe(true);
+    expect(args).toContain("--sandbox");
+    expect(args).toContain(setup.options.repository);
+    expect(args).toContain(setup.options.outputSchema);
+    expect((receipt.child as Record<string, unknown>).timedOut).toBe(false);
+    expect((receipt.child as Record<string, unknown>).wallClockTimeoutMs).toBe(1800000);
+    expect(receipt.integration).toMatchObject({ workerSuccessIsProvisional: true, status: "not_adjudicated", gatesAdjudicated: false });
     expect(workerResult).toMatchObject({ worker_ref: "thread-fake-01" });
+    const codexEnvironmentCapture = await readJson(setup.envPath);
+    expect(codexEnvironmentCapture.OPENAI_API_KEY).toBeUndefined();
     expect((receipt.artifacts as Record<string, unknown>).stdoutJsonl).toMatchObject({
       path: join(setup.options.outputDir, "stdout.jsonl"),
       bytes: stdout.byteLength,
@@ -250,6 +310,39 @@ describe("disposable Sol/Luna Codex worker harness", () => {
     expect(args[args.indexOf("--output-schema") + 1]).toBe(setup.options.outputSchema);
     expect(await Bun.file(marker).exists()).toBe(false);
     expect((await Bun.file(setup.stdinPath).text())).toContain("Canonical brief bytes");
+  });
+
+  test("probes Git metadata only when explicitly requested", async () => {
+    const setup = await setupFakeCodex();
+    const result = await runSolLunaWorker({ ...setup.options, gitMetadataAuthority: "write" });
+    expect(result.exitCode).toBe(0);
+    expect(result.receipt.preflight.gitMetadataAuthority).toMatchObject({
+      declared: "write",
+      status: "passed",
+      headPath: expect.stringContaining("HEAD"),
+      indexPath: expect.stringContaining("index"),
+    });
+    expect(result.receipt.git.headBefore).toBe(result.receipt.git.headAfter);
+  });
+
+  test("does not attribute baseline dirtiness to the worker", async () => {
+    const setup = await setupFakeCodex();
+    await writeFile(join(setup.options.repository, "preexisting.txt"), "before\n");
+    const result = await runSolLunaWorker(setup.options);
+    expect(result.receipt.git.baselineDirtyPaths).toEqual(["preexisting.txt"]);
+    expect(result.receipt.git.workerCreatedDirtyPaths).toEqual(["worker-created.txt"]);
+    expect(result.receipt.git.finalDirtyPaths).toEqual(["preexisting.txt", "worker-created.txt"]);
+    expect(result.receipt.git.changedPaths).toEqual(["worker-created.txt"]);
+  });
+
+  test("kills an over-budget worker and records a timeout outcome", async () => {
+    const setup = await setupFakeCodex({ workerMode: "timeout" });
+    const result = await runSolLunaWorker({ ...setup.options, timeoutMs: 25, reasoningEffort: "high" });
+    expect(result.exitCode).toBe(124);
+    expect(result.receipt.success).toBe(false);
+    expect(result.receipt.harnessError).toBeNull();
+    expect(result.receipt.child).toMatchObject({ timedOut: true, outcome: "worker_timed_out", wallClockTimeoutMs: 25 });
+    expect(result.receipt.child.commandShape.reasoningEffort).toBe("high");
   });
 
   test("retains evidence and marks a non-zero child as worker failure", async () => {
