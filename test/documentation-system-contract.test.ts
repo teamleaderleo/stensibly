@@ -6,20 +6,19 @@ async function read(path: string): Promise<string> {
   return Bun.file(new URL(path, root)).text();
 }
 
-describe("documentation brief experiment", () => {
-  test("identifies the active overlay without relabelling the base protocol", async () => {
+describe("documentation policy contracts", () => {
+  test("keeps the agent entrypoint tied to canonical policy and executable owners", async () => {
     const agents = await read("AGENTS.md");
+    const nomenclature = await read("docs/agent-nomenclature.md");
 
-    expect(agents).toContain(
-      "**Operating protocol:** `stensibly-agent-ops/0.5.0`",
-    );
-    expect(agents).toContain(
-      "**Active instruction experiment:** `documentation-brief/1` — #666",
-    );
-    expect(agents).toContain("In simple words / purpose:");
-    expect(agents).toContain(
-      "Use separate `In simple words` and `Purpose` headings only when each adds distinct",
-    );
+    expect(agents).toContain("**Standing project policy:** `STENSIBLY.md`");
+    expect(agents).not.toContain("**Operating protocol:**");
+    expect(agents).not.toContain("**Active instruction experiment:**");
+    expect(agents).toContain("Move repeated rules into software when possible:");
+    expect(agents).toContain("External/provider writes use the owning command/receipt/reconciliation boundary");
+    expect(agents).toContain("Future work should resume from durable conditions rather than worker polling");
+    expect(nomenclature).toContain("project\nwork/responsibility\nrun\nworker/actor");
+    expect(nomenclature).toContain("Add more identity only after a concrete failure demonstrates a missing distinction");
   });
 
   test("keeps the pull-request opening compact and optional sections removable", async () => {
