@@ -351,9 +351,11 @@ test("required command preflight uses only the effective worker PATH", async () 
   const executable = join(root, "bounded-tool");
   await writeFile(executable, "#!/bin/sh\nexit 0\n");
   await chmod(executable, 0o755);
+  await mkdir(join(root, "directory-tool"));
 
-  expect(await preflightRequiredCommands(["bounded-tool", "missing-tool"], root)).toEqual([
+  expect(await preflightRequiredCommands(["bounded-tool", "directory-tool", "missing-tool"], root)).toEqual([
     { command: "bounded-tool", status: "available", resolvedPath: executable },
+    { command: "directory-tool", status: "missing", resolvedPath: null },
     { command: "missing-tool", status: "missing", resolvedPath: null },
   ]);
 });

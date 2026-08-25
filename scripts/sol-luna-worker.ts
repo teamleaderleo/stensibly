@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, open, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -394,6 +394,7 @@ export async function preflightRequiredCommands(
     for (const directory of directories) {
       const candidate = join(directory, command);
       try {
+        if (!(await stat(candidate)).isFile()) continue;
         await access(candidate, fsConstants.X_OK);
         return { command, status: "available" as const, resolvedPath: candidate };
       } catch {
