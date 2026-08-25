@@ -6,6 +6,7 @@ const relationKinds = new Set(["dependency", "stacked_candidate", "file_overlap"
 const eventKinds = new Set(["admitted", "reserved", "started", "receipt", "candidate", "verification", "wait", "stalled", "decision", "reconciliation", "superseded", "terminal"]);
 const viewIds = new Set(["list", "lanes", "attention", "polar", "timeline"]);
 const consequenceClasses = new Set(["tier_0", "tier_1", "tier_2", "tier_3"]);
+const briefPresentations = new Set(["explicit", "terse"]);
 const attemptKeys = ["artifact", "attentionReasons", "authorityGeneration", "blockedFanOut", "callsign", "candidate", "consequence", "evidence", "id", "itemId", "nextAction", "outcomeId", "phase", "polar", "profile", "queuePosition", "receiptAgeMinutes", "receiptLabel", "runId", "state"];
 const polarKeys = ["angleDegrees", "blockedFanOut", "freshnessRing", "lane", "receiptAgeMinutes"];
 const relationKeys = ["evidence", "from", "id", "kind", "label", "to"];
@@ -13,6 +14,7 @@ const attentionKeys = ["attemptId", "evidence", "id", "label", "nextAction", "re
 const eventKeys = ["at", "attemptId", "evidence", "id", "kind", "label"];
 const viewKeys = ["id", "label", "purpose"];
 const taskKeys = ["id", "prompt", "start", "success"];
+const briefKeys = ["attemptId", "compilerVersion", "digest", "grantsAuthority", "id", "policySnapshotSha256", "presentation", "sourceRefs"];
 
 const sourceFixture = {
   observedAt: "2026-07-31T10:30:00.000Z",
@@ -106,6 +108,29 @@ const sourceFixture = {
     { id: "polar", label: "Attention polar", purpose: "Scan receipt age and fan-out across durable outcome lanes." },
     { id: "timeline", label: "Evidence scrubber", purpose: "Scrub accepted transitions and open their evidence records." },
   ],
+  briefs: [
+    {
+      id: "brief-sable-overlay", attemptId: "sable-overlay", presentation: "explicit",
+      compilerVersion: "0.1.0", digest: "sha256:3f2c9ab55f7c1f0e6d4a8b2e9c1d7f03a5b8e6c2d94f10a7b3c5d8e2f1a04b6c",
+      policySnapshotSha256: "sha256:9be14a2cd67f35b80a4e1c93d75f60281ba7ce34d2980af5631ec74bd05a3f12",
+      grantsAuthority: false,
+      sourceRefs: ["STENSIBLY.md@sha256:9be14a2c", "item:issue-510@generation-4", "run:run-sable-44@g1-l2", "recipe:implement_bounded_issue@r1"],
+    },
+    {
+      id: "brief-ember-runtime", attemptId: "ember-runtime", presentation: "terse",
+      compilerVersion: "0.1.0", digest: "sha256:77ad40c1e25b98f30de61c47a90b52fe83dc16a95e07b4d28c3fa691be50d217",
+      policySnapshotSha256: "sha256:9be14a2cd67f35b80a4e1c93d75f60281ba7ce34d2980af5631ec74bd05a3f12",
+      grantsAuthority: false,
+      sourceRefs: ["STENSIBLY.md@sha256:9be14a2c", "item:pr-659@generation-7", "run:run-ember-22@g5-l3"],
+    },
+    {
+      id: "brief-violet-review", attemptId: "violet-review", presentation: "explicit",
+      compilerVersion: "0.1.0", digest: "sha256:b1d02e58ca497ff63a05db82ce7414d99fb08ac7325ef1064ed9c07385aa4e88",
+      policySnapshotSha256: "sha256:9be14a2cd67f35b80a4e1c93d75f60281ba7ce34d2980af5631ec74bd05a3f12",
+      grantsAuthority: false,
+      sourceRefs: ["STENSIBLY.md@sha256:9be14a2c", "item:pr-664@generation-2", "run:run-violet-13@g2-l1"],
+    },
+  ],
 };
 
 const sourceTasks = [
@@ -125,7 +150,7 @@ export const workPulseFixture = parseWorkPulseFixture(sourceFixture);
 export const workPulseFixtureTasks = parseWorkPulseFixtureTasks(sourceTasks);
 
 export function parseWorkPulseFixture(value) {
-  exactRecord(value, ["attempts", "attention", "events", "observedAt", "relations", "views"], "Work Pulse fixture");
+  exactRecord(value, ["attempts", "attention", "briefs", "events", "observedAt", "relations", "views"], "Work Pulse fixture");
   const observedAt = timestamp(value.observedAt, "Fixture observation");
   const attempts = parseList(value.attempts, 1, 40, parseAttempt);
   const attemptIds = new Set(attempts.map((attempt) => attempt.id));
@@ -135,11 +160,14 @@ export function parseWorkPulseFixture(value) {
   const attention = parseList(value.attention, 0, 100, parseAttention);
   const events = parseList(value.events, 0, 200, parseEvent);
   const views = parseList(value.views, 5, 5, parseView);
+  const briefs = parseList(value.briefs, 0, 40, parseBrief);
   unique(relations.map((relation) => relation.id), "relation ids");
   unique(relations.map((relation) => `${relation.kind}:${relation.from}:${relation.to}`), "semantic relations");
   unique(attention.map((entry) => entry.id), "attention ids");
   unique(events.map((event) => event.id), "event ids");
   unique(views.map((view) => view.id), "view ids");
+  unique(briefs.map((brief) => brief.id), "brief ids");
+  unique(briefs.map((brief) => brief.attemptId), "brief attempt bindings");
   for (const relation of relations) {
     if (!attemptIds.has(relation.from) || !attemptIds.has(relation.to)) throw new TypeError(`Unknown attempt in relation ${relation.id}`);
     if (relation.from === relation.to) throw new TypeError(`Self relation: ${relation.id}`);
@@ -155,7 +183,10 @@ export function parseWorkPulseFixture(value) {
     if (!attemptIds.has(event.attemptId)) throw new TypeError(`Unknown attempt in event ${event.id}`);
     if (event.at > observedAt) throw new TypeError(`Event ${event.id} follows fixture observation`);
   }
-  return deepFreeze({ observedAt, attempts, relations, attention, events, views });
+  for (const brief of briefs) {
+    if (!attemptIds.has(brief.attemptId)) throw new TypeError(`Unknown attempt in brief ${brief.id}`);
+  }
+  return deepFreeze({ observedAt, attempts, relations, attention, events, views, briefs });
 }
 
 export function parseWorkPulseFixtureTasks(value) {
@@ -190,6 +221,15 @@ function parseRelation(value, index) { exactRecord(value, relationKeys, `Work Pu
 function parseAttention(value, index) { exactRecord(value, attentionKeys, `Work Pulse attention ${index + 1}`); return Object.freeze({ id: slug(value.id, "Attention id"), attemptId: slug(value.attemptId, "Attention attempt"), reason: closed(value.reason, attentionReasons, "Attention reason"), label: text(value.label, 240, "Attention label"), nextAction: text(value.nextAction, 320, "Attention next action"), evidence: identifier(value.evidence, "Attention evidence") }); }
 function parseEvent(value, index) { exactRecord(value, eventKeys, `Work Pulse event ${index + 1}`); return Object.freeze({ id: slug(value.id, "Event id"), attemptId: slug(value.attemptId, "Event attempt"), at: timestamp(value.at, "Event time"), kind: closed(value.kind, eventKinds, "Event kind"), label: text(value.label, 240, "Event label"), evidence: identifier(value.evidence, "Event evidence") }); }
 function parseView(value, index) { exactRecord(value, viewKeys, `Work Pulse view ${index + 1}`); return Object.freeze({ id: closed(value.id, viewIds, "View id"), label: text(value.label, 80, "View label"), purpose: text(value.purpose, 240, "View purpose") }); }
+function parseBrief(value, index) {
+  exactRecord(value, briefKeys, `Work Pulse brief ${index + 1}`);
+  if (value.grantsAuthority !== false) throw new TypeError("Brief grantsAuthority must be false");
+  return Object.freeze({
+    id: slug(value.id, "Brief id"), attemptId: slug(value.attemptId, "Brief attempt"), presentation: closed(value.presentation, briefPresentations, "Brief presentation"),
+    compilerVersion: identifier(value.compilerVersion, "Brief compiler version"), digest: digest(value.digest, "Brief digest"), policySnapshotSha256: digest(value.policySnapshotSha256, "Brief policy snapshot"),
+    grantsAuthority: false, sourceRefs: parseList(value.sourceRefs, 1, 8, (entry, entryIndex) => identifier(entry, `Brief source reference ${entryIndex + 1}`)),
+  });
+}
 function parseList(value, minimum, maximum, parser) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length < minimum || value.length > maximum) {
     throw new TypeError(`Expected ${minimum}-${maximum} entries`);
@@ -218,6 +258,7 @@ function unique(values, label) { if (new Set(values).size !== values.length) thr
 function integer(value, minimum, maximum, label) { if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new TypeError(`${label} is invalid`); return value; }
 function nullableRevision(value, label) { if (value === null) return null; if (typeof value !== "string" || !/^[a-f0-9]{7,40}$/u.test(value)) throw new TypeError(`${label} is invalid`); return value; }
 function nullableIdentifier(value, label) { return value === null ? null : identifier(value, label); }
+function digest(value, label) { const normalized = text(value, 71, label); if (!/^sha256:[a-f0-9]{64}$/u.test(normalized)) throw new TypeError(`${label} is invalid`); return normalized; }
 function identifier(value, label) { const normalized = text(value, 200, label); if (!/^[A-Za-z0-9][A-Za-z0-9._:/@#-]*$/u.test(normalized)) throw new TypeError(`${label} is invalid`); return normalized; }
 function slug(value, label) { const normalized = text(value, 100, label); if (!idPattern.test(normalized)) throw new TypeError(`${label} must be a lowercase slug`); return normalized; }
 function timestamp(value, label) { const normalized = text(value, 30, label); if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(normalized) || new Date(normalized).toISOString() !== normalized) throw new TypeError(`${label} must be canonical UTC`); return normalized; }
