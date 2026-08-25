@@ -14,6 +14,17 @@ export type McpCapabilityRiskClass = typeof mcpCapabilityRiskClasses[number];
 export const mcpCapabilityExposures = ["core", "searchable", "hidden"] as const;
 export type McpCapabilityExposure = typeof mcpCapabilityExposures[number];
 
+export const mcpCapabilityInteractionDomains = ["closed", "open"] as const;
+export type McpCapabilityInteractionDomain =
+  typeof mcpCapabilityInteractionDomains[number];
+
+export const mcpCapabilityEffectKinds = [
+  "none",
+  "additive",
+  "destructive",
+] as const;
+export type McpCapabilityEffectKind = typeof mcpCapabilityEffectKinds[number];
+
 export const mcpCapabilityApprovalPolicies = ["none", "tool_managed"] as const;
 export type McpCapabilityApprovalPolicy =
   typeof mcpCapabilityApprovalPolicies[number];
@@ -43,6 +54,8 @@ export interface McpCapabilityPolicyInput {
   scope: McpCapabilityScope;
   riskClass: McpCapabilityRiskClass;
   defaultExposure: McpCapabilityExposure;
+  interactionDomain: McpCapabilityInteractionDomain;
+  effectKind: McpCapabilityEffectKind;
   projectResolution: McpCapabilityProjectResolution;
   approvalPolicy: McpCapabilityApprovalPolicy;
   receiptPolicy: McpCapabilityReceiptPolicy;
@@ -52,9 +65,15 @@ export interface McpCapabilityPolicyInput {
 export interface McpCapabilityPolicy extends McpCapabilityPolicyInput {}
 
 export interface McpCapabilityPolicyRegistry {
-  version: 1;
+  version: 2;
   policies: readonly McpCapabilityPolicy[];
   fingerprint: string;
+}
+
+export interface McpCapabilitySubmissionAnnotations {
+  readonly readOnlyHint: boolean;
+  readonly destructiveHint: boolean;
+  readonly openWorldHint: boolean;
 }
 
 const toolNamePattern = /^[a-z][a-z0-9_]{0,127}$/;
@@ -94,15 +113,15 @@ const policyInputs: readonly McpCapabilityPolicyInput[] = [
   readPolicy("get_github_repository_write_receipt", directProject, "hidden"),
   readPolicy("get_operation_receipt", directProject, "hidden"),
   readPolicy("get_operation_workflow", directProject, "hidden"),
-  readPolicy("github_call_tool", directProject, "searchable"),
-  readPolicy("github_branch_tidy", directProject, "searchable"),
-  readPolicy("github_ci_diagnose", directProject),
-  readPolicy("github_get_issue", directProject),
+  readPolicy("github_call_tool", directProject, "searchable", "open"),
+  readPolicy("github_branch_tidy", directProject, "searchable", "open"),
+  readPolicy("github_ci_diagnose", directProject, "core", "open"),
+  readPolicy("github_get_issue", directProject, "core", "open"),
   readPolicy("github_get_tool", noProject, "searchable"),
-  readPolicy("github_list_issues", directProject, "searchable"),
+  readPolicy("github_list_issues", directProject, "searchable", "open"),
   readPolicy("github_list_toolsets", noProject, "searchable"),
-  readPolicy("github_repo_health", directProject),
-  readPolicy("github_search_issues", directProject),
+  readPolicy("github_repo_health", directProject, "core", "open"),
+  readPolicy("github_search_issues", directProject, "core", "open"),
   readPolicy("github_search_tools", noProject, "searchable"),
   readPolicy("survey_workspace", optionalProject, "hidden"),
   readPolicy("list_work", optionalProject),
@@ -112,63 +131,150 @@ const policyInputs: readonly McpCapabilityPolicyInput[] = [
   readPolicy("get_continuation", continuationId, "searchable"),
   readPolicy("list_continuations", sourceItemId, "searchable"),
   readPolicy("list_continuation_inbox", optionalProject, "searchable"),
-  writePolicy("attach_artifact", itemId, "bounded_write", "none", "hidden"),
-  writePolicy("create_item", directProject),
-  writePolicy("claim_work", itemId),
-  writePolicy("renew_claim", itemId, "bounded_write", "none", "hidden"),
-  writePolicy("handoff_work", itemId),
-  writePolicy("block_work", itemId),
-  writePolicy("unblock_work", itemId),
-  writePolicy("release_work", itemId, "bounded_write", "none", "hidden"),
-  writePolicy("record_event", itemId, "bounded_write", "none", "hidden"),
+  writePolicy("attach_artifact", itemId, "additive", "bounded_write", "none", "hidden"),
+  writePolicy("create_item", directProject, "additive"),
+  writePolicy("claim_work", itemId, "destructive"),
+  writePolicy("renew_claim", itemId, "destructive", "bounded_write", "none", "hidden"),
+  writePolicy("handoff_work", itemId, "destructive"),
+  writePolicy("block_work", itemId, "destructive"),
+  writePolicy("unblock_work", itemId, "destructive"),
+  writePolicy("release_work", itemId, "destructive", "bounded_write", "none", "hidden"),
+  writePolicy("record_event", itemId, "additive", "bounded_write", "none", "hidden"),
   writePolicy(
     "remember_project_repository_setup",
     directProject,
+    "destructive",
     "bounded_write",
     "none",
     "searchable",
   ),
-  writePolicy("complete_work", itemId),
-  writePolicy("github_add_issue_comment", directProject),
-  writePolicy("github_create_branch", directProject, "bounded_write", "none", "hidden"),
-  writePolicy("github_create_file", directProject, "bounded_write", "none", "hidden"),
-  writePolicy("github_create_issue", directProject),
+  writePolicy("complete_work", itemId, "destructive"),
   writePolicy(
-    "github_create_pull_request",
+    "github_add_issue_comment",
     directProject,
+    "additive",
+    "bounded_write",
+    "none",
+    "core",
+    "open",
+  ),
+  writePolicy(
+    "github_create_branch",
+    directProject,
+    "additive",
     "bounded_write",
     "none",
     "hidden",
+    "open",
   ),
-  writePolicy("github_publish_change", directProject, "bounded_write"),
+  writePolicy(
+    "github_create_file",
+    directProject,
+    "additive",
+    "bounded_write",
+    "none",
+    "hidden",
+    "open",
+  ),
+  writePolicy(
+    "github_create_issue",
+    directProject,
+    "additive",
+    "bounded_write",
+    "none",
+    "core",
+    "open",
+  ),
+  writePolicy(
+    "github_create_pull_request",
+    directProject,
+    "additive",
+    "bounded_write",
+    "none",
+    "hidden",
+    "open",
+  ),
+  writePolicy(
+    "github_publish_change",
+    directProject,
+    "destructive",
+    "bounded_write",
+    "none",
+    "core",
+    "open",
+  ),
   writePolicy(
     "github_land_pr",
     directProject,
+    "destructive",
     "consequential",
     "tool_managed",
+    "core",
+    "open",
   ),
   writePolicy(
     "reconcile_github_publish_change",
     directProject,
+    "destructive",
     "bounded_write",
     "none",
     "hidden",
+    "open",
   ),
-  writePolicy("github_update_file", directProject, "bounded_write", "none", "hidden"),
-  writePolicy("github_update_issue", directProject),
+  writePolicy(
+    "github_update_file",
+    directProject,
+    "destructive",
+    "bounded_write",
+    "none",
+    "hidden",
+    "open",
+  ),
+  writePolicy(
+    "github_update_issue",
+    directProject,
+    "destructive",
+    "bounded_write",
+    "none",
+    "core",
+    "open",
+  ),
   writePolicy(
     "propose_continuation",
     sourceItemId,
+    "additive",
     "bounded_write",
     "none",
     "searchable",
   ),
-  writePolicy("edit_continuation", continuationId, "bounded_write", "none", "hidden"),
-  writePolicy("enrol_worker", directProject, "bounded_write", "none", "hidden"),
-  writePolicy("resolve_continuation", continuationId, "bounded_write", "none", "hidden"),
+  writePolicy(
+    "edit_continuation",
+    continuationId,
+    "destructive",
+    "bounded_write",
+    "none",
+    "hidden",
+  ),
+  writePolicy(
+    "enrol_worker",
+    directProject,
+    "additive",
+    "bounded_write",
+    "none",
+    "hidden",
+  ),
+  writePolicy(
+    "resolve_continuation",
+    continuationId,
+    "destructive",
+    "bounded_write",
+    "none",
+    "hidden",
+  ),
   writePolicy(
     "queue_continuation_for_supervisor",
     continuationTouchSet,
+    "destructive",
     "consequential",
     "tool_managed",
     "hidden",
@@ -176,6 +282,7 @@ const policyInputs: readonly McpCapabilityPolicyInput[] = [
   writePolicy(
     "run_continuation_supervisor_policy",
     continuationSupervisorPolicy,
+    "destructive",
     "consequential",
     "tool_managed",
     "hidden",
@@ -208,7 +315,7 @@ export function compileMcpCapabilityPolicyRegistry(
   }).sort((left, right) => codeUnitCompare(left.toolName, right.toolName));
 
   const canonical = {
-    version: 1 as const,
+    version: 2 as const,
     policies,
   };
   return deepFreeze({
@@ -229,6 +336,17 @@ export function requireMcpCapabilityPolicy(toolName: string): McpCapabilityPolic
     throw new RangeError(`Missing MCP capability policy for registered tool: ${toolName}`);
   }
   return policy;
+}
+
+export function compileMcpCapabilitySubmissionAnnotations(
+  policy: McpCapabilityPolicy,
+): McpCapabilitySubmissionAnnotations {
+  const admitted = validatePolicy(policy);
+  return deepFreeze({
+    readOnlyHint: admitted.scope === "read",
+    destructiveHint: admitted.effectKind === "destructive",
+    openWorldHint: admitted.interactionDomain === "open",
+  });
 }
 
 export interface McpCapabilityRegistrationGuard {
@@ -275,12 +393,15 @@ function readPolicy(
   toolName: string,
   projectResolution: McpCapabilityProjectResolution,
   defaultExposure: McpCapabilityExposure = "core",
+  interactionDomain: McpCapabilityInteractionDomain = "closed",
 ): McpCapabilityPolicyInput {
   return {
     toolName,
     scope: "read",
     riskClass: "read",
     defaultExposure,
+    interactionDomain,
+    effectKind: "none",
     projectResolution,
     approvalPolicy: "none",
     receiptPolicy: "none",
@@ -291,15 +412,19 @@ function readPolicy(
 function writePolicy(
   toolName: string,
   projectResolution: McpCapabilityProjectResolution,
+  effectKind: "additive" | "destructive",
   riskClass: "bounded_write" | "consequential" = "bounded_write",
   approvalPolicy: McpCapabilityApprovalPolicy = "none",
   defaultExposure: McpCapabilityExposure = "core",
+  interactionDomain: McpCapabilityInteractionDomain = "closed",
 ): McpCapabilityPolicyInput {
   return {
     toolName,
     scope: "write",
     riskClass,
     defaultExposure,
+    interactionDomain,
+    effectKind,
     projectResolution,
     approvalPolicy,
     receiptPolicy: "tool_managed",
@@ -323,6 +448,12 @@ function validatePolicy(input: McpCapabilityPolicyInput): McpCapabilityPolicy {
   if (!mcpCapabilityExposures.includes(input.defaultExposure)) {
     throw new RangeError(`MCP capability exposure is invalid for ${input.toolName}`);
   }
+  if (!mcpCapabilityInteractionDomains.includes(input.interactionDomain)) {
+    throw new RangeError(`MCP capability interaction domain is invalid for ${input.toolName}`);
+  }
+  if (!mcpCapabilityEffectKinds.includes(input.effectKind)) {
+    throw new RangeError(`MCP capability effect kind is invalid for ${input.toolName}`);
+  }
   if (!mcpCapabilityApprovalPolicies.includes(input.approvalPolicy)) {
     throw new RangeError(`MCP capability approval policy is invalid for ${input.toolName}`);
   }
@@ -339,6 +470,16 @@ function validatePolicy(input: McpCapabilityPolicyInput): McpCapabilityPolicy {
   if ((input.scope === "read") !== (input.riskClass === "read")) {
     throw new RangeError(
       `MCP capability ${input.toolName} must use read risk exactly for read scope`,
+    );
+  }
+  if (input.scope === "read" && input.effectKind !== "none") {
+    throw new RangeError(
+      `Read MCP capability ${input.toolName} must declare no environment effect`,
+    );
+  }
+  if (input.scope === "write" && input.effectKind === "none") {
+    throw new RangeError(
+      `Write MCP capability ${input.toolName} must declare additive or destructive effect`,
     );
   }
   if (input.scope === "read" && (
@@ -364,6 +505,8 @@ function validatePolicy(input: McpCapabilityPolicyInput): McpCapabilityPolicy {
     scope: input.scope,
     riskClass: input.riskClass,
     defaultExposure: input.defaultExposure,
+    interactionDomain: input.interactionDomain,
+    effectKind: input.effectKind,
     projectResolution: { ...input.projectResolution },
     approvalPolicy: input.approvalPolicy,
     receiptPolicy: input.receiptPolicy,
