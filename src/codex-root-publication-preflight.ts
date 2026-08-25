@@ -51,6 +51,7 @@ export type CodexRootPublicationDenialV1 =
   | "owner_lease_stale"
   | "remote_ref_mismatch"
   | "delivery_head_not_reachable"
+  | "required_check_policy_not_supplied"
   | "required_check_not_passed";
 
 export interface CodexRootPublicationPreflightV1 {
@@ -96,6 +97,7 @@ export function adjudicateCodexRootPublicationPreflight(
     || parsed.remoteReadback.head === null
     || parsed.remoteReadback.deliveryHeadReachability !== "reachable"
   ) denials.push("delivery_head_not_reachable");
+  if (parsed.requiredChecks.length === 0) denials.push("required_check_policy_not_supplied");
   if (parsed.requiredChecks.some((check) => check.outcome !== "passed")) {
     denials.push("required_check_not_passed");
   }

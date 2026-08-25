@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { execFile } from "node:child_process";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { CodexAppServerClient } from "../src/codex-app-server-client.js";
 
 const temporaryRoots: string[] = [];
+const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -99,7 +102,7 @@ lines.on("line", (line) => {
     }
   });
 
-  test("reaps the complete app-server process group on close", async () => {
+  test("terminates every live app-server process-group member on close", async () => {
     if (process.platform === "win32") return;
     const executable = await fakeAppServer(`
 const { spawn } = require("node:child_process");
@@ -117,20 +120,45 @@ lines.on("line", (line) => {
       requestTimeoutMs: 10_000,
     });
     const result = await client.request<{ readonly pid: number }>("test/descendant", {});
-    expect(processExists(result.pid)).toBeTrue();
+    expect(await processIsLive(result.pid)).toBeTrue();
     await client.close();
-    for (let attempt = 0; attempt < 50 && processExists(result.pid); attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    expect(processExists(result.pid)).toBeFalse();
+    expect(await processIsLive(result.pid)).toBeFalse();
+  });
+
+  test("still escalates process-tree termination after a transport failure", async () => {
+    if (process.platform === "win32") return;
+    const executable = await fakeAppServer(`
+const { spawn } = require("node:child_process");
+let descendant = null;
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send({ id: message.id, result: {} });
+  if (message.method === "test/descendant") {
+    descendant = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    send({ id: message.id, result: { pid: descendant.pid } });
+  }
+  if (message.method === "test/malformed") process.stdout.write("not-json\\n");
+});`);
+    const client = await CodexAppServerClient.connect({
+      codexBin: executable,
+      requestTimeoutMs: 10_000,
+    });
+    const descendant = await client.request<{ readonly pid: number }>("test/descendant", {});
+    await expect(client.request("test/malformed", {})).rejects.toThrow("malformed JSON");
+    await client.close();
+    expect(await processIsLive(descendant.pid)).toBeFalse();
   });
 });
 
-function processExists(pid: number): boolean {
+async function processIsLive(pid: number): Promise<boolean> {
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+    const result = await execFileAsync("/bin/ps", ["-o", "stat=", "-p", String(pid)], {
+      timeout: 5_000,
+      encoding: "utf8",
+    });
+    const state = result.stdout.trim();
+    return state.length > 0 && !state.startsWith("Z");
+  } catch {
+    return false;
   }
 }

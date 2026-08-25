@@ -5,7 +5,10 @@ import {
   type CodexAppServerClientOptions,
   type CodexAppServerConnection,
 } from "./codex-app-server-client.js";
-import type { RunnerExternalReferencePortableV1 } from "./runner-external-reference-portable.js";
+import {
+  parseRunnerExternalReferencePortableV1,
+  type RunnerExternalReferencePortableV1,
+} from "./runner-external-reference-portable.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -113,7 +116,7 @@ export interface MemoryAwareCodexHostPoolOptions {
 interface ResidentHost {
   readonly id: string;
   readonly client: CodexResidentHostConnection;
-  readonly logicalRoots: Set<string>;
+  readonly logicalRoots: Map<string, RunnerExternalReferencePortableV1 | null>;
 }
 
 /**
@@ -184,7 +187,7 @@ export class MemoryAwareCodexHostPool {
       (host) => host.logicalRoots.size < this.#maxLogicalRootsPerHost,
     );
     if (reusable) {
-      reusable.logicalRoots.add(logicalRootKey);
+      reusable.logicalRoots.set(logicalRootKey, null);
       return lease(reusable, logicalRootKey, true, this.#clock().toISOString());
     }
     if (this.#hosts.size >= this.#maxResidentHosts) {
@@ -198,7 +201,7 @@ export class MemoryAwareCodexHostPool {
     const host: ResidentHost = {
       id: `codex-host-${this.#nextHost++}`,
       client,
-      logicalRoots: new Set([logicalRootKey]),
+      logicalRoots: new Map([[logicalRootKey, null]]),
     };
     this.#hosts.set(host.id, host);
     const after = await this.snapshot();
@@ -208,6 +211,23 @@ export class MemoryAwareCodexHostPool {
       throw this.#denial("resident_rss_budget", after);
     }
     return lease(host, logicalRootKey, false, this.#clock().toISOString());
+  }
+
+  bindRoot(
+    leaseInput: CodexResidentRootLeaseV1,
+    rootRefInput: RunnerExternalReferencePortableV1,
+  ): void {
+    const lease = this.#hostLease(leaseInput);
+    const host = this.#hosts.get(lease.hostId)!;
+    const rootRef = parseRunnerExternalReferencePortableV1(rootRefInput);
+    if (rootRef.adapterId !== "openai-codex-app-server") {
+      throw new RangeError("Codex resident root reference uses a different adapter");
+    }
+    const current = host.logicalRoots.get(lease.logicalRootKey);
+    if (current !== null && current !== undefined && !sameRootReference(current, rootRef)) {
+      throw new Error("Codex resident lease is already bound to a different root reference");
+    }
+    host.logicalRoots.set(lease.logicalRootKey, rootRef);
   }
 
   async park(
@@ -221,9 +241,9 @@ export class MemoryAwareCodexHostPool {
     leaseInput: CodexResidentRootLeaseV1,
     rootRef: RunnerExternalReferencePortableV1,
   ): Promise<CodexRootReleaseObservationV1> {
-    const lease = this.#hostLease(leaseInput);
-    await lease.connection.request("thread/archive", { threadId: rootRef.externalId });
-    return this.#release(lease, rootRef, "retired");
+    const bound = this.#boundRoot(leaseInput, rootRef);
+    await bound.lease.connection.request("thread/archive", { threadId: bound.rootRef.externalId });
+    return this.#release(bound.lease, bound.rootRef, "retired");
   }
 
   async snapshot(): Promise<CodexMemorySnapshotV1> {
@@ -241,9 +261,10 @@ export class MemoryAwareCodexHostPool {
     rootRef: RunnerExternalReferencePortableV1,
     state: "parked_resumable" | "retired",
   ): Promise<CodexRootReleaseObservationV1> {
-    const lease = this.#hostLease(leaseInput);
+    const bound = this.#boundRoot(leaseInput, rootRef);
+    const lease = bound.lease;
     const host = this.#hosts.get(lease.hostId)!;
-    const threadId = safeIdentifier(rootRef.externalId, "Codex thread ID", 240);
+    const threadId = bound.rootRef.externalId;
     const memoryBefore = await this.snapshot();
     const response = asRecord(
       await lease.connection.request("thread/unsubscribe", { threadId }),
@@ -268,7 +289,7 @@ export class MemoryAwareCodexHostPool {
         version: CODEX_ROOT_RESIDENCY_V1,
         logicalRootKey: lease.logicalRootKey,
         state,
-        rootRef,
+        rootRef: bound.rootRef,
         hostId: null,
         observedAt: this.#clock().toISOString(),
       },
@@ -286,6 +307,21 @@ export class MemoryAwareCodexHostPool {
       throw new Error("Codex root lease is no longer resident on its claimed host");
     }
     return input;
+  }
+
+  #boundRoot(
+    leaseInput: CodexResidentRootLeaseV1,
+    rootRefInput: RunnerExternalReferencePortableV1,
+  ): { readonly lease: CodexResidentRootLeaseV1; readonly rootRef: RunnerExternalReferencePortableV1 } {
+    const lease = this.#hostLease(leaseInput);
+    const host = this.#hosts.get(lease.hostId)!;
+    const expected = host.logicalRoots.get(lease.logicalRootKey);
+    if (!expected) throw new Error("Codex resident lease must be bound to its exact root before release");
+    const supplied = parseRunnerExternalReferencePortableV1(rootRefInput);
+    if (!sameRootReference(expected, supplied)) {
+      throw new Error("Codex resident lease cannot release a different root reference");
+    }
+    return { lease, rootRef: expected };
   }
 
   #admitMemory(snapshot: CodexMemorySnapshotV1): void {
@@ -469,6 +505,16 @@ function lease(
     reusedHost,
     acquiredAt,
   });
+}
+
+function sameRootReference(
+  left: RunnerExternalReferencePortableV1,
+  right: RunnerExternalReferencePortableV1,
+): boolean {
+  return left.adapterId === right.adapterId
+    && left.externalId === right.externalId
+    && left.digest === right.digest
+    && left.generation === right.generation;
 }
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {

@@ -42,6 +42,7 @@ class FakeCodexBackend {
   nextThread = 1;
   nextTurn = 1;
   terminalGoalBeforeTurnSettlement = false;
+  completeReactivatedTurnBeforeSteer = false;
   readonly threads = new Map<string, FakeThread>();
   readonly goals = new Map<string, FakeGoal>();
   readonly turns = new Map<string, Array<Record<string, unknown>>>();
@@ -103,6 +104,9 @@ class FakeCodexConnection implements CodexAppServerConnection {
           threadId,
           turn: { id: turnId, status: "inProgress", items: [], error: null },
         }));
+        if (this.#backend.completeReactivatedTurnBeforeSteer) {
+          queueMicrotask(() => this.#completeTurn(threadId, turnId));
+        }
       }
       return { goal: structuredClone(goal) } as Result;
     }
@@ -268,6 +272,7 @@ function profile(cwd: string, model = "gpt-5.6-sol", goalTokenBudget = 20_000): 
     sandbox,
     networkAccess: false,
     approvalPolicy,
+    appServerVersion: "0.146.0",
     goalTokenBudget,
   };
 }
@@ -375,8 +380,21 @@ describe("Codex root harness", () => {
     const backend = new FakeCodexBackend();
     const connection = new FakeCodexConnection(backend, "workspace-write");
     const cwd = "/tmp/codex-root-writable";
+    const base = profile(cwd);
     const writableProfile: CodexRootProfileV1 = {
-      ...profile(cwd),
+      ...base,
+      provenance: runnerProfileProvenanceV1(
+        base.provenance.profileId,
+        codexRootProfileVersion({
+          model: base.model,
+          effort: base.effort,
+          sandbox: "workspace-write",
+          networkAccess: base.networkAccess,
+          approvalPolicy: base.approvalPolicy,
+          cwd,
+          appServerVersion: base.appServerVersion,
+        }),
+      ),
       sandbox: "workspace-write",
     };
     await new CodexRootHarness(connection).start(mission("1695-writable"), writableProfile);
@@ -388,6 +406,34 @@ describe("Codex root harness", () => {
       excludeTmpdirEnvVar: false,
       excludeSlashTmp: false,
     });
+  });
+
+  test("rejects forged exact provenance when any concrete profile field changes", async () => {
+    const cwd = "/tmp/codex-root-profile-binding";
+    const base = profile(cwd);
+    const mutations: CodexRootProfileV1[] = [
+      { ...base, model: "gpt-5.3-codex-spark" },
+      { ...base, effort: "medium" },
+      { ...base, cwd: "/tmp/codex-root-profile-binding-other" },
+      { ...base, sandbox: "workspace-write" },
+      { ...base, networkAccess: true },
+      { ...base, appServerVersion: "0.147.0" },
+    ];
+    for (const mutation of mutations) {
+      await expect(new CodexRootHarness(new FakeCodexConnection(
+        new FakeCodexBackend(),
+        "forged-profile",
+      )).start(mission("1695-forged-profile"), mutation)).rejects.toThrow(
+        "profile version does not match its concrete runtime fields",
+      );
+    }
+    await expect(new CodexRootHarness(new FakeCodexConnection(
+      new FakeCodexBackend(),
+      "invalid-approval",
+    )).start(mission("1695-invalid-approval"), {
+      ...base,
+      approvalPolicy: "on-request" as never,
+    })).rejects.toThrow("Codex approval policy is invalid");
   });
 
   test("models loopback-capable network access independently from filesystem authority", async () => {
@@ -435,6 +481,24 @@ describe("Codex root harness", () => {
     expect(result.observation.turnStatus).toBe("completed");
     const methods = backend.calls.map((call) => call.method);
     expect(methods).not.toContain("turn/interrupt");
+  });
+
+  test("fails closed when an auto-started continuation turn completes before steering", async () => {
+    const backend = new FakeCodexBackend();
+    const connection = new FakeCodexConnection(backend, "steer-race");
+    const harness = new CodexRootHarness(connection);
+    const durableMission = mission("1695-steer-race");
+    const durableProfile = profile("/tmp/codex-root-steer-race");
+    const started = await harness.start(durableMission, durableProfile);
+    backend.completeReactivatedTurnBeforeSteer = true;
+
+    await expect(harness.continue(started.binding, {
+      ...durableMission,
+      launchBrief: "This brief must never be reported delivered into a completed turn.",
+    }, durableProfile)).rejects.toThrow("became terminal before the current brief could be steered");
+    expect(backend.calls.filter((call) =>
+      call.connection === "steer-race" && call.method === "turn/steer"
+    )).toHaveLength(0);
   });
 
   test("refuses an exhausted cumulative goal budget and resumes only after an explicit increase", async () => {

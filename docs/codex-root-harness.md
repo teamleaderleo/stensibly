@@ -27,11 +27,17 @@ Continuation is fail closed:
 - a changed mission or profile starts an independent successor root and retains
   only the predecessor's bounded external reference;
 - a terminal goal is explicitly reactivated, the harness waits for the actual
-  runtime turn, and the current brief is delivered with `turn/steer`;
+  runtime turn, and the current brief is delivered with `turn/steer`; if the
+  auto-started turn becomes terminal before steer acceptance, continuation
+  fails closed instead of claiming delivery or starting a successor;
 - an already-active goal rejects a duplicate brief;
 - a cumulative goal budget must be raised explicitly after exhaustion;
 - unknown or mismatched runner-profile versions never become compatible by
-  inference, matching #1702's current exact-version fence.
+  inference. #1702 remains the owner of the separate durable reservation
+  adapter/profile/version fence; its current head has an open P1 because the two
+  durable reservation backends do not yet compare fresh reservation facts with
+  durable run metadata before dispatch authority. This harness neither claims
+  that seam settled nor duplicates its backend repair.
 
 Native child-slot exhaustion maps to local, retryable backpressure. It creates no
 durable work item and changes no portfolio relationship.
@@ -40,6 +46,9 @@ durable work item and changes no portfolio relationship.
 
 The exact profile fingerprint includes model, reasoning effort, sandbox, network
 access, approval policy, absolute working directory, and app-server version.
+Admission recomputes it from those concrete fields and rejects a caller-supplied
+exact version that does not match; provenance cannot be retained while runtime
+truth changes.
 Network access is explicit and independent from the coarse sandbox enum, with a
 fail-closed `false` default in callers. The current app-server surface exposes a
 boolean network control, not an origin allowlist. Therefore Elatura's loopback
@@ -85,9 +94,11 @@ The subscription-authenticated app-server probe proved:
 The repaired continuation path matters. An earlier experiment reactivated a
 terminal goal and let the app-server auto-start a turn before the current brief
 was bound, producing an empty useful turn. The adapter now waits for the actual
-`turn/started` identity and steers the brief into that turn before waiting for
-goal and turn settlement. Tests reject duplicate delivery when the goal is
-already active.
+`turn/started` identity, rejects an already-terminal matching turn, and requires
+`turn/steer` to accept that exact ID before waiting for goal and turn settlement.
+A completion that wins the remaining protocol interval is a fail-closed
+continuation error, not a successful brief delivery. Tests model that adverse
+ordering and reject duplicate delivery when the goal is already active.
 
 ## Spark versus Sol dogfood
 
@@ -111,10 +122,15 @@ measure it separately before preferring it.
 `MemoryAwareCodexHostPool` is ephemeral capacity, not a manager database. It
 holds live connections and logical-root keys only. The caller retains the durable
 binding. `hot`, `parked_resumable`, and `retired` are explicit observations.
-Parking unsubscribes the thread; releasing the last root terminates and, if
-needed, kills the exact app-server process group. Retirement archives before
-release. Admission responds independently to macOS pressure/free-memory,
-configured resident RSS, host count, and roots-per-host.
+Each lease must be bound once to its exact root reference before release, so a
+lease for root A cannot archive or unsubscribe root B on a shared host. Parking
+unsubscribes the bound thread; releasing the last root terminates and, if needed,
+kills the owned app-server process group and verifies that no live member
+remains. Transport failure does not suppress later SIGKILL escalation. On Linux,
+the deterministic check distinguishes terminated zombies awaiting OS adoption
+from live resident processes instead of treating `kill(pid, 0)` as RSS evidence.
+Retirement archives before release. Admission responds independently to macOS
+pressure/free-memory, configured resident RSS, host count, and roots-per-host.
 
 On the operator's 24 GB Mac, the concrete three-root test used one host with at
 most two resident roots:
@@ -140,6 +156,9 @@ Memory pressure stayed `normal`, but swap rose from 6.036 GB at baseline to
 not exclusively attributable to the harness, and it must not be collapsed into
 the RSS result or described as an improvement. It supports bounded residency and
 cloud offload, not increasing the local root-count constant.
+These exact numbers are externally observed dogfood evidence from the operator
+Mac, not outputs reproduced by the committed unit tests; the committed probe is
+the reproducible measurement procedure.
 
 ## Native cloud placement dogfood
 
@@ -168,6 +187,22 @@ observation showed 85% free, 1.430 GB swap, and the replacement Codex process at
 so this is operational relief evidence—not causal per-task memory attribution.
 No cloud review created another local app-server root.
 
+Cloud placement is revalidated twice: immediately before dispatch and again
+before any result application. `adjudicateCodexCloudPlacementV1` compares freshly
+resolved canonical issue/PR owner generation, settlement, exact ref/head, and
+experiment freeze against the admitted facts. A settled, superseded, frozen, or
+changed mission is stale-released; the function never authorizes dispatch or
+application. This captures the Quarry #1052 discriminator: task
+`task_e_6a8da270bac88326936d08075e2e07bc` was dispatched after the frozen
+experiment had already settled through PR #1053/run 32857504041, so its
+4-file/+314 candidate is evidence-only and must not be applied.
+
+Cloud CLI inspection runs from an isolated temporary working directory. If a
+probe creates diagnostics such as `error.log` in any repository worktree, the
+placement preflight stale-releases and publication remains denied;
+account-routing diagnostics are removed precisely, never hidden with a repository
+ignore rule.
+
 ## Publication receipts
 
 The existing Sol/Luna worker receipt owns head lineage and worktree activity and
@@ -183,6 +218,11 @@ unless:
 - every required check has an actually executed `passed` result—`unavailable`
   and `not_executed` are not passes.
 
+The required-check policy must be non-empty, but it is still caller-supplied.
+`publicationEligible` means internally consistent with supplied canonical
+evidence; it does not mean this pure function independently discovered repository
+policy or current authority.
+
 An incomplete worker may still emit `local_progress` or `local_blocker`, but those
 claims are never publication-eligible and the preflight always returns
 `authorizesPublication: false`.
@@ -190,7 +230,7 @@ claims are never publication-eligible and the preflight always returns
 ## Commands
 
 ```sh
-bun test test/codex-app-server-client.test.ts test/codex-root-harness.test.ts test/codex-root-routing.test.ts test/codex-root-residency.test.ts test/codex-root-publication-preflight.test.ts
+bun test test/codex-app-server-client.test.ts test/codex-root-harness.test.ts test/codex-root-routing.test.ts test/codex-root-residency.test.ts test/codex-root-cloud-placement.test.ts test/codex-root-publication-preflight.test.ts
 bunx tsc --noEmit
 bun run codex-roots:probe
 bun run codex-roots:memory-probe

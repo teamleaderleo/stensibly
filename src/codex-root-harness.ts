@@ -39,6 +39,7 @@ export interface CodexRootProfileV1 {
   readonly sandbox: CodexSandboxMode;
   readonly networkAccess: boolean;
   readonly approvalPolicy: CodexApprovalPolicy;
+  readonly appServerVersion: string;
   readonly goalTokenBudget: number | null;
 }
 
@@ -364,11 +365,32 @@ export class CodexRootHarness {
       );
       const runtimeTurn = record(record(started.params, "turn/started params").turn, "started Codex turn");
       turnId = identifier(runtimeTurn.id, "Codex runtime turn ID");
-      await this.#connection.request("turn/steer", {
-        threadId: binding.runtime.threadId,
-        expectedTurnId: turnId,
-        input: [{ type: "text", text: currentBrief, text_elements: [] }],
-      });
+      const completedBeforeSteer = this.#connection.notificationsSince(cursor).some((notification) =>
+        (notification.method === "turn/completed"
+          && completedTurnMatches(notification.params, binding.runtime.threadId, turnId))
+        || (notification.method === "thread/goal/updated"
+          && terminalGoalTurnMatches(notification.params, binding.runtime.threadId, turnId))
+      );
+      if (completedBeforeSteer) {
+        throw new Error(
+          `Codex auto-started turn ${turnId} became terminal before the current brief could be steered; reconcile the exact turn before retrying`,
+        );
+      }
+      try {
+        const steer = record(await this.#connection.request("turn/steer", {
+          threadId: binding.runtime.threadId,
+          expectedTurnId: turnId,
+          input: [{ type: "text", text: currentBrief, text_elements: [] }],
+        }), "turn/steer response");
+        if (identifier(steer.turnId, "steered Codex turn ID") !== turnId) {
+          throw new Error("Codex accepted the current brief for a different runtime turn");
+        }
+      } catch (error) {
+        const state = await this.#readTurnState(binding.runtime.threadId, turnId);
+        throw new Error(
+          `Codex auto-started turn ${turnId} did not accept the current brief (observed state: ${state}); reconcile before retrying: ${errorMessage(error)}`,
+        );
+      }
     }
     const turnAcceptedAt = this.#clock().getTime();
     const terminalGoal = await this.#connection.waitForNotification(
@@ -415,6 +437,24 @@ export class CodexRootHarness {
       tokenUsage,
     });
     return deepFreeze({ binding, observation });
+  }
+
+  async #readTurnState(threadId: string, turnId: string): Promise<string> {
+    try {
+      const response = record(await this.#connection.request("thread/turns/list", {
+        threadId,
+        limit: 20,
+      }), "thread/turns/list response");
+      if (!Array.isArray(response.data)) return "unknown";
+      const turn = response.data.find((candidate) =>
+        isRecord(candidate) && candidate.id === turnId
+      );
+      return turn && isRecord(turn) && typeof turn.status === "string"
+        ? safeIdentifier(turn.status, "Codex turn status", 40)
+        : "not_observed";
+    } catch {
+      return "unavailable";
+    }
   }
 
   async #settleTurn(
@@ -473,15 +513,32 @@ function admitProfile(value: CodexRootProfileV1): CodexRootProfileV1 {
   const sandbox = exact(value.sandbox, ["read-only", "workspace-write", "danger-full-access"] as const, "Codex sandbox");
   const networkAccess = boolean(value.networkAccess, "Codex network access");
   validateSandboxNetwork(sandbox, networkAccess);
+  const model = safeIdentifier(value.model, "Codex model", 160);
+  const cwd = absolutePath(value.cwd);
+  const approvalPolicy = exact(value.approvalPolicy, ["never"] as const, "Codex approval policy");
+  const appServerVersion = safeIdentifier(value.appServerVersion, "App-server version", 80);
+  const expectedVersion = codexRootProfileVersion({
+    model,
+    effort,
+    sandbox,
+    networkAccess,
+    approvalPolicy,
+    cwd,
+    appServerVersion,
+  });
+  if (provenance.profileVersion !== expectedVersion) {
+    throw new RangeError("Codex root profile version does not match its concrete runtime fields");
+  }
   return deepFreeze({
     version: CODEX_ROOT_HARNESS_V1,
     provenance,
-    model: safeIdentifier(value.model, "Codex model", 160),
+    model,
     effort,
-    cwd: absolutePath(value.cwd),
+    cwd,
     sandbox,
     networkAccess,
-    approvalPolicy: exact(value.approvalPolicy, ["never"] as const, "Codex approval policy"),
+    approvalPolicy,
+    appServerVersion,
     goalTokenBudget: nullablePositiveInteger(value.goalTokenBudget, "Goal token budget"),
   });
 }
@@ -639,6 +696,14 @@ function startedTurnMatches(params: unknown, threadId: string): boolean {
 function terminalGoalMatches(params: unknown, threadId: string): boolean {
   if (!isRecord(params) || params.threadId !== threadId || !isRecord(params.goal)) return false;
   return params.goal.status !== "active";
+}
+
+function terminalGoalTurnMatches(params: unknown, threadId: string, turnId: string): boolean {
+  return isRecord(params)
+    && params.threadId === threadId
+    && params.turnId === turnId
+    && isRecord(params.goal)
+    && params.goal.status !== "active";
 }
 
 function goalStatus(value: unknown): CodexThreadGoalStatus {

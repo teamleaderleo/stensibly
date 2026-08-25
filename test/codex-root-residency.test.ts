@@ -107,6 +107,9 @@ describe("memory-aware Codex runtime residency", () => {
     expect(pool.residentHostCount).toBe(1);
     expect(pool.residentLogicalRootCount).toBe(3);
 
+    pool.bindRoot(first, rootRef(1));
+    pool.bindRoot(second, rootRef(2));
+    pool.bindRoot(third, rootRef(3));
     const parkedFirst = await pool.park(first, rootRef(1));
     expect(parkedFirst.residency.state).toBe("parked_resumable");
     expect(parkedFirst.hostProcessReleased).toBeFalse();
@@ -134,11 +137,43 @@ describe("memory-aware Codex runtime residency", () => {
       hostFactory: async () => host,
     });
     const lease = await pool.acquire("mission/retire");
+    pool.bindRoot(lease, rootRef(4));
     const retired = await pool.retire(lease, rootRef(4));
 
     expect(retired.residency.state).toBe("retired");
     expect(host.calls.map((call) => call.method)).toEqual(["thread/archive", "thread/unsubscribe"]);
     expect(host.closed).toBeTrue();
+  });
+
+  test("binds lease identity before a shared host can archive or unsubscribe a root", async () => {
+    const host = new FakeResidentHost(25_000);
+    const pool = new MemoryAwareCodexHostPool({
+      maxResidentHosts: 1,
+      maxLogicalRootsPerHost: 2,
+      maxResidentRssBytes: 512 * 1024 * 1024,
+      estimatedNewHostRssBytes: 64 * 1024 * 1024,
+      probe: new FakeMemoryProbe(),
+      hostFactory: async () => host,
+    });
+    const leaseA = await pool.acquire("mission/root-a");
+    const leaseB = await pool.acquire("mission/root-b");
+    const refA = rootRef(10);
+    const refB = rootRef(11);
+    pool.bindRoot(leaseA, refA);
+    pool.bindRoot(leaseB, refB);
+
+    await expect(pool.park(leaseA, refB)).rejects.toThrow(
+      "cannot release a different root reference",
+    );
+    await expect(pool.retire(leaseA, refB)).rejects.toThrow(
+      "cannot release a different root reference",
+    );
+    expect(host.calls).toEqual([]);
+    expect(pool.residentLogicalRootCount).toBe(2);
+
+    await pool.park(leaseA, refA);
+    await pool.park(leaseB, refB);
+    expect(host.calls.filter((call) => call.method === "thread/unsubscribe")).toHaveLength(2);
   });
 
   test("denies admission on pressure and configured RSS instead of only lowering worker count", async () => {

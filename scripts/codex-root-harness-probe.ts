@@ -156,6 +156,7 @@ function profile(cwd: string, goalTokenBudget = 1_000): CodexRootProfileV1 {
     sandbox,
     networkAccess: false,
     approvalPolicy,
+    appServerVersion: "0.146.0",
     goalTokenBudget,
   };
 }

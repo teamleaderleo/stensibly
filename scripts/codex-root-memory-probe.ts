@@ -52,6 +52,8 @@ try {
     sharedHarness.start(missions[0]!, initialProfiles[0]!),
     sharedHarness.start(missions[1]!, initialProfiles[1]!),
   ]);
+  pool.bindRoot(leaseA, rootA.binding.rootRef);
+  pool.bindRoot(leaseB, rootB.binding.rootRef);
   const firstPairElapsedMs = Date.now() - firstPairStartedAt;
   bindings.push(rootA.binding, rootB.binding);
   const hotPairMemory = await pool.snapshot();
@@ -61,6 +63,7 @@ try {
   const leaseC = await pool.acquire("memory-probe/root-c");
   if (leaseC.connection !== leaseB.connection) throw new Error("Third logical root did not reuse the resident host");
   const rootC = await new CodexRootHarness(leaseC.connection).start(missions[2]!, initialProfiles[2]!);
+  pool.bindRoot(leaseC, rootC.binding.rootRef);
   bindings.push(rootC.binding);
   const secondPairMemory = await pool.snapshot();
   const parkedB = await pool.park(leaseB, rootB.binding.rootRef);
@@ -81,6 +84,7 @@ try {
     },
     profile(workspaces[0]!, 30_000),
   );
+  pool.bindRoot(resumeLease, resumedA.binding.rootRef);
   const resumeLatencyMs = Date.now() - resumeStartedAt;
   const peerB = await resumeLease.connection.request<{ readonly goal: unknown }>("thread/goal/get", {
     threadId: rootB.binding.runtime.threadId,
@@ -207,6 +211,7 @@ function profile(cwd: string, goalTokenBudget: number): CodexRootProfileV1 {
     sandbox,
     networkAccess,
     approvalPolicy,
+    appServerVersion: "0.146.0",
     goalTokenBudget,
   };
 }

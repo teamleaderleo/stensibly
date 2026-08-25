@@ -1,5 +1,8 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 export interface CodexAppServerNotification {
   readonly sequence: number;
@@ -48,6 +51,8 @@ interface NotificationWaiter {
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 const DEFAULT_NOTIFICATION_LIMIT = 512;
 const MAX_PROTOCOL_LINE_BYTES = 16 * 1024 * 1024;
+const PROCESS_TREE_TERM_GRACE_MS = 1_000;
+const PROCESS_TREE_KILL_GRACE_MS = 2_000;
 
 /**
  * A deliberately small app-server transport. It owns one local process and no
@@ -63,6 +68,7 @@ export class CodexAppServerClient implements CodexAppServerConnection {
   #nextRequestId = 1;
   #notificationSequence = 0;
   #closed = false;
+  #termination: Promise<void> | null = null;
   #stderr = "";
 
   get pid(): number {
@@ -190,20 +196,12 @@ export class CodexAppServerClient implements CodexAppServerConnection {
   }
 
   async close(): Promise<void> {
-    if (this.#closed) return;
-    this.#closed = true;
-    const closed = new Error("Codex app-server connection closed");
-    this.#rejectPending(closed);
-    if (this.#child.exitCode !== null || this.#child.signalCode !== null) {
-      this.#signalProcessTree("SIGKILL");
-      return;
+    if (!this.#closed) {
+      this.#closed = true;
+      this.#rejectPending(new Error("Codex app-server connection closed"));
     }
-    this.#signalProcessTree("SIGTERM");
-    await Promise.race([
-      new Promise<void>((resolve) => this.#child.once("exit", () => resolve())),
-      new Promise<void>((resolve) => setTimeout(resolve, 1_000)),
-    ]);
-    this.#signalProcessTree("SIGKILL");
+    this.#termination ??= this.#terminateProcessTree();
+    await this.#termination;
   }
 
   #notify(method: string, params: unknown): void {
@@ -287,10 +285,35 @@ export class CodexAppServerClient implements CodexAppServerConnection {
   }
 
   #fail(error: Error): void {
-    if (this.#closed) return;
-    this.#closed = true;
-    this.#rejectPending(error);
+    if (!this.#closed) {
+      this.#closed = true;
+      this.#rejectPending(error);
+    }
+    if (!this.#termination) {
+      this.#termination = this.#terminateProcessTree();
+      void this.#termination.catch(() => undefined);
+    }
+  }
+
+  async #terminateProcessTree(): Promise<void> {
     this.#signalProcessTree("SIGTERM");
+    if (await this.#waitForProcessTreeRelease(PROCESS_TREE_TERM_GRACE_MS)) return;
+    this.#signalProcessTree("SIGKILL");
+    if (await this.#waitForProcessTreeRelease(PROCESS_TREE_KILL_GRACE_MS)) return;
+    throw new Error(`Codex app-server process group ${this.pid} remained live after SIGKILL`);
+  }
+
+  async #waitForProcessTreeRelease(timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() <= deadline) {
+      const noLiveGroupMembers = process.platform === "win32"
+        ? this.#child.exitCode !== null || this.#child.signalCode !== null
+        : !(await processGroupHasLiveMembers(this.pid));
+      const directChildReaped = this.#child.exitCode !== null || this.#child.signalCode !== null;
+      if (noLiveGroupMembers && directChildReaped) return true;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return false;
   }
 
   #signalProcessTree(signal: NodeJS.Signals): void {
@@ -317,6 +340,20 @@ export class CodexAppServerClient implements CodexAppServerConnection {
     }
     this.#waiters.clear();
   }
+}
+
+async function processGroupHasLiveMembers(processGroupId: number): Promise<boolean> {
+  const selector = process.platform === "darwin" ? "-axo" : "-eo";
+  const result = await execFileAsync("/bin/ps", [selector, "pgid=,stat="], {
+    timeout: 5_000,
+    maxBuffer: 8 * 1024 * 1024,
+    encoding: "utf8",
+  });
+  return result.stdout.split("\n").some((line) => {
+    const match = /^\s*(\d+)\s+(\S+)/u.exec(line);
+    if (!match || Number.parseInt(match[1]!, 10) !== processGroupId) return false;
+    return !match[2]!.startsWith("Z");
+  });
 }
 
 function safelyMatches(predicate: (params: unknown) => boolean, params: unknown): boolean {

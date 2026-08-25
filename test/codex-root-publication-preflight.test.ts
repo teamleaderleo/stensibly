@@ -100,4 +100,11 @@ describe("Codex root publication preflight", () => {
     expect(result.denials).toContain("local_receipt_only");
     expect(result.denials).toContain("required_check_not_passed");
   });
+
+  test("does not treat an empty caller-supplied check policy as verified", () => {
+    const result = adjudicateCodexRootPublicationPreflight(evidence({ requiredChecks: [] }));
+    expect(result.publicationEligible).toBeFalse();
+    expect(result.authorizesPublication).toBeFalse();
+    expect(result.denials).toContain("required_check_policy_not_supplied");
+  });
 });
