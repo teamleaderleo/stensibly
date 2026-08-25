@@ -22,7 +22,7 @@ const publishedDefault = [
   "handoff_work",
   "list_work",
   "unblock_work",
-] as const;
+];
 
 const deferredDiscovery = [
   "get_continuation",
@@ -37,7 +37,7 @@ const deferredDiscovery = [
   "list_continuations",
   "propose_continuation",
   "remember_project_repository_setup",
-] as const;
+];
 
 const internalOrRunner = [
   "attach_artifact",
@@ -61,7 +61,7 @@ const internalOrRunner = [
   "resolve_continuation",
   "run_continuation_supervisor_policy",
   "survey_workspace",
-] as const;
+];
 
 test("curated ChatGPT exposure stays explicit without changing full capability coverage", () => {
   const core = mcpCapabilityPolicyRegistry.policies
