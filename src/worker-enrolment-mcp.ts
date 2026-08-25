@@ -254,7 +254,7 @@ export function registerWorkerEnrolmentTools(
         }
         return rejectedPublicResult(result.reason);
       }
-      return rejectedPublicResult("callsign_pool_exhausted");
+      return rejectedPublicResult("callsign_candidate_limit");
     }),
   );
 }
@@ -296,7 +296,7 @@ export async function resolveWorkerAttribution(
 }
 
 function workerEnrolmentProvider(value: unknown): WorkerEnrolmentProvider | null {
-  const enrol = captureDataMethod(value, "enrolWorker");
+  const enrol = captureDataMethod(value, "resolveWorkerEnrolment");
   if (!enrol) return null;
   return Object.freeze({
     enrolWorker: (input: WorkerEnrolmentProviderInput) =>
