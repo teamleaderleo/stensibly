@@ -178,5 +178,5 @@ jobs:
             echo "- committed lock: \`${{ steps.generate.outputs.committed_sha256 }}\`"
             echo "- generated lock: \`${{ steps.generate.outputs.candidate_sha256 }}\`"
             echo "- changed path: \`bun.lock\`"
-            echo "- validation: branch push triggers canonical CI for the generated commit"
+            echo "- validation: PR synchronize triggers canonical CI for the generated commit"
           } >>"${GITHUB_STEP_SUMMARY}"
