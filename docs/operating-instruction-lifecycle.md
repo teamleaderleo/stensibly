@@ -1,7 +1,7 @@
 # Operating instruction lifecycle
 
 **Protocol:** `stensibly-agent-ops/0.5.0`  
-**Bootstrap:** `stensibly-project-bootstrap/v3`  
+**Bootstrap:** `stensibly-project-bootstrap/v4`  
 **Standing project policy:** `stensibly-internal-dogfood/v2`  
 **Tracking issue:** #293  
 **Status:** internal dogfood
@@ -231,8 +231,12 @@ required context for dependencies, useful continuations, and overlap. New bounde
 may start whenever they advance the current outcome. Priority follows expected value,
 coherence, collision risk, and recoverability instead of work age alone.
 
-Bootstrap `v3` carries the same work-selection rule into ChatGPT Project settings and
-replaces bootstrap `v2`.
+Bootstrap `v4` makes machine-assigned callsign and sigil the normal hosted worker
+enrolment path and keeps explicit/manual naming as a deliberate override or fallback.
+It replaces bootstrap `v3`.
+
+Bootstrap `v3` carried the `0.5.0` work-selection rule into ChatGPT Project settings and
+replaced bootstrap `v2`.
 
 Protocol `0.4.0` makes accountable self-review the default for operator-directed,
 reversible internal dogfood work. It removes the blanket second-agent gate for Tier 1
