@@ -240,4 +240,44 @@ describe("run-bound worker brief profile provenance", () => {
       "standard",
     )).toThrow("explicit runner profile version or null");
   });
+
+  test("preserves the core compiler accessor fence when injecting dispatch", () => {
+    const input = briefInput() as unknown as Record<string, unknown>;
+    let reads = 0;
+    Object.defineProperty(input, "objectiveOutcome", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        reads += 1;
+        return "hostile";
+      },
+    });
+
+    expect(() => compileRunBoundWorkerBriefV1(
+      input as CompileRunBoundWorkerBriefInputV1,
+      run("codex-default/2026-08-26"),
+      "standard",
+    )).toThrow("field objectiveOutcome must be an enumerable data property");
+    expect(reads).toBe(0);
+  });
+
+  test("rejects accessors on authoritative run provenance without invoking them", () => {
+    const currentRun = run("codex-default/2026-08-26") as unknown as Record<string, unknown>;
+    let reads = 0;
+    Object.defineProperty(currentRun, "runnerProfileVersion", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        reads += 1;
+        return "codex-default/hostile";
+      },
+    });
+
+    expect(() => compileRunBoundWorkerBriefV1(
+      briefInput(),
+      currentRun as WorkerBriefRunBindingV1,
+      "standard",
+    )).toThrow("field runnerProfileVersion must be an enumerable data property");
+    expect(reads).toBe(0);
+  });
 });
