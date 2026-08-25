@@ -232,7 +232,7 @@ describe("authenticated MCP worker enrolment", () => {
     expect(result).toContain("either an explicit callsign or a callsign category");
   });
 
-  test("reports explicit bounded exhaustion after automatic candidates collide", async () => {
+  test("reports the bounded candidate limit after automatic collisions", async () => {
     const calls: WorkerEnrolmentProviderInput[] = [];
     const result = await callWithProvider((input) => {
       calls.push(input);
@@ -244,7 +244,7 @@ describe("authenticated MCP worker enrolment", () => {
     expect(result).toEqual({
       version: 1,
       outcome: "rejected",
-      reason: "callsign_pool_exhausted",
+      reason: "callsign_candidate_limit",
       worker: null,
       reused: false,
       grantsAuthority: false,
