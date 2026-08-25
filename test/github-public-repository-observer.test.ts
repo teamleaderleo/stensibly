@@ -142,6 +142,18 @@ class OutOfWindowLedger extends Ledger {
   }
 }
 
+class AuthoritativeLegacyLedger extends Ledger {
+  override async ingestRepositoryObservation(
+    _input: { observation: AnyGitHubRepositoryObservation },
+    _projection?: {
+      readonly mailProjectionState?: "pending" | "baseline_suppressed";
+    },
+  ) {
+    this.ingestions += 1;
+    return { duplicate: true, mailProjectionState: null };
+  }
+}
+
 describe("public GitHub repository observer", () => {
   test("persists a supported event before publishing and acknowledging", async () => {
     const order: string[] = [];
@@ -564,6 +576,36 @@ describe("public GitHub repository observer", () => {
       published: 0,
     });
     expect(legacyMailCalls).toBe(0);
+  });
+
+  test("authoritative legacy null cannot be revived by a pending recent snapshot", async () => {
+    const ledger = new AuthoritativeLegacyLedger();
+    ledger.rows.unshift({
+      id: "stale-window-row",
+      observation: eventObservation(),
+      mailProjectionState: "pending",
+      createdAt: polledAt,
+    });
+    let mailCalls = 0;
+    const observer = new GitHubPublicRepositoryObserver({
+      repository,
+      client: { async poll() { return eventsPage(); } },
+      ledger,
+      mail: {
+        async consume() {
+          mailCalls += 1;
+          throw new Error("authoritative legacy rows must stay quiet");
+        },
+      },
+    });
+
+    expect(await observer.reconcile()).toMatchObject({
+      replayedEvents: 1,
+      replaySuppressed: 1,
+      published: 0,
+    });
+    expect(mailCalls).toBe(0);
+    expect(ledger.marks).toBe(0);
   });
 
   test("suppresses a public event already represented by signed webhook semantics", async () => {

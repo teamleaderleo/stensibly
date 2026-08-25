@@ -128,12 +128,6 @@ export class GitHubPublicRepositoryObserver<Result> {
     const seenObservationIds = new Set(
       recent.map((row) => row.observation.observationId),
     );
-    const projectionStateById = new Map(
-      recent.map((row) => [
-        row.observation.observationId,
-        row.mailProjectionState,
-      ]),
-    );
     const crossSourceFingerprints = new Set(
       recent
         .filter((row) => row.observation.sourceSchema === "github-webhook")
@@ -202,9 +196,7 @@ export class GitHubPublicRepositoryObserver<Result> {
       // pending duplicate converge below.
       const replay = ingestion.duplicate || existedBefore;
       if (replay) {
-        const priorState = ingestion.mailProjectionState
-          ?? projectionStateById.get(observation.observationId)
-          ?? null;
+        const priorState = ingestion.mailProjectionState;
         if (priorState !== "pending") {
           replaySuppressed += 1;
           continue;
@@ -223,7 +215,6 @@ export class GitHubPublicRepositoryObserver<Result> {
       await this.#ledger.markRepositoryObservationMailProjected({
         observationId: observation.observationId,
       });
-      projectionStateById.set(observation.observationId, "projected");
       if (mail.status === "published") published += 1;
       else if (mail.status === "quiet") quiet += 1;
       else ignored += 1;
