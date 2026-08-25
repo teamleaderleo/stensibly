@@ -6,20 +6,33 @@ async function read(path: string): Promise<string> {
   return Bun.file(new URL(path, root)).text();
 }
 
-describe("documentation brief experiment", () => {
-  test("identifies the active overlay without relabelling the base protocol", async () => {
+describe("documentation policy contracts", () => {
+  test("ties the agent entrypoint to canonical policy and executable owners", async () => {
     const agents = await read("AGENTS.md");
+    const nomenclature = await read("docs/agent-nomenclature.md");
+    const currentWork = await read("docs/current-wave.md");
+    const bootstrap = await read("docs/chatgpt-project-instructions.md");
 
-    expect(agents).toContain(
-      "**Operating protocol:** `stensibly-agent-ops/0.5.0`",
-    );
-    expect(agents).toContain(
-      "**Active instruction experiment:** `documentation-brief/1` — #666",
-    );
-    expect(agents).toContain("In simple words / purpose:");
-    expect(agents).toContain(
-      "Use separate `In simple words` and `Purpose` headings only when each adds distinct",
-    );
+    expect(agents).toContain("**Standing project policy:** `STENSIBLY.md`");
+    expect(agents).not.toContain("**Operating protocol:**");
+    expect(agents).not.toContain("**Active instruction experiment:**");
+    expect(agents).not.toContain("docs/operating-instruction-lifecycle.md");
+    expect(agents).toContain("enrol_worker(project, workerSessionId)");
+    expect(agents).toContain("External/provider writes use the owning command/receipt/reconciliation boundary");
+    expect(agents).toContain("Future work should resume from durable conditions rather than worker polling");
+    expect(agents).toContain("Move repeated rules into software when possible:");
+
+    expect(nomenclature).toContain("project\nwork/responsibility\nrun\nworker/actor");
+    expect(nomenclature).toContain("Add more identity only after a concrete failure demonstrates a missing distinction");
+
+    expect(currentWork).toContain("does not own live project state");
+    expect(currentWork).not.toContain("## Active lanes");
+    expect(currentWork).not.toContain("## Immediate sequence");
+
+    expect(bootstrap).toContain("stensibly-project-bootstrap/v4");
+    expect(bootstrap).toContain("omit callsign");
+    expect(bootstrap).not.toContain("small non-conflicting portfolio");
+    expect(bootstrap).not.toContain("Read AGENTS.md, STENSIBLY.md, docs/current-wave.md");
   });
 
   test("keeps the pull-request opening compact and optional sections removable", async () => {
