@@ -278,7 +278,7 @@ async function createItem(
   title: string,
   project: string,
   priority: number,
-  actor = proposer,
+  actor: typeof proposer | typeof supervisor = proposer,
 ) {
   return await t.mutation(convexApi.items.create, {
     ...baseArgs,
