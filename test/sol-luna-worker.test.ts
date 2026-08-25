@@ -3,7 +3,13 @@ import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { codexEnvironment, runSolLunaCli, runSolLunaWorker, type SolLunaWorkerOptions } from "../scripts/sol-luna-worker.js";
+import {
+  codexEnvironment,
+  preflightRequiredCommands,
+  runSolLunaCli,
+  runSolLunaWorker,
+  type SolLunaWorkerOptions,
+} from "../scripts/sol-luna-worker.js";
 import {
   compileCodexPermissionProfile,
   parseSupportedCodexCliVersion,
@@ -324,6 +330,7 @@ function cliArgs(options: SolLunaWorkerOptions): string[] {
     ...(options.editAuthority === undefined ? [] : ["--edit-authority", options.editAuthority]),
     ...(options.gitMetadataAuthority === undefined ? [] : ["--git-metadata-authority", options.gitMetadataAuthority]),
     ...(options.reasoningEffort === undefined ? [] : ["--reasoning-effort", options.reasoningEffort]),
+    ...(options.requiredCommands ?? []).flatMap((command) => ["--require-command", command]),
     "--codex-bin", options.codexBin ?? "codex",
     ...(options.timeoutMs === undefined ? [] : ["--timeout-ms", String(options.timeoutMs)]),
     ...(options.captureCapBytes === undefined ? [] : ["--capture-cap-bytes", String(options.captureCapBytes)]),
@@ -336,6 +343,19 @@ test("codexEnvironment only forwards the explicit non-secret allowlist", () => {
     OPENAI_API_KEY: "secret", EVIL_PARENT_VARIABLE: "must-not-pass",
   });
   expect(environment).toEqual({ PATH: "/safe/bin", HOME: "/safe/home", CODEX_HOME: "/safe/codex" });
+});
+
+test("required command preflight uses only the effective worker PATH", async () => {
+  const root = await mkdtemp(join(tmpdir(), "sol-luna-command-preflight-"));
+  temporaryRoots.push(root);
+  const executable = join(root, "bounded-tool");
+  await writeFile(executable, "#!/bin/sh\nexit 0\n");
+  await chmod(executable, 0o755);
+
+  expect(await preflightRequiredCommands(["bounded-tool", "missing-tool"], root)).toEqual([
+    { command: "bounded-tool", status: "available", resolvedPath: executable },
+    { command: "missing-tool", status: "missing", resolvedPath: null },
+  ]);
 });
 
 test("permission-profile compilation and receipt identity are deterministic and path-minimised", () => {
@@ -422,10 +442,13 @@ describe("disposable Sol/Luna Codex worker harness", () => {
     await mkdir(runtimeRoot);
     await writeFile(sentinel, "commander-owned\n");
 
-    const result = await runSolLunaWorker(setup.options);
+    const result = await runSolLunaWorker({ ...setup.options, requiredCommands: ["git"] });
 
     expect(result.receipt.child.outcome).toBe("harness_failed");
     expect(result.receipt.harnessError).toContain("unable to claim worker runtime");
+    expect(result.receipt.preflight.requiredCommands).toEqual([{
+      command: "git", status: "not_run", resolvedPath: null,
+    }]);
     expect(await Bun.file(sentinel).text()).toBe("commander-owned\n");
     expect(await Bun.file(setup.argsPath).exists()).toBe(false);
   });
@@ -444,9 +467,32 @@ describe("disposable Sol/Luna Codex worker harness", () => {
     expect(await Bun.file(join(setup.options.outputDir, "receipt.json")).exists()).toBe(true);
   });
 
+  test("fails before authentication when a brief-required command is unavailable", async () => {
+    const setup = await setupFakeCodex();
+    const result = await runSolLunaWorker({
+      ...setup.options,
+      requiredCommands: ["definitely-not-a-sol-luna-command"],
+    });
+    const receipt = await readJson(result.receiptPath);
+    const preflight = receipt.preflight as Record<string, unknown>;
+
+    expect(result.exitCode).toBe(1);
+    expect(receipt.harnessError).toContain("required worker commands unavailable");
+    expect(preflight.chatGptAuthenticated).toBe(false);
+    expect(preflight.requiredCommands).toEqual([{
+      command: "definitely-not-a-sol-luna-command",
+      status: "missing",
+      resolvedPath: null,
+    }]);
+    expect(await Bun.file(setup.argsPath).exists()).toBe(false);
+  });
+
   test("captures successful worker evidence, exact stdin bytes, thread ID, usage, and Git state", async () => {
     const setup = await setupFakeCodex();
-    const exitCode = await runSolLunaCli(cliArgs(setup.options));
+    const exitCode = await runSolLunaCli(cliArgs({
+      ...setup.options,
+      requiredCommands: ["sh", "git", "sh"],
+    }));
     const receipt = await readJson(join(setup.options.outputDir, "receipt.json"));
     const args = await Bun.file(setup.argsPath).json() as string[];
     const stdin = await Bun.file(setup.stdinPath).bytes();
@@ -454,11 +500,15 @@ describe("disposable Sol/Luna Codex worker harness", () => {
     const workerResult = await Bun.file(join(setup.options.outputDir, "worker-result.json")).json();
 
     expect(exitCode).toBe(0);
-    expect(receipt.schemaVersion).toBe("sol-luna-worker-receipt/2");
+    expect(receipt.schemaVersion).toBe("sol-luna-worker-receipt/3");
     expect(receipt.success).toBe(true);
     expect((receipt.child as Record<string, unknown>).outcome).toBe("worker_succeeded");
     expect((receipt.child as Record<string, unknown>).timedOut).toBe(false);
     expect((receipt.child as Record<string, unknown>).stdinOutcome).toBe("delivered_without_error");
+    expect((receipt.preflight as Record<string, unknown>).requiredCommands).toEqual([
+      { command: "git", status: "available", resolvedPath: expect.stringMatching(/\/git$/u) },
+      { command: "sh", status: "available", resolvedPath: expect.stringMatching(/\/sh$/u) },
+    ]);
     expect((receipt.codex as Record<string, unknown>).threadId).toBe("thread-fake-01");
     expect((receipt.codex as Record<string, unknown>).tokenUsage).toEqual({
       input_tokens: 21,
