@@ -18,9 +18,9 @@ The candidate generator restores the committed `bun.lock` before returning. Test
 6. It checks out that exact feature head with persisted credentials disabled and independently runs `bun install --lockfile-only --ignore-scripts` from reviewed default-branch workflow code.
 7. It proceeds only when `bun.lock` is the sole changed path, commits that file as `github-actions[bot]`, and pushes with a force-with-lease bound to the triggering head SHA.
 8. It reads the remote branch back and requires the remote head to equal the generated commit.
-9. That branch push triggers the ordinary canonical CI path once. The new run must see a clean lock candidate and complete the frozen repository gates before integration.
+9. That feature-branch push updates the open pull request; GitHub emits `pull_request/synchronize`, and canonical CI validates the generated commit once. The new run must see a clean lock candidate and complete the frozen repository gates before integration.
 
-There is no second post-push workflow dispatch. Successful publication already creates the repository event that owns validation. This keeps one mutation followed by one canonical consequence and removes a failure point after the branch changed.
+There is no second post-publication workflow dispatch. Successful publication already creates the pull-request synchronization event that owns validation. This keeps one mutation followed by one canonical consequence and removes a failure point after the branch changed.
 
 ## Candidate artifact
 
@@ -48,7 +48,7 @@ After checkout it verifies the same SHA and a clean worktree. Repository credent
 --force-with-lease=refs/heads/<branch>:<triggering-head-sha>
 ```
 
-The writer then verifies the remote head. The normal branch-push CI event owns subsequent validation.
+The writer then verifies the remote head. The resulting `pull_request/synchronize` CI event owns subsequent validation.
 
 A closed pull request, fork branch, default branch, advanced head, duplicate matching pull request, clean lockfile, unsupported generated path, or displaced generated commit causes no accepted write.
 
@@ -61,7 +61,7 @@ A closed pull request, fork branch, default branch, advanced head, duplicate mat
 - Repository credentials are unavailable during dependency resolution.
 - Force-with-lease protects concurrent branch work.
 - Remote readback proves which generated commit currently owns the branch.
-- Canonical push-triggered CI validates the resulting commit through the ordinary repository gate.
+- Canonical PR-synchronize CI validates the resulting commit through the ordinary repository gate.
 - Revert or disable the writer workflow to stop automatic updates.
 
 ## Local/manual recovery
