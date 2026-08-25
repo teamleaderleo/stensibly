@@ -12,6 +12,7 @@ import {
   recordDispatchEnvelopeIdempotency,
   requiredExecutionEnvelope,
 } from "./run-execution-store.js";
+import { withRunnerProfileVersion } from "./run-profile-version-sqlite.js";
 import { ensureRunSchema } from "./runs.js";
 import { ConflictError, type StensiblyStore } from "./store.js";
 
@@ -58,7 +59,7 @@ export function dispatchNextWork(
       if (!replay) return null;
       return {
         ...replay,
-        run: hydrateWorkRun(store, replay.run),
+        run: hydrateDispatchRun(store, replay.run),
       };
     }
 
@@ -96,10 +97,17 @@ export function dispatchNextWork(
     });
     return {
       ...result,
-      run: hydrateWorkRun(store, result.run),
+      run: hydrateDispatchRun(store, result.run),
     };
   });
   return transaction();
+}
+
+function hydrateDispatchRun(
+  store: StensiblyStore,
+  run: Core.DispatchResult["run"],
+): Core.DispatchResult["run"] & { runnerProfileVersion: string | null } {
+  return withRunnerProfileVersion(store, hydrateWorkRun(store, run));
 }
 
 function assertDispatchEnvelopeIdempotency(
