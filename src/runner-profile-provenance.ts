@@ -40,6 +40,9 @@ export function admitRunnerProfileProvenanceV1(
   }
   rejectAccessors(value, "Runner profile provenance");
   const record = value as Record<string, unknown>;
+  if (record.profileVersion === undefined) {
+    throw new RangeError("Runner profile provenance must state an exact version or null");
+  }
   const actualKeys = Object.keys(record).sort();
   const expectedKeys = ["profileId", "profileVersion", "version"].sort();
   if (
@@ -52,9 +55,6 @@ export function admitRunnerProfileProvenanceV1(
     throw new RangeError(
       `Runner profile provenance version must be ${RUNNER_PROFILE_PROVENANCE_V1}`,
     );
-  }
-  if (record.profileVersion === undefined) {
-    throw new RangeError("Runner profile provenance must state an exact version or null");
   }
   return runnerProfileProvenanceV1(record.profileId, record.profileVersion);
 }
