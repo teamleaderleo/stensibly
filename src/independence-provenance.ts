@@ -1,9 +1,9 @@
 /**
- * Independence Provenance and Correlated Cognition Fencing
+ * Judgment provenance and descriptive comparisons.
  *
- * Implements #1613: records whether multiple agent reviews or decisions
- * are meaningfully independent, or whether they share correlated cognition
- * (same model family, shared instruction lineage, or unsealed prior judgment exposure).
+ * Provenance records retain the facts needed to understand how a judgment was
+ * produced. Comparisons report whether those facts match; they do not decide
+ * whether a review is acceptable or independent.
  */
 
 import { createHash } from 'node:crypto';
@@ -25,12 +25,16 @@ export interface JudgmentProvenance {
   readonly recordedAt: string;
 }
 
-export interface IndependenceAssessment {
-  readonly isIndependent: boolean;
-  readonly separationScore: number; // 0.0 to 1.0
-  readonly sharedFactors: readonly string[];
-  readonly riskTier: 'low' | 'moderate' | 'high_correlation';
-  readonly warning?: string;
+export type ProvenanceComparison = 'same' | 'different';
+
+export interface JudgmentProvenanceComparison {
+  readonly modelProvider: ProvenanceComparison;
+  readonly modelFamily: ProvenanceComparison;
+  readonly modelIdentity: ProvenanceComparison;
+  readonly harness: ProvenanceComparison;
+  readonly instructionLineage: ProvenanceComparison;
+  readonly contextPacket: ProvenanceComparison;
+  readonly priorJudgmentExposure: PriorJudgmentExposure;
 }
 
 export function computeDigest(content: string | object): string {
@@ -77,63 +81,27 @@ export function validateJudgmentProvenance(input: unknown): JudgmentProvenance {
   };
 }
 
-export function assessJudgmentIndependence(
+export function compareJudgmentProvenance(
   primary: JudgmentProvenance,
   reviewer: JudgmentProvenance,
-): IndependenceAssessment {
-  const sharedFactors: string[] = [];
-
-  if (primary.modelProvider === reviewer.modelProvider) {
-    sharedFactors.push('same_model_provider');
-  }
-
-  if (primary.modelFamily.toLowerCase() === reviewer.modelFamily.toLowerCase()) {
-    sharedFactors.push('same_model_family');
-  }
-
-  if (primary.harness.toLowerCase() === reviewer.harness.toLowerCase()) {
-    sharedFactors.push('same_harness');
-  }
-
-  if (primary.instructionDigest === reviewer.instructionDigest) {
-    sharedFactors.push('identical_instruction_lineage');
-  }
-
-  if (reviewer.priorJudgmentExposure === 'full') {
-    sharedFactors.push('unsealed_full_prior_exposure');
-  } else if (reviewer.priorJudgmentExposure === 'partial') {
-    sharedFactors.push('unsealed_partial_prior_exposure');
-  }
-
-  let penalty = 0;
-  if (sharedFactors.includes('same_model_family')) penalty += 0.45;
-  if (sharedFactors.includes('same_model_provider')) penalty += 0.15;
-  if (sharedFactors.includes('same_harness')) penalty += 0.1;
-  if (sharedFactors.includes('identical_instruction_lineage')) penalty += 0.15;
-  if (sharedFactors.includes('unsealed_full_prior_exposure')) penalty += 0.25;
-  if (sharedFactors.includes('unsealed_partial_prior_exposure')) penalty += 0.1;
-
-  const separationScore = Math.max(0, Math.min(1, 1.0 - penalty));
-  const isIndependent = separationScore >= 0.5 && !sharedFactors.includes('unsealed_full_prior_exposure');
-
-  let riskTier: 'low' | 'moderate' | 'high_correlation' = 'low';
-  let warning: string | undefined;
-
-  if (separationScore < 0.35) {
-    riskTier = 'high_correlation';
-    warning = 'High correlated cognition risk: Reviewer shares model family, prompt lineage, and prior verdict exposure with the author.';
-  } else if (separationScore < 0.65) {
-    riskTier = 'moderate';
-    warning = 'Moderate correlation: Reviewer shares underlying model provider or harness.';
-  }
-
+): JudgmentProvenanceComparison {
   return {
-    isIndependent,
-    separationScore: Math.round(separationScore * 100) / 100,
-    sharedFactors,
-    riskTier,
-    ...(warning ? { warning } : {}),
+    modelProvider: compareFact(primary.modelProvider, reviewer.modelProvider),
+    modelFamily: compareNormalizedFact(primary.modelFamily, reviewer.modelFamily),
+    modelIdentity: compareFact(primary.modelIdentity, reviewer.modelIdentity),
+    harness: compareNormalizedFact(primary.harness, reviewer.harness),
+    instructionLineage: compareFact(primary.instructionDigest, reviewer.instructionDigest),
+    contextPacket: compareFact(primary.contextPacketDigest, reviewer.contextPacketDigest),
+    priorJudgmentExposure: reviewer.priorJudgmentExposure,
   };
+}
+
+function compareFact(primary: string, reviewer: string): ProvenanceComparison {
+  return primary === reviewer ? 'same' : 'different';
+}
+
+function compareNormalizedFact(primary: string, reviewer: string): ProvenanceComparison {
+  return primary.toLowerCase() === reviewer.toLowerCase() ? 'same' : 'different';
 }
 
 function validateProvider(value: unknown): ModelProvider {
