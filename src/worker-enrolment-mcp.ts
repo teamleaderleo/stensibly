@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { callsignSigil } from "./callsign-sigils.js";
+import { callsignPools } from "./callsign-suggestions.js";
 import { captureDataMethod } from "./captured-data-method.js";
 import type { WorkLedger } from "./ledger.js";
 import type { McpRequestContext } from "./mcp-context.js";
@@ -20,6 +22,8 @@ const REMOTE_MCP_PROFILE = "authenticated-generalist";
 const ENROLMENT_BUCKET_MS = 24 * 60 * 60 * 1_000;
 const ENROLMENT_LIFETIME_MS = 2 * ENROLMENT_BUCKET_MS;
 const HEARTBEAT_SECONDS = 3_600;
+const AUTOMATIC_CALLSIGN_VERSION = 1;
+const CURATED_CALLSIGNS = Object.freeze(Object.values(callsignPools).flat());
 
 export interface WorkerEnrolmentProviderInput {
   actorId: string;
@@ -106,10 +110,10 @@ const backendResultSchema = z.object({
 }).strict();
 
 /**
- * Compiles the private durable request from three public inputs. The UTC-day
- * bucket makes ordinary response-loss retries byte-identical; the two-day
- * expiry leaves at least one day of useful life. A later bucket receives a new
- * command key and converges on the already-active session in the MCP adapter.
+ * Compiles the private durable request from the public enrolment inputs. The
+ * UTC-day bucket makes ordinary response-loss retries byte-identical; the
+ * two-day expiry leaves at least one day of useful life. A later bucket gets a
+ * new command key and converges on an already-active session in the MCP adapter.
  */
 export function buildRemoteMcpWorkerEnrolment(input: {
   project: string;
@@ -170,13 +174,13 @@ export function registerWorkerEnrolmentTools(
   server.registerTool(
     "enrol_worker",
     {
-      description: "Enrol this authenticated MCP session as a short-lived Stensibly worker for one project. Supply a stable session ID once per chat; Stensibly derives ownership, replay protection, scope, capabilities, and expiry. Enrolment records presence only and grants no work, tool, repository, or execution authority.",
+      description: "Enrol this authenticated MCP session as a short-lived Stensibly worker for one project. Supply a stable session ID once per chat; omit callsign to let Stensibly choose one deterministically from its curated pool. Enrolment records attribution only and grants no work, tool, repository, or execution authority.",
       inputSchema: {
         project: z.string().trim().min(1).max(80)
           .regex(/^[a-z0-9][a-z0-9_-]*$/, "Use a lowercase project slug"),
         workerSessionId: z.string().trim().min(1).max(160)
           .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
-        callsign: z.string().trim().min(1).max(80),
+        callsign: z.string().trim().min(1).max(80).optional(),
       },
       annotations: {
         readOnlyHint: false,
@@ -186,28 +190,59 @@ export function registerWorkerEnrolmentTools(
       },
     },
     async (input) => asToolResult(async () => {
-      const prepared = buildRemoteMcpWorkerEnrolment({ ...input, context });
-      const result = backendResultSchema.parse(await provider.enrolWorker(prepared));
-      const active = activeWorkerForRequest(result.worker, prepared.request);
-      if (result.outcome === "accepted") {
-        if (
-          !active
-          || result.reason !== null
-          || active.requestFingerprint !== prepared.request.fingerprint
-          || active.startedAt !== prepared.request.startedAt
-          || active.expiresAt !== prepared.request.expiresAt
-        ) {
-          throw new Error("Hosted worker enrolment response does not match the request");
+      const now = Date.now();
+      const automatic = input.callsign === undefined;
+      const candidates = automatic
+        ? automaticCallsignOrder({
+          project: input.project,
+          workerSessionId: input.workerSessionId,
+          context,
+          now,
+        })
+        : [input.callsign];
+
+      for (const callsign of candidates) {
+        const prepared = buildRemoteMcpWorkerEnrolment({
+          project: input.project,
+          workerSessionId: input.workerSessionId,
+          callsign,
+          context,
+          now,
+        });
+        const result = backendResultSchema.parse(await provider.enrolWorker(prepared));
+        const active = automatic
+          ? activeWorkerForAutomaticRequest(result.worker, prepared.request)
+          : activeWorkerForRequest(result.worker, prepared.request);
+        if (result.outcome === "accepted") {
+          if (
+            !active
+            || result.reason !== null
+            || active.requestFingerprint !== prepared.request.fingerprint
+            || active.startedAt !== prepared.request.startedAt
+            || active.expiresAt !== prepared.request.expiresAt
+          ) {
+            throw new Error("Hosted worker enrolment response does not match the request");
+          }
+          return publicResult(active, false);
         }
-        return publicResult(active, false);
+        if (result.reason === "active_session_exists" && active) {
+          return publicResult(active, true);
+        }
+        if (automatic && result.reason === "callsign_active_collision") continue;
+        return {
+          version: 1,
+          outcome: "rejected" as const,
+          reason: result.reason,
+          worker: null,
+          reused: false,
+          grantsAuthority: false as const,
+        };
       }
-      if (result.reason === "active_session_exists" && active) {
-        return publicResult(active, true);
-      }
+
       return {
         version: 1,
         outcome: "rejected" as const,
-        reason: result.reason,
+        reason: "callsign_pool_exhausted" as const,
         worker: null,
         reused: false,
         grantsAuthority: false as const,
@@ -261,7 +296,55 @@ function workerEnrolmentProvider(value: unknown): WorkerEnrolmentProvider | null
   });
 }
 
+function automaticCallsignOrder(input: {
+  project: string;
+  workerSessionId: string;
+  context: McpRequestContext;
+  now: number;
+}): string[] {
+  const principal = input.context.principal;
+  if (!principal) {
+    throw new Error("Worker enrolment requires an authenticated remote MCP principal");
+  }
+  const bucket = Math.floor(input.now / ENROLMENT_BUCKET_MS);
+  const seed = createHash("sha256")
+    .update(`stensibly-automatic-callsign/v${AUTOMATIC_CALLSIGN_VERSION}`)
+    .update("\0")
+    .update(principalAuthorizationId(principal))
+    .update("\0")
+    .update(input.project)
+    .update("\0")
+    .update(input.workerSessionId)
+    .update("\0")
+    .update(String(bucket))
+    .digest("hex");
+  return [...CURATED_CALLSIGNS].sort((left, right) => {
+    const leftScore = automaticCallsignScore(seed, left);
+    const rightScore = automaticCallsignScore(seed, right);
+    if (leftScore < rightScore) return -1;
+    if (leftScore > rightScore) return 1;
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
+}
+
+function automaticCallsignScore(seed: string, callsign: string): string {
+  return createHash("sha256")
+    .update(seed)
+    .update("\0")
+    .update(callsign)
+    .digest("hex");
+}
+
 function activeWorkerForRequest(
+  worker: z.infer<typeof backendWorkerSchema> | null,
+  request: WorkerEnrolmentRequest,
+): z.infer<typeof backendWorkerSchema> | null {
+  const active = activeWorkerForAutomaticRequest(worker, request);
+  if (!active || active.callsign !== request.callsign) return null;
+  return active;
+}
+
+function activeWorkerForAutomaticRequest(
   worker: z.infer<typeof backendWorkerSchema> | null,
   request: WorkerEnrolmentRequest,
 ): z.infer<typeof backendWorkerSchema> | null {
@@ -271,7 +354,9 @@ function activeWorkerForRequest(
     || worker.adapter !== request.adapter
     || worker.profile !== request.profile
     || worker.workerSessionId !== request.workerSessionId
-    || worker.callsign !== request.callsign
+    || worker.callsign === null
+    || worker.callsignLeaseId === null
+    || worker.callsignLeaseGeneration === null
     || worker.heartbeatSeconds !== request.heartbeatSeconds
     || !sameStrings(worker.capabilities, request.capabilities)
     || !sameStrings(worker.toolAllowlist, request.toolAllowlist)
@@ -294,6 +379,7 @@ function publicResult(
   worker: z.infer<typeof backendWorkerSchema>,
   reused: boolean,
 ) {
+  const sigil = worker.callsign === null ? null : callsignSigil(worker.callsign).sigil;
   return {
     version: 1,
     outcome: "accepted" as const,
@@ -302,6 +388,7 @@ function publicResult(
       workerRef: worker.workerRef,
       workerSessionId: worker.workerSessionId,
       callsign: worker.callsign,
+      sigil,
       callsignLeaseGeneration: worker.callsignLeaseGeneration,
       status: "active" as const,
       startedAt: worker.startedAt,
