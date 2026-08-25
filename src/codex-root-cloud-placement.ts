@@ -36,6 +36,9 @@ export interface CodexCloudInspectionEvidenceV1 {
   readonly receiptId: string;
   readonly observedAt: string;
   readonly isolatedTemporaryCwd: true;
+  readonly commandExitCode: number | null;
+  readonly acceptedExitCodes: readonly number[];
+  readonly commandExitAccepted: boolean;
   readonly repositoryDiagnosticPaths: readonly string[];
   readonly temporaryDiagnosticPaths: readonly string[];
   readonly fingerprint: string;
@@ -48,6 +51,19 @@ export interface CodexCloudPlacementEvidenceLinkV1 {
   readonly inspectionObservedAt: string;
 }
 
+export interface CodexCloudDispatchReceiptV1 {
+  readonly version: typeof CODEX_ROOT_CLOUD_PLACEMENT_V1;
+  readonly phase: "pre_dispatch";
+  readonly repository: string;
+  readonly missionRef: string;
+  readonly expectedFingerprint: string;
+  readonly placementEligible: boolean;
+  readonly disposition: "admit" | "stale_release";
+  readonly denials: readonly CodexCloudPlacementDenialV1[];
+  readonly evidenceLink: CodexCloudPlacementEvidenceLinkV1;
+  readonly fingerprint: string;
+}
+
 export interface CodexCloudPlacementPreflightInputV1 {
   readonly version: typeof CODEX_ROOT_CLOUD_PLACEMENT_V1;
   readonly phase: CodexCloudPlacementPhaseV1;
@@ -56,9 +72,7 @@ export interface CodexCloudPlacementPreflightInputV1 {
   readonly expected: CodexCloudCanonicalPlacementFactsV1;
   readonly canonicalRead: CodexCloudCanonicalReadEvidenceV1;
   readonly inspection: CodexCloudInspectionEvidenceV1;
-  readonly priorDispatch: ({
-    readonly preflightFingerprint: string;
-  } & CodexCloudPlacementEvidenceLinkV1) | null;
+  readonly priorDispatch: CodexCloudDispatchReceiptV1 | null;
 }
 
 export type CodexCloudPlacementDenialV1 =
@@ -66,6 +80,7 @@ export type CodexCloudPlacementDenialV1 =
   | "inspection_evidence_invalid"
   | "pre_dispatch_link_unexpected"
   | "pre_dispatch_link_missing"
+  | "pre_dispatch_receipt_invalid"
   | "canonical_read_not_fresh"
   | "inspection_not_fresh"
   | "canonical_owner_changed"
@@ -74,6 +89,7 @@ export type CodexCloudPlacementDenialV1 =
   | "canonical_mission_settled"
   | "canonical_mission_superseded"
   | "experiment_frozen"
+  | "inspection_command_failed"
   | "repository_diagnostic_created";
 
 export interface CodexCloudPlacementPreflightV1 {
@@ -85,6 +101,7 @@ export interface CodexCloudPlacementPreflightV1 {
   readonly authorizesResultApplication: false;
   readonly denials: readonly CodexCloudPlacementDenialV1[];
   readonly evidenceLink: CodexCloudPlacementEvidenceLinkV1;
+  readonly dispatchReceipt: CodexCloudDispatchReceiptV1 | null;
   readonly fingerprint: string;
 }
 
@@ -94,6 +111,7 @@ export interface CodexCloudInspectionCommandInputV1 {
   readonly repositoryRoots: readonly string[];
   readonly diagnosticRelativePaths?: readonly string[];
   readonly timeoutMs?: number;
+  readonly acceptedExitCodes?: readonly number[];
   readonly receiptId?: string;
   readonly clock?: () => Date;
   readonly environment?: Readonly<Record<string, string | undefined>>;
@@ -118,6 +136,7 @@ export async function runCodexCloudInspectionCommandV1(
   const roots = await canonicalRoots(input.repositoryRoots);
   const diagnostics = diagnosticPaths(input.diagnosticRelativePaths ?? ["error.log"]);
   const timeoutMs = positiveInteger(input.timeoutMs ?? 120_000, "Cloud inspection timeout");
+  const acceptedExitCodes = exitCodes(input.acceptedExitCodes ?? [0]);
   const receiptId = identifier(input.receiptId ?? randomUUID(), "Cloud inspection receipt ID", 240);
   const clock = input.clock ?? (() => new Date());
   const inspectionCwd = await mkdtemp(join(tmpdir(), "stensibly-codex-cloud-"));
@@ -128,13 +147,26 @@ export async function runCodexCloudInspectionCommandV1(
         throw new Error("Cloud inspection cwd overlaps a repository worktree");
       }
     }
-    const result = await execFileAsync(executable, [...args], {
-      cwd: canonicalCwd,
-      timeout: timeoutMs,
-      maxBuffer: 16 * 1024 * 1024,
-      encoding: "utf8",
-      env: input.environment ? { ...process.env, ...input.environment } : process.env,
-    });
+    let stdout = "";
+    let stderr = "";
+    let commandExitCode: number | null = null;
+    try {
+      const result = await execFileAsync(executable, [...args], {
+        cwd: canonicalCwd,
+        timeout: timeoutMs,
+        maxBuffer: 16 * 1024 * 1024,
+        encoding: "utf8",
+        env: input.environment ? { ...process.env, ...input.environment } : process.env,
+      });
+      stdout = result.stdout;
+      stderr = result.stderr;
+      commandExitCode = 0;
+    } catch (error) {
+      const failure = error as NodeJS.ErrnoException & { stdout?: unknown; stderr?: unknown };
+      stdout = typeof failure.stdout === "string" ? failure.stdout : "";
+      stderr = typeof failure.stderr === "string" ? failure.stderr : "";
+      commandExitCode = typeof failure.code === "number" ? failure.code : null;
+    }
     const repositoryDiagnosticPaths = await scanRepositoryDiagnostics(roots, diagnostics);
     const temporaryDiagnosticPaths = await scanTemporaryDiagnostics(canonicalCwd, diagnostics);
     const evidence = inspectionEvidence({
@@ -142,10 +174,13 @@ export async function runCodexCloudInspectionCommandV1(
       receiptId,
       observedAt: clock().toISOString(),
       isolatedTemporaryCwd: true,
+      commandExitCode,
+      acceptedExitCodes,
+      commandExitAccepted: commandExitCode !== null && acceptedExitCodes.includes(commandExitCode),
       repositoryDiagnosticPaths,
       temporaryDiagnosticPaths,
     });
-    return deepFreeze({ stdout: result.stdout, stderr: result.stderr, evidence });
+    return deepFreeze({ stdout, stderr, evidence });
   } finally {
     await rm(inspectionCwd, { recursive: true, force: true });
   }
@@ -189,15 +224,25 @@ export function adjudicateCodexCloudPlacementV1(
     if (parsed.priorDispatch === null) {
       denials.push("pre_dispatch_link_missing");
     } else {
+      const expectedFingerprint = fingerprintCanonicalRequest(parsed.expected);
       if (
-        parsed.canonicalRead.evidence.fingerprint === parsed.priorDispatch.canonicalReadFingerprint
+        !parsed.priorDispatch.valid
+        || parsed.priorDispatch.receipt.repository !== parsed.repository
+        || parsed.priorDispatch.receipt.missionRef !== parsed.missionRef
+        || parsed.priorDispatch.receipt.expectedFingerprint !== expectedFingerprint
+        || !parsed.priorDispatch.receipt.placementEligible
+        || parsed.priorDispatch.receipt.disposition !== "admit"
+        || parsed.priorDispatch.receipt.denials.length !== 0
+      ) denials.push("pre_dispatch_receipt_invalid");
+      if (
+        parsed.canonicalRead.evidence.fingerprint === parsed.priorDispatch.receipt.evidenceLink.canonicalReadFingerprint
         || Date.parse(parsed.canonicalRead.evidence.observedAt)
-          <= Date.parse(parsed.priorDispatch.canonicalReadObservedAt)
+          <= Date.parse(parsed.priorDispatch.receipt.evidenceLink.canonicalReadObservedAt)
       ) denials.push("canonical_read_not_fresh");
       if (
-        parsed.inspection.evidence.fingerprint === parsed.priorDispatch.inspectionFingerprint
+        parsed.inspection.evidence.fingerprint === parsed.priorDispatch.receipt.evidenceLink.inspectionFingerprint
         || Date.parse(parsed.inspection.evidence.observedAt)
-          <= Date.parse(parsed.priorDispatch.inspectionObservedAt)
+          <= Date.parse(parsed.priorDispatch.receipt.evidenceLink.inspectionObservedAt)
       ) denials.push("inspection_not_fresh");
     }
   }
@@ -211,6 +256,7 @@ export function adjudicateCodexCloudPlacementV1(
   if (current.settlement === "settled") denials.push("canonical_mission_settled");
   if (current.settlement === "superseded") denials.push("canonical_mission_superseded");
   if (current.experimentFreeze === "frozen") denials.push("experiment_frozen");
+  if (!parsed.inspection.evidence.commandExitAccepted) denials.push("inspection_command_failed");
   if (parsed.inspection.evidence.repositoryDiagnosticPaths.length > 0) {
     denials.push("repository_diagnostic_created");
   }
@@ -229,8 +275,19 @@ export function adjudicateCodexCloudPlacementV1(
     expected: parsed.expected,
     canonicalRead: parsed.canonicalRead.evidence,
     inspection: parsed.inspection.evidence,
-    priorDispatch: parsed.priorDispatch,
+    priorDispatch: parsed.priorDispatch?.receipt ?? null,
   };
+  const dispatchReceipt = parsed.phase === "pre_dispatch"
+    ? codexCloudDispatchReceiptV1({
+      repository: parsed.repository,
+      missionRef: parsed.missionRef,
+      expectedFingerprint: fingerprintCanonicalRequest(parsed.expected),
+      placementEligible: uniqueDenials.length === 0,
+      disposition: uniqueDenials.length === 0 ? "admit" : "stale_release",
+      denials: uniqueDenials,
+      evidenceLink,
+    })
+    : null;
   return deepFreeze({
     version: CODEX_ROOT_CLOUD_PLACEMENT_V1,
     phase: parsed.phase,
@@ -240,8 +297,26 @@ export function adjudicateCodexCloudPlacementV1(
     authorizesResultApplication: false,
     denials: uniqueDenials,
     evidenceLink,
+    dispatchReceipt,
     fingerprint: fingerprintCanonicalRequest(fingerprintInput),
   });
+}
+
+function codexCloudDispatchReceiptV1(
+  input: Omit<CodexCloudDispatchReceiptV1, "version" | "phase" | "fingerprint">,
+): CodexCloudDispatchReceiptV1 {
+  const receipt = {
+    version: CODEX_ROOT_CLOUD_PLACEMENT_V1,
+    phase: "pre_dispatch" as const,
+    repository: identifier(input.repository, "Dispatch receipt repository", 240),
+    missionRef: identifier(input.missionRef, "Dispatch receipt mission reference", 240),
+    expectedFingerprint: fingerprint(input.expectedFingerprint),
+    placementEligible: boolean(input.placementEligible, "Dispatch receipt placement eligibility"),
+    disposition: disposition(input.disposition),
+    denials: placementDenials(input.denials),
+    evidenceLink: evidenceLink(input.evidenceLink),
+  };
+  return deepFreeze({ ...receipt, fingerprint: fingerprintCanonicalRequest(receipt) });
 }
 
 function parseInput(input: CodexCloudPlacementPreflightInputV1) {
@@ -287,6 +362,9 @@ function parseInspection(value: CodexCloudInspectionEvidenceV1) {
     receiptId: value.receiptId,
     observedAt: value.observedAt,
     isolatedTemporaryCwd: true,
+    commandExitCode: value.commandExitCode,
+    acceptedExitCodes: value.acceptedExitCodes,
+    commandExitAccepted: value.commandExitAccepted,
     repositoryDiagnosticPaths: value.repositoryDiagnosticPaths,
     temporaryDiagnosticPaths: value.temporaryDiagnosticPaths,
   });
@@ -303,11 +381,20 @@ function inspectionEvidence(
   if (input.version !== CODEX_ROOT_CLOUD_PLACEMENT_V1 || input.isolatedTemporaryCwd !== true) {
     throw new RangeError("Cloud inspection evidence is invalid");
   }
+  const commandExitCode = nullableExitCode(input.commandExitCode);
+  const acceptedExitCodes = exitCodes(input.acceptedExitCodes);
+  const commandExitAccepted = boolean(input.commandExitAccepted, "Cloud inspection command exit acceptance");
+  if (commandExitAccepted !== (commandExitCode !== null && acceptedExitCodes.includes(commandExitCode))) {
+    throw new RangeError("Cloud inspection command exit acceptance does not match its exit policy");
+  }
   const evidence = {
     version: CODEX_ROOT_CLOUD_PLACEMENT_V1,
     receiptId: identifier(input.receiptId, "Cloud inspection receipt ID", 240),
     observedAt: timestamp(input.observedAt, "Cloud inspection observation time"),
     isolatedTemporaryCwd: true as const,
+    commandExitCode,
+    acceptedExitCodes,
+    commandExitAccepted,
     repositoryDiagnosticPaths: boundedPaths(input.repositoryDiagnosticPaths, "Repository diagnostic paths"),
     temporaryDiagnosticPaths: boundedPaths(input.temporaryDiagnosticPaths, "Temporary diagnostic paths"),
   };
@@ -316,15 +403,69 @@ function inspectionEvidence(
 
 function priorDispatch(
   value: CodexCloudPlacementPreflightInputV1["priorDispatch"],
-): CodexCloudPlacementPreflightInputV1["priorDispatch"] {
+): { readonly receipt: CodexCloudDispatchReceiptV1; readonly valid: boolean } | null {
   if (value === null) return null;
-  return deepFreeze({
-    preflightFingerprint: fingerprint(value.preflightFingerprint),
-    canonicalReadFingerprint: fingerprint(value.canonicalReadFingerprint),
-    canonicalReadObservedAt: timestamp(value.canonicalReadObservedAt, "Prior canonical read time"),
-    inspectionFingerprint: fingerprint(value.inspectionFingerprint),
-    inspectionObservedAt: timestamp(value.inspectionObservedAt, "Prior inspection time"),
+  if (value?.version !== CODEX_ROOT_CLOUD_PLACEMENT_V1 || value.phase !== "pre_dispatch") {
+    throw new RangeError("Prior Cloud dispatch receipt is invalid");
+  }
+  const recomputed = codexCloudDispatchReceiptV1({
+    repository: value.repository,
+    missionRef: value.missionRef,
+    expectedFingerprint: value.expectedFingerprint,
+    placementEligible: value.placementEligible,
+    disposition: value.disposition,
+    denials: value.denials,
+    evidenceLink: value.evidenceLink,
   });
+  const suppliedFingerprint = fingerprint(value.fingerprint);
+  return deepFreeze({
+    receipt: { ...recomputed, fingerprint: suppliedFingerprint },
+    valid: recomputed.fingerprint === suppliedFingerprint,
+  });
+}
+
+function evidenceLink(value: CodexCloudPlacementEvidenceLinkV1): CodexCloudPlacementEvidenceLinkV1 {
+  return deepFreeze({
+    canonicalReadFingerprint: fingerprint(value?.canonicalReadFingerprint),
+    canonicalReadObservedAt: timestamp(value?.canonicalReadObservedAt, "Prior canonical read time"),
+    inspectionFingerprint: fingerprint(value?.inspectionFingerprint),
+    inspectionObservedAt: timestamp(value?.inspectionObservedAt, "Prior inspection time"),
+  });
+}
+
+function placementDenials(values: readonly CodexCloudPlacementDenialV1[]): readonly CodexCloudPlacementDenialV1[] {
+  if (!Array.isArray(values) || values.length > 32) throw new RangeError("Placement denials must be bounded");
+  const allowed = new Set<CodexCloudPlacementDenialV1>([
+    "canonical_read_evidence_invalid", "inspection_evidence_invalid", "pre_dispatch_link_unexpected",
+    "pre_dispatch_link_missing", "pre_dispatch_receipt_invalid", "canonical_read_not_fresh",
+    "inspection_not_fresh", "canonical_owner_changed", "canonical_ref_changed", "canonical_head_changed",
+    "canonical_mission_settled", "canonical_mission_superseded", "experiment_frozen",
+    "inspection_command_failed", "repository_diagnostic_created",
+  ]);
+  const parsed = values.map((value) => {
+    if (!allowed.has(value)) throw new RangeError("Placement denial is invalid");
+    return value;
+  });
+  if (new Set(parsed).size !== parsed.length) throw new RangeError("Placement denials must be unique");
+  return [...parsed].sort((left, right) => left - right);
+}
+
+function disposition(value: unknown): "admit" | "stale_release" {
+  if (value !== "admit" && value !== "stale_release") throw new RangeError("Placement disposition is invalid");
+  return value;
+}
+
+function boolean(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") throw new TypeError(`${label} must be boolean`);
+  return value;
+}
+
+function nullableExitCode(value: unknown): number | null {
+  if (value === null) return null;
+  if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > 255) {
+    throw new RangeError("Cloud inspection command exit code is invalid");
+  }
+  return value as number;
 }
 
 function placementFacts(value: CodexCloudCanonicalPlacementFactsV1, label: string): CodexCloudCanonicalPlacementFactsV1 {
@@ -403,6 +544,20 @@ function pathContains(parent: string, child: string): boolean {
 function boundedArgs(values: readonly string[]): readonly string[] {
   if (!Array.isArray(values) || values.length > 256) throw new RangeError("Cloud inspection arguments must be bounded");
   return values.map((value) => text(value, "Cloud inspection argument", 32_768, true));
+}
+
+function exitCodes(values: readonly number[]): readonly number[] {
+  if (!Array.isArray(values) || values.length === 0 || values.length > 16) {
+    throw new RangeError("Accepted Cloud inspection exit codes must be a non-empty bounded array");
+  }
+  const parsed = values.map((value) => {
+    if (!Number.isSafeInteger(value) || value < 0 || value > 255) {
+      throw new RangeError("Accepted Cloud inspection exit code is invalid");
+    }
+    return value;
+  });
+  if (new Set(parsed).size !== parsed.length) throw new RangeError("Accepted Cloud inspection exit codes must be unique");
+  return parsed;
 }
 
 function boundedPaths(values: readonly string[], label: string): readonly string[] {

@@ -207,7 +207,18 @@ temporary working directory, scans configured repository roots for diagnostics,
 records temporary diagnostics, and removes the owned directory. If a probe
 creates `error.log` in a repository worktree, the resulting evidence
 stale-releases placement and publication remains denied; account-routing
-diagnostics are never hidden with a repository ignore rule.
+diagnostics are never hidden with a repository ignore rule. Accepted nonzero CLI
+states such as pending status must be enumerated explicitly; their output remains
+status evidence and is never promoted to a successful task verdict. The receipt binds
+the exact accepted-exit-code policy as well as the observed exit. Failed commands
+also produce exit evidence and trigger both repository and temporary diagnostic scans
+before cleanup, so a nonzero exit cannot hide a generated worktree diagnostic.
+
+Result admission consumes the complete fingerprinted pre-dispatch receipt, not a
+caller-supplied evidence-link fragment. The receipt binds repository, mission,
+expected canonical facts, decision, denials, and both observation fingerprints; it
+must recompute exactly and describe an admitted dispatch before a fresh result read
+can be eligible. This is an integrity and anti-replay fence, not proof of authority.
 
 ## Publication receipts
 

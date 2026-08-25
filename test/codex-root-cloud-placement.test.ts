@@ -76,7 +76,8 @@ function placement(
 }
 
 function prior(result: CodexCloudPlacementPreflightV1) {
-  return { preflightFingerprint: result.fingerprint, ...result.evidenceLink };
+  if (result.dispatchReceipt === null) throw new Error("Expected dispatch receipt");
+  return result.dispatchReceipt;
 }
 
 describe("Codex cloud placement preflight", () => {
@@ -97,6 +98,46 @@ describe("Codex cloud placement preflight", () => {
     expect(dirty.repositoryDiagnosticPaths).toEqual([`${await realpath(root)}:error.log`]);
   });
 
+  test("records explicitly accepted nonzero status output without calling it success", async () => {
+    const root = await repository();
+    const result = await runCodexCloudInspectionCommandV1({
+      executable: process.execPath,
+      args: ["-e", "process.stdout.write('PENDING'); process.exit(1)"],
+      acceptedExitCodes: [0, 1],
+      repositoryRoots: [root],
+      receiptId: "inspection-pending-status",
+      clock: () => new Date("2026-08-25T14:00:03.000Z"),
+    });
+    expect(result.stdout).toBe("PENDING");
+    expect(result.evidence.commandExitCode).toBe(1);
+    expect(result.evidence.acceptedExitCodes).toEqual([0, 1]);
+    expect(result.evidence.commandExitAccepted).toBeTrue();
+    expect(result.evidence.repositoryDiagnosticPaths).toEqual([]);
+  });
+
+  test("records diagnostics and a failed command before returning evidence", async () => {
+    const root = await repository();
+    const diagnostic = join(root, "error.log");
+    const command = await runCodexCloudInspectionCommandV1({
+      executable: process.execPath,
+      args: ["-e", `require('node:fs').writeFileSync(${JSON.stringify(diagnostic)}, 'failed diagnostic'); process.exit(7)`],
+      repositoryRoots: [root],
+      receiptId: "inspection-failed-command",
+      clock: () => new Date("2026-08-25T14:00:04.000Z"),
+    });
+    expect(command.evidence.commandExitCode).toBe(7);
+    expect(command.evidence.acceptedExitCodes).toEqual([0]);
+    expect(command.evidence.commandExitAccepted).toBeFalse();
+    expect(command.evidence.repositoryDiagnosticPaths).toEqual([`${await realpath(root)}:error.log`]);
+
+    const result = adjudicateCodexCloudPlacementV1(placement(
+      canonicalRead("read-failed-command", "2026-08-25T14:00:05.000Z"),
+      command.evidence,
+    ));
+    expect(result.denials).toContain("inspection_command_failed");
+    expect(result.denials).toContain("repository_diagnostic_created");
+  });
+
   test("admits exact dispatch evidence without authorizing dispatch or application", async () => {
     const root = await repository();
     const result = adjudicateCodexCloudPlacementV1(placement(
@@ -108,6 +149,7 @@ describe("Codex cloud placement preflight", () => {
     expect(result.authorizesDispatch).toBeFalse();
     expect(result.authorizesResultApplication).toBeFalse();
     expect(result.denials).toEqual([]);
+    expect(result.dispatchReceipt?.placementEligible).toBeTrue();
   });
 
   test("stale-releases the #1052 shape already settled and frozen before dispatch", async () => {
@@ -147,6 +189,23 @@ describe("Codex cloud placement preflight", () => {
     ));
     expect(result.placementEligible).toBeTrue();
     expect(result.denials).toEqual([]);
+  });
+
+  test("rejects a tampered pre-dispatch receipt even when its evidence link is plausible", async () => {
+    const root = await repository();
+    const dispatch = adjudicateCodexCloudPlacementV1(placement(
+      canonicalRead("read-before-tamper", "2026-08-25T14:05:10.000Z"),
+      await inspection(root, "inspect-before-tamper", "2026-08-25T14:05:11.000Z"),
+    ));
+    const receipt = prior(dispatch);
+    const tampered = { ...receipt, missionRef: "github:teamleaderleo/quarry#9999" };
+    const result = adjudicateCodexCloudPlacementV1(placement(
+      canonicalRead("read-after-tamper", "2026-08-25T14:05:20.000Z"),
+      await inspection(root, "inspect-after-tamper", "2026-08-25T14:05:21.000Z"),
+      { phase: "pre_result_application", priorDispatch: tampered },
+    ));
+    expect(result.placementEligible).toBeFalse();
+    expect(result.denials).toContain("pre_dispatch_receipt_invalid");
   });
 
   test("denies a repository diagnostic discovered by the inspection boundary", async () => {
