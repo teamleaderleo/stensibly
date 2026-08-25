@@ -35,7 +35,7 @@ describe("Convex GitHub repository observation service", () => {
       payloadDigest: observation.payloadDigest,
       receivedAt: observation.receivedAt,
       observation,
-    })).toEqual({ duplicate: false });
+    })).toEqual({ duplicate: false, mailProjectionState: null });
     const captured = calls[0];
     expect(captured).toMatchObject({
       serviceSecret: "service-secret",
@@ -133,7 +133,7 @@ describe("Convex GitHub repository observation service", () => {
     });
 
     expect(await service.ingestRepositoryObservation(observationInput(observation)))
-      .toEqual({ duplicate: false });
+      .toEqual({ duplicate: false, mailProjectionState: null });
     expect(getCalls).toBe(0);
   });
 
@@ -152,7 +152,7 @@ describe("Convex GitHub repository observation service", () => {
     const service = serviceWithMutationResult(result);
 
     await expect(service.ingestRepositoryObservation(observationInput(observation)))
-      .resolves.toEqual({ duplicate: false });
+      .resolves.toEqual({ duplicate: false, mailProjectionState: null });
     expect(ownKeysCalls).toBe(0);
   });
 
@@ -261,6 +261,86 @@ describe("Convex GitHub repository observation service", () => {
       "teamleaderleo/stensibly",
       10,
     )).rejects.toBeInstanceOf(GitHubRepositoryObservationStorageError);
+  });
+
+  test("surfaces the exact stored projection state on every ingest path", async () => {
+    const observation = issueObservation();
+    const input = observationInput(observation);
+    const serviceReturning = (
+      duplicate: boolean,
+      mailProjectionState?: "pending" | "baseline_suppressed" | "projected",
+    ) =>
+      new ConvexGitHubRepositoryObservationService({
+        client: {
+          async mutation(_reference, args) {
+            const record = storedRecord(String(args.observationJson));
+            return {
+              duplicate,
+              record: mailProjectionState === undefined
+                ? record
+                : { ...record, mailProjectionState },
+            };
+          },
+          async query() {
+            throw new Error("not used");
+          },
+        },
+        serviceSecret: "service-secret",
+      });
+
+    // A new pending insert returns the admitted initial state.
+    expect(await serviceReturning(false, "pending").ingestRepositoryObservation(input))
+      .toEqual({ duplicate: false, mailProjectionState: "pending" });
+    expect(await serviceReturning(false, "baseline_suppressed").ingestRepositoryObservation(input))
+      .toEqual({ duplicate: false, mailProjectionState: "baseline_suppressed" });
+    // A duplicate returns the live durable row state.
+    expect(await serviceReturning(true, "projected").ingestRepositoryObservation(input))
+      .toEqual({ duplicate: true, mailProjectionState: "projected" });
+    expect(await serviceReturning(true, "pending").ingestRepositoryObservation(input))
+      .toEqual({ duplicate: true, mailProjectionState: "pending" });
+    // Legacy rows without a durable state stay null.
+    expect(await serviceReturning(true).ingestRepositoryObservation(input))
+      .toEqual({ duplicate: true, mailProjectionState: null });
+    expect(await serviceReturning(false).ingestRepositoryObservation(input))
+      .toEqual({ duplicate: false, mailProjectionState: null });
+  });
+
+  test("ingest options cannot forge the returned durable projection state", async () => {
+    const observation = issueObservation();
+    const calls: Record<string, unknown>[] = [];
+    const service = new ConvexGitHubRepositoryObservationService({
+      client: {
+        async mutation(_reference, args) {
+          calls.push(args);
+          const record = storedRecord(String(args.observationJson));
+          // The durable row already reached terminal projected through the
+          // guarded transition; no ingest option may rewrite that fact.
+          return {
+            duplicate: true,
+            record: { ...record, mailProjectionState: "projected" },
+          };
+        },
+        async query() {
+          throw new Error("not used");
+        },
+      },
+      serviceSecret: "service-secret",
+    });
+
+    await service.ingestRepositoryObservation(observationInput(observation), {
+      mailProjectionState: "baseline_suppressed",
+    });
+    const replay = await service.ingestRepositoryObservation(
+      observationInput(observation),
+      { mailProjectionState: "pending" },
+    );
+    expect(calls[1]).toMatchObject({ mailProjectionState: "pending" });
+    expect(replay.mailProjectionState).toBe("projected");
+
+    await expect(service.ingestRepositoryObservation(
+      observationInput(observation),
+      { mailProjectionState: "projected" as unknown as "pending" },
+    )).rejects.toBeInstanceOf(TypeError);
   });
 
   test("marks one admitted observation projected through the guarded mutation", async () => {

@@ -8,7 +8,6 @@ import {
 } from "./github-repository-observation-any-admission.js";
 import type {
   HostedGitHubRepositoryObservationInput,
-  HostedGitHubRepositoryObservationResult,
   HostedGitHubRepositoryObservationSink,
 } from "./hosted-provider-capacity-api.js";
 
@@ -103,6 +102,11 @@ export interface HostedGitHubRepositoryObservationRecord {
   readonly createdAt: string;
 }
 
+export interface GitHubRepositoryObservationIngestResult {
+  readonly duplicate: boolean;
+  readonly mailProjectionState: GitHubObservationMailProjectionState | null;
+}
+
 export interface HostedGitHubRepositoryObservationReader {
   listRecentRepositoryObservations(
     repository: string,
@@ -126,7 +130,7 @@ export class ConvexGitHubRepositoryObservationService
   async ingestRepositoryObservation(
     input: HostedAnyGitHubRepositoryObservationInput,
     projection?: GitHubObservationMailProjectionOptions,
-  ): Promise<HostedGitHubRepositoryObservationResult> {
+  ): Promise<GitHubRepositoryObservationIngestResult> {
     const mailProjectionState = admitMailProjectionState(
       projection?.mailProjectionState,
     );
@@ -144,7 +148,14 @@ export class ConvexGitHubRepositoryObservationService
       }));
       const result = admitMutationResult(rawResult);
       validateStoredRecord(result.record);
-      return Object.freeze({ duplicate: result.duplicate });
+      // The exact durable row - including its live mail projection state -
+      // is already admitted here; surfacing it lets the observer decide
+      // duplicate retry eligibility from authoritative state instead of a
+      // bounded recent snapshot.
+      return Object.freeze({
+        duplicate: result.duplicate,
+        mailProjectionState: result.record.mailProjectionState,
+      });
     } catch (error) {
       throw mapStorageError(error);
     }

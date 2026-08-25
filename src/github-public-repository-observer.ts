@@ -16,6 +16,7 @@ import type {
 } from "./github-repository-observation-any-admission.js";
 import type {
   GitHubObservationMailProjectionOptions,
+  GitHubObservationMailProjectionState,
   HostedGitHubRepositoryObservationRecord,
 } from "./github-repository-observation-convex.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
@@ -30,7 +31,12 @@ export interface GitHubPublicObservationLedger {
       observation: AnyGitHubRepositoryObservation;
     },
     projection?: GitHubObservationMailProjectionOptions,
-  ): Promise<Readonly<{ duplicate: boolean }>>;
+  ): Promise<
+    Readonly<{
+      duplicate: boolean;
+      mailProjectionState: GitHubObservationMailProjectionState | null;
+    }>
+  >;
   markRepositoryObservationMailProjected(input: {
     observationId: string;
   }): Promise<void>;
@@ -188,17 +194,24 @@ export class GitHubPublicRepositoryObserver<Result> {
         observation,
         currentHeadRevision: mapped.currentHeadRevision,
       });
-      if (bootstrap) {
-        baselinedEvents += 1;
-        continue;
-      }
-      if (ingestion.duplicate || existedBefore) {
-        const priorState = projectionStateById.get(observation.observationId)
+      // Duplicate retry eligibility comes from the exact durable row returned
+      // by ingest - never solely from the bounded recent snapshot, which can
+      // silently hide a crashed `pending` row. Projected, baseline-suppressed,
+      // and legacy-null duplicates stay permanently quiet; a bootstrap page
+      // still suppresses only its newly inserted history and lets an exact
+      // pending duplicate converge below.
+      const replay = ingestion.duplicate || existedBefore;
+      if (replay) {
+        const priorState = ingestion.mailProjectionState
+          ?? projectionStateById.get(observation.observationId)
           ?? null;
         if (priorState !== "pending") {
           replaySuppressed += 1;
           continue;
         }
+      } else if (bootstrap) {
+        baselinedEvents += 1;
+        continue;
       }
 
       const mail = await this.#mail.consume(mailInput);

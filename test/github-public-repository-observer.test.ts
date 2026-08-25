@@ -62,14 +62,22 @@ class Ledger implements GitHubPublicObservationLedger {
       candidate.observation.observationId === input.observation.observationId
       && candidate.observation.deliveryId === input.observation.deliveryId
       && candidate.observation.payloadDigest === input.observation.payloadDigest);
-    if (existing) return { duplicate: true };
+    if (existing) {
+      // Mirrors the Convex duplicate path: the exact durable row - with its
+      // live projection state - is returned to the observer.
+      return {
+        duplicate: true,
+        mailProjectionState: existing.mailProjectionState,
+      };
+    }
+    const mailProjectionState = projection?.mailProjectionState ?? null;
     this.rows.unshift({
       id: `row-${this.ingestions}`,
       observation: input.observation,
-      mailProjectionState: projection?.mailProjectionState ?? null,
+      mailProjectionState,
       createdAt: polledAt,
     });
-    return { duplicate: false };
+    return { duplicate: false, mailProjectionState };
   }
 
   async markRepositoryObservationMailProjected(input: {
@@ -111,6 +119,27 @@ function eventObservation(): AnyGitHubRepositoryObservation {
   const mapped = mapPublicGitHubRepositoryEvent(event(), repository, polledAt);
   if (!mapped) throw new Error("fixture event must map");
   return mapped.observation;
+}
+
+function secondEvent() {
+  const first = event("20002");
+  return {
+    ...first,
+    payload: {
+      ...first.payload,
+      number: 782,
+      pull_request: { ...first.payload.pull_request, number: 782 },
+    },
+  };
+}
+
+// A durable row can sit outside the bounded recent window while remaining
+// exactly reachable through duplicate ingest; this ledger reproduces that
+// split so suppression cannot silently depend on the snapshot.
+class OutOfWindowLedger extends Ledger {
+  override async listRecentRepositoryObservations() {
+    return [];
+  }
 }
 
 describe("public GitHub repository observer", () => {
@@ -370,6 +399,117 @@ describe("public GitHub repository observer", () => {
     });
     expect(mailCalls).toBe(1);
     expect(ledger.rows[0]?.mailProjectionState).toBe("projected");
+  });
+
+  test("an out-of-window pending duplicate retries from the exact ingest result", async () => {
+    // Regression for the #1648 crash window: the durable row crashed as
+    // `pending` before any mail projection and sits outside the bounded
+    // recent snapshot, so only the ingest response knows it is retryable.
+    const ledger = new OutOfWindowLedger();
+    ledger.rows.unshift({
+      id: "row-crashed",
+      observation: eventObservation(),
+      mailProjectionState: "pending",
+      createdAt: polledAt,
+    });
+    let consumeCalls = 0;
+    let publishes = 0;
+    const observer = new GitHubPublicRepositoryObserver({
+      repository,
+      client: { async poll() { return eventsPage(); } },
+      ledger,
+      mail: {
+        async consume() {
+          consumeCalls += 1;
+          publishes += 1;
+          return {
+            status: "published" as const,
+            sourceObservationId: "github-public:pull_request:public-event:20001",
+            materialFingerprint: `sha256:${"7".repeat(64)}`,
+            threadId: "mail_thread_781",
+            handle: "STN-REVIEW:Q781",
+            result: {},
+          };
+        },
+      },
+    });
+
+    expect(await observer.reconcile()).toMatchObject({
+      replayedEvents: 1,
+      replaySuppressed: 0,
+      published: 1,
+    });
+    expect(consumeCalls).toBe(1);
+    expect(publishes).toBe(1);
+    expect(ledger.marks).toBe(1);
+    expect(ledger.rows[0]?.mailProjectionState).toBe("projected");
+
+    // A later duplicate of the now-projected row is suppressed from the exact
+    // durable state without another mail attempt.
+    expect(await observer.reconcile()).toMatchObject({
+      replayedEvents: 1,
+      replaySuppressed: 1,
+      published: 0,
+    });
+    expect(consumeCalls).toBe(1);
+    expect(ledger.marks).toBe(1);
+  });
+
+  test("bootstrap consumes an exact pending duplicate and baselines only new history", async () => {
+    const ledger = new OutOfWindowLedger();
+    ledger.rows.unshift({
+      id: "row-crashed",
+      observation: eventObservation(),
+      mailProjectionState: "pending",
+      createdAt: polledAt,
+    });
+    let consumeCalls = 0;
+    const observer = new GitHubPublicRepositoryObserver({
+      repository,
+      client: {
+        async poll() {
+          return eventsPage({
+            initial: true,
+            values: [secondEvent(), event()],
+          });
+        },
+      },
+      ledger,
+      mail: {
+        async consume() {
+          consumeCalls += 1;
+          return {
+            status: "published" as const,
+            sourceObservationId: "github-public:pull_request:public-event:20001",
+            materialFingerprint: `sha256:${"8".repeat(64)}`,
+            threadId: "mail_thread_781",
+            handle: "STN-REVIEW:Q781",
+            result: {},
+          };
+        },
+      },
+    });
+
+    expect(await observer.reconcile()).toMatchObject({
+      supportedEvents: 2,
+      persistedEvents: 1,
+      baselinedEvents: 1,
+      replayedEvents: 1,
+      replaySuppressed: 0,
+      published: 1,
+    });
+    expect(consumeCalls).toBe(1);
+    expect(ledger.marks).toBe(1);
+    expect(
+      ledger.rows.find((row) =>
+        row.observation.observationId.endsWith("20001")
+      )?.mailProjectionState,
+    ).toBe("projected");
+    expect(
+      ledger.rows.find((row) =>
+        row.observation.observationId.endsWith("20002")
+      )?.mailProjectionState,
+    ).toBe("baseline_suppressed");
   });
 
   test("keeps baseline-suppressed and legacy duplicates permanently quiet", async () => {

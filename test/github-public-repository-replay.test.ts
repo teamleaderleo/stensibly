@@ -60,20 +60,24 @@ class ExactReplayLedger implements GitHubPublicObservationLedger {
     if (this.row === null) {
       this.canonical = canonical;
       this.receivedAt = input.receivedAt;
+      const mailProjectionState = projection?.mailProjectionState ?? null;
       this.row = {
         id: "public-row-782",
         observation: input.observation,
-        mailProjectionState: projection?.mailProjectionState ?? null,
+        mailProjectionState,
         createdAt: "2026-08-23T04:01:00.000Z",
       };
-      return { duplicate: false };
+      return { duplicate: false, mailProjectionState };
     }
     if (this.canonical === null || this.receivedAt === null) {
       throw new Error("exact replay ledger lost its retained identity");
     }
     expect(canonical).toBe(this.canonical);
     expect(input.receivedAt).toBe(this.receivedAt);
-    return { duplicate: true };
+    return {
+      duplicate: true,
+      mailProjectionState: this.row.mailProjectionState,
+    };
   }
 
   async markRepositoryObservationMailProjected(input: {
