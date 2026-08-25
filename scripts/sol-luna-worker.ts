@@ -745,22 +745,23 @@ async function committedChanges(
         : `unable to establish Git head ancestry (exit ${ancestry.exitCode})`,
     };
   }
-  const [commitBytes, names] = await Promise.all([
-    gitOutput(repository, ["rev-list", "--reverse", `${headBefore}..${headAfter}`]),
-    gitOutput(repository, [
-      "diff",
-      "--name-only",
-      "--no-renames",
-      "-z",
-      headBefore,
-      headAfter,
-      "--",
-    ]),
-  ]);
+  const commitBytes = await gitOutput(repository, ["rev-list", "--reverse", `${headBefore}..${headAfter}`]);
+  const commitsMade = utf8(commitBytes).split(/\r?\n/u).map((commit) => commit.trim()).filter((commit) => commit.length > 0);
+  const touchedByCommit = await Promise.all(commitsMade.map((commit) => gitOutput(repository, [
+    "diff-tree",
+    "--no-commit-id",
+    "--name-only",
+    "--no-renames",
+    "-r",
+    "-z",
+    `${commit}^`,
+    commit,
+    "--",
+  ])));
   return {
     headRelationship: "descendant",
-    commitsMade: utf8(commitBytes).split(/\r?\n/u).map((commit) => commit.trim()).filter((commit) => commit.length > 0),
-    committedPaths: parseNamePaths(names),
+    commitsMade,
+    committedPaths: [...new Set(touchedByCommit.flatMap(parseNamePaths))].sort(),
     error: null,
   };
 }
@@ -913,6 +914,7 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
   let headRelationship: SolLunaWorkerReceipt["git"]["headRelationship"] = "unknown";
   let baselineDirtyPaths: readonly string[] = [];
   let baselinePathStates: Readonly<Record<string, string>> = {};
+  let baselineSnapshotComplete = false;
   let finalDirtyPaths: readonly string[] = [];
   let workerCreatedDirtyPaths: readonly string[] = [];
   let commitsMade: readonly string[] = [];
@@ -946,6 +948,7 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
       headBefore = snapshot.head;
       baselineDirtyPaths = snapshot.paths;
       baselinePathStates = snapshot.pathStates;
+      baselineSnapshotComplete = true;
       gitLocation = await gitMetadataLocation(options.repository);
     } catch (error) {
       harnessError = appendHarnessError(harnessError, `unable to read Git state: ${errorMessage(error)}`);
@@ -1062,18 +1065,22 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
   }
 
   let finalPathStates: Readonly<Record<string, string>> = {};
+  let finalSnapshotComplete = false;
   try {
     const snapshot = await gitSnapshot(options.repository);
     headAfter = snapshot.head;
     finalDirtyPaths = snapshot.paths;
     finalPathStates = snapshot.pathStates;
+    finalSnapshotComplete = true;
   } catch (error) {
     harnessError = appendHarnessError(harnessError, `unable to read final Git state: ${errorMessage(error)}`);
   }
 
-  workerCreatedDirtyPaths = [...new Set([...baselineDirtyPaths, ...finalDirtyPaths])]
-    .filter((path) => baselinePathStates[path] !== finalPathStates[path])
-    .sort();
+  if (baselineSnapshotComplete && finalSnapshotComplete) {
+    workerCreatedDirtyPaths = [...new Set([...baselineDirtyPaths, ...finalDirtyPaths])]
+      .filter((path) => baselinePathStates[path] !== finalPathStates[path])
+      .sort();
+  }
   try {
     const attribution = await committedChanges(options.repository, headBefore, headAfter);
     headRelationship = attribution.headRelationship;

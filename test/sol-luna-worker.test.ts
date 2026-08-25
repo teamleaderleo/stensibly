@@ -57,7 +57,7 @@ function fakeCodexSource(input: {
   readonly resultPath: string;
   readonly authMode: "chatgpt" | "api-key";
   readonly workerExit: number;
-  readonly workerMode: "normal" | "timeout" | "commit" | "rewind" | "clean";
+  readonly workerMode: "normal" | "timeout" | "commit" | "commit-revert" | "rewind" | "clean" | "break-git";
   readonly envPath: string;
   readonly workerCreatedPath: string;
 }): string {
@@ -80,12 +80,21 @@ if (process.argv[2] === "login" && process.argv[3] === "status") {
 
 if (workerMode === "timeout") await new Promise((resolve) => setTimeout(resolve, 500));
 if (workerCreatedPath) await Bun.write(workerCreatedPath, "worker-created\\n");
-if (workerMode === "commit") {
+if (workerMode === "commit" || workerMode === "commit-revert") {
   const repository = workerCreatedPath.slice(0, workerCreatedPath.lastIndexOf("/"));
   const add = Bun.spawnSync(["git", "-C", repository, "add", "worker-created.txt"]);
   if (add.exitCode !== 0) throw new Error("fake git add failed");
   const commit = Bun.spawnSync(["git", "-C", repository, "-c", "user.name=Sol Luna Test", "-c", "user.email=sol-luna@example.invalid", "commit", "-q", "-m", "worker commit"]);
   if (commit.exitCode !== 0) throw new Error("fake git commit failed");
+}
+if (workerMode === "commit-revert") {
+  const { unlink } = await import("node:fs/promises");
+  const repository = workerCreatedPath.slice(0, workerCreatedPath.lastIndexOf("/"));
+  await unlink(workerCreatedPath);
+  const add = Bun.spawnSync(["git", "-C", repository, "add", "worker-created.txt"]);
+  if (add.exitCode !== 0) throw new Error("fake revert git add failed");
+  const commit = Bun.spawnSync(["git", "-C", repository, "-c", "user.name=Sol Luna Test", "-c", "user.email=sol-luna@example.invalid", "commit", "-q", "-m", "worker revert"]);
+  if (commit.exitCode !== 0) throw new Error("fake revert git commit failed");
 }
 if (workerMode === "rewind") {
   const repository = workerCreatedPath.slice(0, workerCreatedPath.lastIndexOf("/"));
@@ -95,6 +104,11 @@ if (workerMode === "rewind") {
 if (workerMode === "clean") {
   const { unlink } = await import("node:fs/promises");
   await unlink(workerCreatedPath);
+}
+if (workerMode === "break-git") {
+  const { rename } = await import("node:fs/promises");
+  const repository = workerCreatedPath.slice(0, workerCreatedPath.lastIndexOf("/"));
+  await rename(repository + "/.git", repository + "/.git-broken");
 }
 if (argsPath) await Bun.write(argsPath, JSON.stringify(process.argv.slice(2)));
 if (stdinPath) await Bun.write(stdinPath, await Bun.stdin.text());
@@ -117,7 +131,7 @@ process.exit(workerExit);
 async function setupFakeCodex(overrides: Partial<{
   readonly authMode: "chatgpt" | "api-key";
   readonly workerExit: number;
-  readonly workerMode: "normal" | "timeout" | "commit" | "rewind" | "clean";
+  readonly workerMode: "normal" | "timeout" | "commit" | "commit-revert" | "rewind" | "clean" | "break-git";
 }> = {}): Promise<FakeCodexSetup> {
   const root = await mkdtemp(join(tmpdir(), "sol-luna-worker-test-"));
   temporaryRoots.push(root);
@@ -514,6 +528,31 @@ describe("disposable Sol/Luna Codex worker harness", () => {
     expect(result.receipt.git.committedPaths).toEqual(["worker-created.txt"]);
     expect(result.receipt.git.workerCreatedDirtyPaths).toEqual(["worker-created.txt"]);
     expect(result.receipt.git.changedPaths).toEqual(["worker-created.txt"]);
+  });
+
+  test("retains paths touched and reverted across descendant commits", async () => {
+    const setup = await setupFakeCodex({ workerMode: "commit-revert" });
+
+    const result = await runSolLunaWorker({ ...setup.options, gitMetadataAuthority: "write" });
+
+    expect(result.receipt.git.headRelationship).toBe("descendant");
+    expect(result.receipt.git.commitsMade).toHaveLength(2);
+    expect(result.receipt.git.committedPaths).toEqual(["worker-created.txt"]);
+    expect(result.receipt.git.finalDirtyPaths).toEqual([]);
+    expect(result.receipt.git.changedPaths).toEqual(["worker-created.txt"]);
+  });
+
+  test("does not invent path attribution when the final snapshot fails", async () => {
+    const setup = await setupFakeCodex({ workerMode: "break-git" });
+    await writeFile(setup.workerCreatedPath, "baseline dirty\n");
+
+    const result = await runSolLunaWorker({ ...setup.options, gitMetadataAuthority: "write" });
+
+    expect(result.receipt.git.baselineDirtyPaths).toEqual(["worker-created.txt"]);
+    expect(result.receipt.git.headAfter).toBeNull();
+    expect(result.receipt.git.workerCreatedDirtyPaths).toEqual([]);
+    expect(result.receipt.git.changedPaths).toEqual([]);
+    expect(result.receipt.harnessError).toContain("unable to read final Git state");
   });
 
   test("fails closed on non-descendant head movement while retaining exact heads", async () => {
