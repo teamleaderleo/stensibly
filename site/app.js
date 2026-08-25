@@ -203,7 +203,7 @@ document.querySelector('#tray-batch-approve')?.addEventListener('click', async (
     for (const item of blocked) {
       await completeItemDirect(item.id);
     }
-    button.textContent = '⚡ Approve All Ready';
+    button.textContent = '⚡ Mark All Done';
     button.disabled = false;
   }
 });
