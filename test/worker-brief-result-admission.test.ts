@@ -16,6 +16,7 @@ import {
   adjudicateWorkerResultV1,
   compileWorkerCanonicalDeltaEvidenceV1,
   compileWorkerProviderDispatchReceiptV1,
+  compileWorkerResultContractV1,
   compileWorkerResultRequirementsV1,
   type WorkerResultObservationV1,
   type WorkerResultRequirementsV1,
@@ -168,6 +169,7 @@ function placement(
   phase: "pre_dispatch" | "pre_result_application" = "pre_dispatch",
   priorDispatch: CodexCloudDispatchReceiptV1 | null = null,
   currentHead?: string,
+  resultObservedAt = "2026-08-26T17:00:00.000Z",
 ): CodexCloudPlacementPreflightInputV1 {
   const suffix = phase === "pre_dispatch" ? "dispatch" : "result";
   const expected = facts(kind);
@@ -181,12 +183,14 @@ function placement(
       receiptId: `${kind}-read-${suffix}`,
       observedAt: phase === "pre_dispatch"
         ? "2026-08-26T16:02:00.000Z"
-        : "2026-08-26T17:00:00.000Z",
+        : resultObservedAt,
       facts: facts(kind, currentHead),
     }),
     inspection: inspection(
       `${kind}-inspection-${suffix}`,
-      phase === "pre_dispatch" ? "2026-08-26T16:02:01.000Z" : "2026-08-26T17:00:01.000Z",
+      phase === "pre_dispatch"
+        ? "2026-08-26T16:02:01.000Z"
+        : new Date(Date.parse(resultObservedAt) + 1_000).toISOString(),
     ),
     priorDispatch,
   };
@@ -205,9 +209,23 @@ function requirements(
   const sourceDispatch = adjudicateCodexCloudPlacementV1(sourcePlacement).dispatchReceipt;
   const mainDispatch = adjudicateCodexCloudPlacementV1(mainPlacement).dispatchReceipt;
   if (sourceDispatch === null || mainDispatch === null) throw new Error("test dispatch receipt missing");
+  const brief = compileWorkerBriefV1(overrides.brief ?? briefInput());
+  const provenanceObligations = [{
+    id: "inventory-capture-production-provenance",
+    statement: "Production inventory capture uses only the reviewed fixed provider path",
+    sourceRef: "smolrunner#696:acceptance",
+  }];
+  const resultContract = compileWorkerResultContractV1({
+    version: 1,
+    brief,
+    checkoutProfile: CODEX_CLOUD_WORKTREE_PROFILE_V1,
+    dispatchTree,
+    deltaRequirement,
+    provenanceObligations,
+  });
   return compileWorkerResultRequirementsV1({
     version: 1,
-    brief: compileWorkerBriefV1(overrides.brief ?? briefInput()),
+    brief,
     runnerReservation,
     placements: { source: sourcePlacement, canonicalMain: mainPlacement },
     checkout: {
@@ -220,14 +238,11 @@ function requirements(
         runnerReservationFingerprint: fingerprintCanonicalRequest(runnerReservation),
         sourcePlacementDispatchFingerprint: sourceDispatch.fingerprint,
         canonicalMainPlacementDispatchFingerprint: mainDispatch.fingerprint,
+        resultContractFingerprint: resultContract.fingerprint,
       }),
     },
     deltaRequirement,
-    provenanceObligations: [{
-      id: "inventory-capture-production-provenance",
-      statement: "Production inventory capture uses only the reviewed fixed provider path",
-      sourceRef: "smolrunner#696:acceptance",
-    }],
+    provenanceObligations,
   });
 }
 
@@ -277,18 +292,25 @@ function canonicalDelta(
   });
 }
 
-function applicationPlacements(compiled: WorkerResultRequirementsV1, movedMain?: string) {
+function applicationPlacements(
+  compiled: WorkerResultRequirementsV1,
+  movedMain?: string,
+  observedAt = "2026-08-26T17:00:00.000Z",
+) {
   return {
     source: placement(
       "source",
       "pre_result_application",
       compiled.coordinatorFacts.sourcePlacementDispatch,
+      undefined,
+      observedAt,
     ),
     main: placement(
       "main",
       "pre_result_application",
       compiled.coordinatorFacts.canonicalMainPlacementDispatch,
       movedMain,
+      observedAt,
     ),
   };
 }
@@ -420,6 +442,57 @@ describe("worker brief native Cloud result admission", () => {
     expect(admitted.authorizesAcceptance).toBeFalse();
   });
 
+  test("cannot weaken the frozen result contract after provider dispatch", () => {
+    const frozen = requirements("required_nonempty");
+    const runnerReservation = reservation();
+    expect(() => compileWorkerResultRequirementsV1({
+      version: 1,
+      brief: compileWorkerBriefV1(briefInput()),
+      runnerReservation,
+      placements: { source: placement("source"), canonicalMain: placement("main") },
+      checkout: {
+        profile: CODEX_CLOUD_WORKTREE_PROFILE_V1,
+        dispatchTree,
+        providerDispatch: frozen.coordinatorFacts.providerDispatch,
+      },
+      deltaRequirement: "allowed_empty",
+      provenanceObligations: [],
+    })).toThrow("does not match admitted dispatch prerequisites");
+
+    const { fingerprint: _originalFingerprint, ...serialized } = frozen;
+    const weakenedBody = {
+      ...serialized,
+      deltaRequirement: "allowed_empty" as const,
+      obligations: [],
+    };
+    const weakened = {
+      ...weakenedBody,
+      fingerprint: fingerprintCanonicalRequest(weakenedBody),
+    };
+    expect(() => adjudicateWorkerResultV1(
+      weakened,
+      observation(weakened),
+      canonicalDelta(weakened),
+    )).toThrow("result contract fingerprint does not match requirements");
+
+    const movedTreeBody = {
+      ...serialized,
+      coordinatorFacts: {
+        ...serialized.coordinatorFacts,
+        dispatchTree: "f".repeat(40),
+      },
+    };
+    const movedTree = {
+      ...movedTreeBody,
+      fingerprint: fingerprintCanonicalRequest(movedTreeBody),
+    };
+    expect(() => adjudicateWorkerResultV1(
+      movedTree,
+      observation(movedTree),
+      canonicalDelta(movedTree),
+    )).toThrow("result contract fingerprint does not match requirements");
+  });
+
   test("fails closed on missing or mismatched exact checkout facts", () => {
     const compiled = requirements();
     const unknown = adjudicateWorkerResultV1(
@@ -465,6 +538,27 @@ describe("worker brief native Cloud result admission", () => {
     expect(application.disposition).toBe("admit");
     expect(application.denials).toEqual([]);
     expect(application.authorizesResultApplication).toBeFalse();
+  });
+
+  test("stale-releases #1695 reads taken before terminal result evidence", () => {
+    const compiled = requirements();
+    const placements = applicationPlacements(
+      compiled,
+      undefined,
+      "2026-08-26T16:58:00.000Z",
+    );
+    const application = adjudicateWorkerResultApplicationV1(
+      compiled,
+      observation(compiled),
+      canonicalDelta(compiled),
+      placements.source,
+      placements.main,
+    );
+    expect(application.disposition).toBe("stale_release");
+    expect(application.denials).toEqual([
+      "source_placement_stale",
+      "canonical_main_placement_stale",
+    ]);
   });
 
   test("consumes exact #1702 reservation provenance and reconciles the brief baseline", () => {

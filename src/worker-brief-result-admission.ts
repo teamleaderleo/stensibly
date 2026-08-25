@@ -38,6 +38,7 @@ export interface WorkerProviderDispatchReceiptV1 {
   readonly runnerReservationFingerprint: string;
   readonly sourcePlacementDispatchFingerprint: string;
   readonly canonicalMainPlacementDispatchFingerprint: string;
+  readonly resultContractFingerprint: string;
   readonly fingerprint: string;
 }
 
@@ -45,6 +46,25 @@ export interface WorkerResultProvenanceObligationInputV1 {
   readonly id: string;
   readonly statement: string;
   readonly sourceRef: string;
+}
+
+export interface CompileWorkerResultContractInputV1 {
+  readonly version: typeof WORKER_BRIEF_RESULT_ADMISSION_V1;
+  readonly brief: WorkerBriefV1;
+  readonly checkoutProfile: typeof CODEX_CLOUD_WORKTREE_PROFILE_V1;
+  readonly dispatchTree: string;
+  readonly deltaRequirement: WorkerResultDeltaRequirementV1;
+  readonly provenanceObligations: readonly WorkerResultProvenanceObligationInputV1[];
+}
+
+export interface WorkerResultContractV1 {
+  readonly version: typeof WORKER_BRIEF_RESULT_ADMISSION_V1;
+  readonly briefDigest: string;
+  readonly checkoutProfile: typeof CODEX_CLOUD_WORKTREE_PROFILE_V1;
+  readonly dispatchTree: string;
+  readonly deltaRequirement: WorkerResultDeltaRequirementV1;
+  readonly obligations: readonly WorkerResultObligationV1[];
+  readonly fingerprint: string;
 }
 
 export interface CompileWorkerResultRequirementsInputV1 {
@@ -75,6 +95,7 @@ export interface WorkerResultRequirementsV1 {
   readonly version: typeof WORKER_BRIEF_RESULT_ADMISSION_V1;
   readonly checkoutProfile: typeof CODEX_CLOUD_WORKTREE_PROFILE_V1;
   readonly briefDigest: string;
+  readonly resultContractFingerprint: string;
   readonly runId: string;
   readonly runnerProfile: {
     readonly id: string;
@@ -112,6 +133,7 @@ export interface CompileWorkerProviderDispatchReceiptInputV1 {
   readonly runnerReservationFingerprint: string;
   readonly sourcePlacementDispatchFingerprint: string;
   readonly canonicalMainPlacementDispatchFingerprint: string;
+  readonly resultContractFingerprint: string;
 }
 
 export interface WorkerResultObservationV1 {
@@ -213,6 +235,35 @@ export interface WorkerResultApplicationAdmissionV1 {
   readonly fingerprint: string;
 }
 
+/** Freezes result-shape obligations before the provider task is dispatched. */
+export function compileWorkerResultContractV1(
+  rawInput: CompileWorkerResultContractInputV1,
+): WorkerResultContractV1 {
+  const input = exactRecord(rawInput, [
+    "version", "brief", "checkoutProfile", "dispatchTree", "deltaRequirement",
+    "provenanceObligations",
+  ], "Worker result contract input");
+  if (input.version !== WORKER_BRIEF_RESULT_ADMISSION_V1) {
+    throw new RangeError("Worker result contract version is invalid");
+  }
+  if (input.checkoutProfile !== CODEX_CLOUD_WORKTREE_PROFILE_V1) {
+    throw new RangeError("Worker checkout profile is unsupported");
+  }
+  const brief = parseWorkerBriefV1(workerBriefJson(
+    plainDataSnapshot(input.brief, "Worker result contract brief") as WorkerBriefV1,
+  ));
+  const obligations = resultObligations(brief, input.provenanceObligations);
+  const contract = {
+    version: WORKER_BRIEF_RESULT_ADMISSION_V1,
+    briefDigest: brief.semanticDigest,
+    checkoutProfile: CODEX_CLOUD_WORKTREE_PROFILE_V1,
+    dispatchTree: gitObjectId(input.dispatchTree, "Dispatch tree"),
+    deltaRequirement: deltaRequirement(input.deltaRequirement),
+    obligations,
+  };
+  return deepFreeze({ ...contract, fingerprint: fingerprintCanonicalRequest(contract) });
+}
+
 /** Records the coordinator-owned provider dispatch that created the task. */
 export function compileWorkerProviderDispatchReceiptV1(
   rawInput: CompileWorkerProviderDispatchReceiptInputV1,
@@ -220,6 +271,7 @@ export function compileWorkerProviderDispatchReceiptV1(
   const input = exactRecord(rawInput, [
     "version", "providerTaskId", "dispatchedAt", "runnerReservationFingerprint",
     "sourcePlacementDispatchFingerprint", "canonicalMainPlacementDispatchFingerprint",
+    "resultContractFingerprint",
   ], "Worker provider dispatch receipt input");
   if (input.version !== WORKER_BRIEF_RESULT_ADMISSION_V1) {
     throw new RangeError("Worker provider dispatch receipt version is invalid");
@@ -239,6 +291,10 @@ export function compileWorkerProviderDispatchReceiptV1(
     canonicalMainPlacementDispatchFingerprint: fingerprint(
       input.canonicalMainPlacementDispatchFingerprint,
       "Canonical main placement dispatch fingerprint",
+    ),
+    resultContractFingerprint: fingerprint(
+      input.resultContractFingerprint,
+      "Worker result contract fingerprint",
     ),
   };
   return deepFreeze({ ...receipt, fingerprint: fingerprintCanonicalRequest(receipt) });
@@ -313,6 +369,14 @@ export function compileWorkerResultRequirementsV1(
   if (checkout.profile !== CODEX_CLOUD_WORKTREE_PROFILE_V1) {
     throw new RangeError("Worker checkout profile is unsupported");
   }
+  const resultContract = compileWorkerResultContractV1({
+    version: WORKER_BRIEF_RESULT_ADMISSION_V1,
+    brief: input.brief as WorkerBriefV1,
+    checkoutProfile: CODEX_CLOUD_WORKTREE_PROFILE_V1,
+    dispatchTree: checkout.dispatchTree as string,
+    deltaRequirement: input.deltaRequirement as WorkerResultDeltaRequirementV1,
+    provenanceObligations: input.provenanceObligations as readonly WorkerResultProvenanceObligationInputV1[],
+  });
   const sourcePlacementDispatch = requiredDispatchReceipt(source, "Source placement");
   const canonicalMainPlacementDispatch = requiredDispatchReceipt(
     canonicalMain,
@@ -325,26 +389,18 @@ export function compileWorkerResultRequirementsV1(
     || providerDispatch.sourcePlacementDispatchFingerprint !== sourcePlacementDispatch.fingerprint
     || providerDispatch.canonicalMainPlacementDispatchFingerprint
       !== canonicalMainPlacementDispatch.fingerprint
+    || providerDispatch.resultContractFingerprint !== resultContract.fingerprint
   ) throw new RangeError("Provider dispatch receipt does not match admitted dispatch prerequisites");
   if (Date.parse(providerDispatch.dispatchedAt) <= Math.max(
     Date.parse(reservation.reservedAt),
     dispatchReceiptEvidenceTime(sourcePlacementDispatch),
     dispatchReceiptEvidenceTime(canonicalMainPlacementDispatch),
   )) throw new RangeError("Provider dispatch receipt predates admitted dispatch prerequisites");
-  const obligations = [
-    ...brief.objective.nonGoals.map((statement, index) => deepFreeze({
-      id: `exclusion-${index + 1}-${shortFingerprint(statement)}`,
-      kind: "exclusion" as const,
-      statement,
-      sourceRef: `worker-brief:${brief.semanticDigest}#objective.nonGoals[${index}]`,
-    })),
-    ...provenanceObligations(input.provenanceObligations),
-  ];
-  ensureUnique(obligations.map((obligation) => obligation.id), "Worker result obligation IDs");
   const requirements = {
     version: WORKER_BRIEF_RESULT_ADMISSION_V1,
     checkoutProfile: CODEX_CLOUD_WORKTREE_PROFILE_V1,
     briefDigest: brief.semanticDigest,
+    resultContractFingerprint: resultContract.fingerprint,
     runId: brief.identity.dispatch.runId,
     runnerProfile: deepFreeze({
       id: reservation.profileId,
@@ -355,7 +411,7 @@ export function compileWorkerResultRequirementsV1(
       repository: source.repository,
       logicalSourceRef: source.expected.remoteRef,
       dispatchHead: source.expected.head,
-      dispatchTree: gitObjectId(checkout.dispatchTree, "Dispatch tree"),
+      dispatchTree: resultContract.dispatchTree,
       canonicalMainRef: canonicalMain.expected.remoteRef,
       canonicalMainHeadAtDispatch: canonicalMain.expected.head,
       providerTaskId: providerDispatch.providerTaskId,
@@ -368,8 +424,8 @@ export function compileWorkerResultRequirementsV1(
       optionalFacts: ["local_branch", "origin_main", "origin_url"] as const,
       notExposedByProfile: ["logical_source_ref", "canonical_main"] as const,
     }),
-    obligations: deepFreeze(obligations),
-    deltaRequirement: deltaRequirement(input.deltaRequirement),
+    obligations: resultContract.obligations,
+    deltaRequirement: resultContract.deltaRequirement,
     grantsAuthority: false as const,
     authorizesResultApplication: false as const,
   };
@@ -536,6 +592,9 @@ export function adjudicateWorkerResultApplicationV1(
 ): WorkerResultApplicationAdmissionV1 {
   const requirements = admitRequirements(rawRequirements);
   const result = adjudicateWorkerResultV1(requirements, rawObservation, rawCanonicalDelta);
+  const canonicalEvidence = rawCanonicalDelta === null
+    ? null
+    : admitCanonicalDeltaEvidence(rawCanonicalDelta);
   const source = adjudicateCodexCloudPlacementV1(
     plainDataSnapshot(
       sourcePlacementInput,
@@ -550,10 +609,15 @@ export function adjudicateWorkerResultApplicationV1(
   );
   const denials: WorkerResultApplicationAdmissionV1["denials"][number][] = [];
   if (result.resultDisposition !== "acceptance_candidate") denials.push("result_not_candidate");
-  if (!applicationPlacementMatches(source, requirements, "source")) {
+  if (!applicationPlacementMatches(source, requirements, "source", canonicalEvidence?.observedAt ?? null)) {
     denials.push("source_placement_stale");
   }
-  if (!applicationPlacementMatches(canonicalMain, requirements, "canonical_main")) {
+  if (!applicationPlacementMatches(
+    canonicalMain,
+    requirements,
+    "canonical_main",
+    canonicalEvidence?.observedAt ?? null,
+  )) {
     denials.push("canonical_main_placement_stale");
   }
   const admitted = {
@@ -595,6 +659,7 @@ function applicationPlacementMatches(
   placement: CodexCloudPlacementPreflightV1,
   requirements: WorkerResultRequirementsV1,
   kind: "source" | "canonical_main",
+  resultObservedAt: string | null,
 ): boolean {
   if (
     placement.phase !== "pre_result_application"
@@ -602,6 +667,9 @@ function applicationPlacementMatches(
     || placement.disposition !== "admit"
     || placement.denials.length !== 0
     || placement.repository !== requirements.coordinatorFacts.repository
+    || resultObservedAt === null
+    || Date.parse(placement.evidenceLink.canonicalReadObservedAt) <= Date.parse(resultObservedAt)
+    || Date.parse(placement.evidenceLink.inspectionObservedAt) <= Date.parse(resultObservedAt)
   ) return false;
   return kind === "source"
     ? placement.priorDispatchFingerprint
@@ -626,7 +694,7 @@ function admitProviderDispatchReceipt(value: unknown): WorkerProviderDispatchRec
   const record = exactRecord(safe, [
     "version", "providerTaskId", "dispatchedAt", "runnerReservationFingerprint",
     "sourcePlacementDispatchFingerprint", "canonicalMainPlacementDispatchFingerprint",
-    "fingerprint",
+    "resultContractFingerprint", "fingerprint",
   ], "Worker provider dispatch receipt");
   const compiled = compileWorkerProviderDispatchReceiptV1({
     version: record.version as 1,
@@ -636,6 +704,7 @@ function admitProviderDispatchReceipt(value: unknown): WorkerProviderDispatchRec
     sourcePlacementDispatchFingerprint: record.sourcePlacementDispatchFingerprint as string,
     canonicalMainPlacementDispatchFingerprint:
       record.canonicalMainPlacementDispatchFingerprint as string,
+    resultContractFingerprint: record.resultContractFingerprint as string,
   });
   const suppliedFingerprint = fingerprint(record.fingerprint, "Provider dispatch fingerprint");
   if (compiled.fingerprint !== suppliedFingerprint) {
@@ -728,7 +797,7 @@ function admitCanonicalDeltaEvidence(value: WorkerCanonicalDeltaEvidenceV1) {
 function admitRequirements(value: WorkerResultRequirementsV1): WorkerResultRequirementsV1 {
   const safe = plainDataSnapshot(value, "Worker result requirements") as WorkerResultRequirementsV1;
   const record = exactRecord(safe, [
-    "version", "checkoutProfile", "briefDigest", "runId", "runnerProfile",
+    "version", "checkoutProfile", "briefDigest", "resultContractFingerprint", "runId", "runnerProfile",
     "coordinatorFacts", "executorContract", "obligations", "deltaRequirement",
     "grantsAuthority", "authorizesResultApplication", "fingerprint",
   ], "Worker result requirements");
@@ -762,6 +831,10 @@ function admitRequirements(value: WorkerResultRequirementsV1): WorkerResultRequi
     version: WORKER_BRIEF_RESULT_ADMISSION_V1,
     checkoutProfile: CODEX_CLOUD_WORKTREE_PROFILE_V1,
     briefDigest: fingerprint(record.briefDigest, "Worker brief digest"),
+    resultContractFingerprint: fingerprint(
+      record.resultContractFingerprint,
+      "Worker result contract fingerprint",
+    ),
     runId: identifier(record.runId, "Worker result run ID", 180),
     runnerProfile: deepFreeze({
       id: text(runner.id, "Worker result runner profile ID", 160),
@@ -793,8 +866,21 @@ function admitRequirements(value: WorkerResultRequirementsV1): WorkerResultRequi
   if (record.grantsAuthority !== false || record.authorizesResultApplication !== false) {
     throw new RangeError("Worker result requirements cannot grant authority");
   }
+  const reconstructedResultContract = {
+    version: WORKER_BRIEF_RESULT_ADMISSION_V1,
+    briefDigest: body.briefDigest,
+    checkoutProfile: body.checkoutProfile,
+    dispatchTree: body.coordinatorFacts.dispatchTree,
+    deltaRequirement: body.deltaRequirement,
+    obligations: body.obligations,
+  };
+  if (
+    fingerprintCanonicalRequest(reconstructedResultContract)
+      !== body.resultContractFingerprint
+  ) throw new RangeError("Worker result contract fingerprint does not match requirements");
   if (
     body.coordinatorFacts.providerTaskId !== providerDispatch.providerTaskId
+    || body.resultContractFingerprint !== providerDispatch.resultContractFingerprint
     || providerDispatch.runnerReservationFingerprint !== body.runnerProfile.reservationFingerprint
     || providerDispatch.sourcePlacementDispatchFingerprint !== sourcePlacementDispatch.fingerprint
     || providerDispatch.canonicalMainPlacementDispatchFingerprint
@@ -844,6 +930,23 @@ function observationInput(value: WorkerResultObservationV1): WorkerResultObserva
       evidenceRefs: refs(delta.evidenceRefs, "Executor delta evidence"),
     }),
   });
+}
+
+function resultObligations(
+  brief: WorkerBriefV1,
+  provenance: unknown,
+): readonly WorkerResultObligationV1[] {
+  const obligations = [
+    ...brief.objective.nonGoals.map((statement, index) => deepFreeze({
+      id: `exclusion-${index + 1}-${shortFingerprint(statement)}`,
+      kind: "exclusion" as const,
+      statement,
+      sourceRef: `worker-brief:${brief.semanticDigest}#objective.nonGoals[${index}]`,
+    })),
+    ...provenanceObligations(provenance),
+  ];
+  ensureUnique(obligations.map((obligation) => obligation.id), "Worker result obligation IDs");
+  return deepFreeze(obligations);
 }
 
 function provenanceObligations(value: unknown): WorkerResultObligationV1[] {

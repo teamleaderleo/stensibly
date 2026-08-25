@@ -232,8 +232,11 @@ use a legacy version-unknown run, and `worker-brief/v1` remains unchanged. The
   ref, dispatch HEAD/tree, canonical main at dispatch, and the complete admitted
   #1695 source/main placement receipts;
 - a distinct coordinator-owned provider-dispatch receipt binds the exact provider
-  task and dispatch time to those two placement receipts and the #1702 reservation;
-  the later provider read must name that task and postdate that dispatch;
+  task and dispatch time to those two placement receipts, the #1702 reservation,
+  and a pre-dispatch result-contract fingerprint. The frozen contract includes the
+  brief digest, checkout profile/tree, delta requirement, and every exclusion and
+  provenance obligation; the later provider read must name that task and postdate
+  that dispatch;
 - the executor must verify the exact checkout HEAD and tree;
 - a local branch such as `work` is only an observed checkout detail;
 - missing `origin`, `origin/main`, and provider URLs are
@@ -241,8 +244,10 @@ use a legacy version-unknown run, and `worker-brief/v1` remains unchanged. The
   retained logical source ref;
 - distinct, later #1695 source and canonical-main pre-result reads must consume the
   exact stored dispatch receipts before application. Replayed, old, retargeted,
-  settled, frozen, or moved facts stale-release the result. No second freshness
-  comparator or application authority is introduced.
+  settled, frozen, or moved facts stale-release the result. Both final canonical
+  reads and inspections must also postdate terminal provider-result evidence, so a
+  pre-completion freshness read cannot be reused for application. No second
+  freshness comparator or application authority is introduced.
 
 The same requirements fingerprint declares whether the dispatch requires a
 nonempty canonical provider diff or explicitly allows an empty read-only result.
