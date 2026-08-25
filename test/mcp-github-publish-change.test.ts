@@ -88,7 +88,7 @@ describe("GitHub publish-change MCP operation", () => {
       await client.connect(clientTransport);
       const tools = await client.listTools();
       expect(tools.tools.find((tool) => tool.name === "github_publish_change")?.annotations)
-        .toMatchObject({ idempotentHint: true, destructiveHint: false });
+        .toMatchObject({ idempotentHint: true, destructiveHint: true });
 
       const result = await client.callTool({
         name: "github_publish_change",
