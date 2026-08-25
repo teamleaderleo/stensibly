@@ -20,6 +20,7 @@ const CHATGPT_LOGIN_STATUS = "Logged in using ChatGPT";
 const RECEIPT_SCHEMA_VERSION = "sol-luna-worker-receipt/3" as const;
 const DEFAULT_TIMEOUT_MS = 600_000;
 const DEFAULT_CAPTURE_CAP_BYTES = 8 * 1024 * 1024;
+const DEFAULT_GIT_TIMEOUT_MS = 120_000;
 const KILL_ESCALATION_GRACE_MS = 750;
 const STDIN_CHUNK_BYTES = 64 * 1024;
 const TMP_PREFIX = ".sol-luna-worker-tmp-";
@@ -68,6 +69,11 @@ export interface SolLunaWorkerOptions {
   readonly timeoutMs?: number;
   /** Per-stream ceiling on retained child stdout/stderr bytes. Defaults to 8 MiB. */
   readonly captureCapBytes?: number;
+  /**
+   * Wall-clock bound applied to each spawned Git observation (snapshots,
+   * metadata probes, diffs, ancestry). Defaults to two minutes.
+   */
+  readonly gitTimeoutMs?: number;
 }
 
 export interface SolLunaArtifact {
@@ -373,6 +379,7 @@ function normalizeOptions(input: SolLunaWorkerOptions): Required<SolLunaWorkerOp
       "captureCapBytes",
       DEFAULT_CAPTURE_CAP_BYTES,
     ),
+    gitTimeoutMs: requirePositiveInteger(input.gitTimeoutMs, "gitTimeoutMs", DEFAULT_GIT_TIMEOUT_MS),
   };
 }
 
@@ -556,18 +563,36 @@ async function peekShebang(executablePath: string): Promise<string | null> {
  * Expands a `#!` script entrypoint into its interpreter invocation so spawning
  * stays argv-only. This matches kernel shebang handling, which Bun's
  * node:child_process posix_spawn layer does not perform on every platform.
+ *
+ * Bare command names are never opened for inspection: the operating system
+ * retains normal PATH lookup semantics. Path-like entrypoints are resolved to
+ * one absolute target, and that same target is both inspected and passed to
+ * the interpreter, so inspection and execution cannot name different files.
  */
-async function resolveSpawnCommand(command: readonly string[], depth = 0): Promise<readonly string[]> {
+export async function resolveSpawnCommand(
+  command: readonly string[],
+  depth = 0,
+): Promise<readonly string[]> {
   const executable = command[0];
   if (depth >= 5 || executable === undefined || command.length === 0) return command;
-  const shebang = await peekShebang(executable);
-  if (shebang === null) return command;
+  if (!executable.includes("/")) return command;
+  const inspectTarget = resolve(executable);
+  const shebang = await peekShebang(inspectTarget);
+  if (shebang === null) return [inspectTarget, ...command.slice(1)];
   const trimmed = shebang.trim();
-  if (trimmed.length === 0) return command;
+  if (trimmed.length === 0) return [inspectTarget, ...command.slice(1)];
   const separator = trimmed.indexOf(" ");
   const interpreter = separator === -1 ? trimmed : trimmed.slice(0, separator);
   const interpreterArg = separator === -1 ? [] : [trimmed.slice(separator + 1).trim()];
-  return resolveSpawnCommand([interpreter, ...interpreterArg.filter((arg) => arg.length > 0), ...command], depth + 1);
+  return resolveSpawnCommand(
+    [
+      interpreter,
+      ...interpreterArg.filter((arg) => arg.length > 0),
+      inspectTarget,
+      ...command.slice(1),
+    ],
+    depth + 1,
+  );
 }
 
 function failedCapture(spawnError: string): ProcessCapture {
@@ -885,12 +910,63 @@ function parseNamePaths(nameBytes: Uint8Array): string[] {
   return utf8(nameBytes).split("\0").filter((path) => path.length > 0);
 }
 
-async function gitOutput(repository: string, args: readonly string[]): Promise<Uint8Array> {
-  const result = await captureProcess(["git", "-c", "core.fsmonitor=false", "-C", repository, ...args], {
-    env: { ...codexEnvironment(), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+interface GitObservationLimits {
+  readonly timeoutMs: number;
+  readonly captureCapBytes: number;
+}
+
+/**
+ * Noninteractive, config-neutralized environment for every Git observation.
+ * `GIT_TERMINAL_PROMPT=0` makes credential prompts fail closed instead of
+ * blocking an unattended run; global/system/user config is discarded so no
+ * askpass helper, credential helper, or hook can be injected through Git
+ * configuration. The allowlist base keeps secrets and unrelated variables out.
+ */
+function gitObservationEnvironment(): Record<string, string> {
+  return {
+    ...codexEnvironment(),
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_TERMINAL_PROMPT: "0",
+  };
+}
+
+/**
+ * Runs one Git observation through the same accepted capture lifecycle as the
+ * Codex child: bounded capture, explicit wall-clock timeout, detached process
+ * group, SIGTERM then SIGKILL escalation, and deterministic wait/reap.
+ */
+async function gitCapture(
+  repository: string,
+  args: readonly string[],
+  limits: GitObservationLimits,
+): Promise<ProcessCapture> {
+  return await captureProcess(["git", "-c", "core.fsmonitor=false", "-C", repository, ...args], {
+    env: gitObservationEnvironment(),
+    timeoutMs: limits.timeoutMs,
+    captureCapBytes: limits.captureCapBytes,
   });
+}
+
+function gitCommandLabel(args: readonly string[]): string {
+  return `git ${args[0] ?? "command"}`;
+}
+
+async function gitOutput(
+  repository: string,
+  args: readonly string[],
+  limits: GitObservationLimits,
+): Promise<Uint8Array> {
+  const result = await gitCapture(repository, args, limits);
+  if (result.spawnError !== null) {
+    throw new Error(`${gitCommandLabel(args)} failed to start or finish: ${result.spawnError}`);
+  }
+  if (result.timedOut) {
+    throw new Error(`${gitCommandLabel(args)} timed out after ${limits.timeoutMs}ms`);
+  }
   if (result.exitCode !== 0) {
-    throw new Error(`git ${args[0] ?? "command"} exited with status ${result.exitCode}`);
+    throw new Error(`${gitCommandLabel(args)} exited with status ${result.exitCode}`);
   }
   return result.stdout;
 }
@@ -899,12 +975,15 @@ function resolveGitPath(repository: string, gitPath: string): string {
   return isAbsolute(gitPath) ? resolve(gitPath) : resolve(repository, gitPath);
 }
 
-async function gitMetadataLocation(repository: string): Promise<GitMetadataLocation> {
+async function gitMetadataLocation(
+  repository: string,
+  limits: GitObservationLimits,
+): Promise<GitMetadataLocation> {
   const [gitDirBytes, commonGitDirBytes, headPathBytes, indexPathBytes] = await Promise.all([
-    gitOutput(repository, ["rev-parse", "--git-dir"]),
-    gitOutput(repository, ["rev-parse", "--git-common-dir"]),
-    gitOutput(repository, ["rev-parse", "--git-path", "HEAD"]),
-    gitOutput(repository, ["rev-parse", "--git-path", "index"]),
+    gitOutput(repository, ["rev-parse", "--git-dir"], limits),
+    gitOutput(repository, ["rev-parse", "--git-common-dir"], limits),
+    gitOutput(repository, ["rev-parse", "--git-path", "HEAD"], limits),
+    gitOutput(repository, ["rev-parse", "--git-path", "index"], limits),
   ]);
   const gitDirValue = utf8(gitDirBytes).trim();
   const commonGitDirValue = utf8(commonGitDirBytes).trim();
@@ -967,21 +1046,19 @@ function notRequiredGitMetadataPreflight(declared: SolLunaGitMetadataAuthority):
   };
 }
 
-async function gitSnapshot(repository: string): Promise<GitSnapshot> {
+async function gitSnapshot(repository: string, limits: GitObservationLimits): Promise<GitSnapshot> {
   const [headBytes, statusBytes] = await Promise.all([
-    gitOutput(repository, ["rev-parse", "HEAD"]),
-    gitOutput(repository, ["status", "--porcelain=v1", "--untracked-files=all", "-z"]),
+    gitOutput(repository, ["rev-parse", "HEAD"], limits),
+    gitOutput(repository, ["status", "--porcelain=v1", "--untracked-files=all", "-z"], limits),
   ]);
   const head = utf8(headBytes).trim();
   if (head.length === 0) throw new Error("git HEAD was empty");
   const paths = parseStatusPaths(statusBytes);
   const pathStates = await Promise.all(paths.map(async (path) => {
     const [staged, unstaged, worktree] = await Promise.all([
-      gitOutput(repository, ["diff", "--binary", "--no-ext-diff", "--no-renames", "--cached", head, "--", path]),
-      gitOutput(repository, ["diff", "--binary", "--no-ext-diff", "--no-renames", "--", path]),
-      captureProcess(["git", "-c", "core.fsmonitor=false", "-C", repository, "hash-object", "--no-filters", "--", path], {
-        env: { ...codexEnvironment(), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
-      }),
+      gitOutput(repository, ["diff", "--binary", "--no-ext-diff", "--no-renames", "--cached", head, "--", path], limits),
+      gitOutput(repository, ["diff", "--binary", "--no-ext-diff", "--no-renames", "--", path], limits),
+      gitCapture(repository, ["hash-object", "--no-filters", "--", path], limits),
     ]);
     const hash = createHash("sha256")
       .update("staged\0").update(staged)
@@ -998,6 +1075,7 @@ async function committedAttribution(
   repository: string,
   headBefore: string | null,
   headAfter: string | null,
+  limits: GitObservationLimits,
 ): Promise<GitAttribution> {
   if (headBefore === null || headAfter === null) {
     return { headRelationship: "unknown", commitsMade: [], committedPaths: [], error: null };
@@ -1005,9 +1083,23 @@ async function committedAttribution(
   if (headBefore === headAfter) {
     return { headRelationship: "unchanged", commitsMade: [], committedPaths: [], error: null };
   }
-  const ancestry = await captureProcess(["git", "-c", "core.fsmonitor=false", "-C", repository, "merge-base", "--is-ancestor", headBefore, headAfter], {
-    env: { ...codexEnvironment(), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
-  });
+  const ancestry = await gitCapture(repository, ["merge-base", "--is-ancestor", headBefore, headAfter], limits);
+  if (ancestry.spawnError !== null) {
+    return {
+      headRelationship: "unknown",
+      commitsMade: [],
+      committedPaths: [],
+      error: `git merge-base failed to start or finish: ${ancestry.spawnError}`,
+    };
+  }
+  if (ancestry.timedOut) {
+    return {
+      headRelationship: "unknown",
+      commitsMade: [],
+      committedPaths: [],
+      error: `git merge-base timed out after ${limits.timeoutMs}ms before ancestry could be established`,
+    };
+  }
   if (ancestry.exitCode !== 0) {
     const nonDescendant = ancestry.exitCode === 1;
     return {
@@ -1019,11 +1111,11 @@ async function committedAttribution(
         : `unable to establish Git head ancestry (exit ${ancestry.exitCode ?? "unknown"})`,
     };
   }
-  const commitBytes = await gitOutput(repository, ["rev-list", "--reverse", `${headBefore}..${headAfter}`]);
+  const commitBytes = await gitOutput(repository, ["rev-list", "--reverse", `${headBefore}..${headAfter}`], limits);
   const commitsMade = utf8(commitBytes).split(/\r?\n/u).map((commit) => commit.trim()).filter((commit) => commit.length > 0);
   const touchedByCommit = await Promise.all(commitsMade.map((commit) => gitOutput(repository, [
     "diff-tree", "--no-commit-id", "--name-only", "--no-renames", "-r", "-z", `${commit}^`, commit, "--",
-  ])));
+  ], limits)));
   return {
     headRelationship: "descendant",
     commitsMade,
@@ -1219,6 +1311,10 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
   let headRelationship: SolLunaWorkerReceipt["git"]["headRelationship"] = "unknown";
   let gitLocation: GitMetadataLocation | null = null;
   let compiledProfile: CompiledCodexPermissionProfile | null = null;
+  const gitLimits: GitObservationLimits = {
+    timeoutMs: options.gitTimeoutMs,
+    captureCapBytes: options.captureCapBytes,
+  };
   let clientVersion: string | null = null;
   let permissionProfileSupported = false;
   let editAuthorityPreflight = notRequiredEditAuthorityPreflight(options.editAuthority);
@@ -1248,12 +1344,12 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
     if (jsonObject(schema) === null) throw new Error("output schema must contain a JSON object");
 
     try {
-      const snapshot = await gitSnapshot(options.repository);
+      const snapshot = await gitSnapshot(options.repository, gitLimits);
       headBefore = snapshot.head;
       beforePaths = snapshot.paths;
       beforePathStates = snapshot.pathStates;
       beforeGitReadable = true;
-      gitLocation = await gitMetadataLocation(options.repository);
+      gitLocation = await gitMetadataLocation(options.repository, gitLimits);
     } catch (error) {
       harnessError = appendHarnessError(harnessError, `unable to read Git state: ${errorMessage(error)}`);
     }
@@ -1375,7 +1471,7 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
   }
 
   try {
-    const snapshot = await gitSnapshot(options.repository);
+    const snapshot = await gitSnapshot(options.repository, gitLimits);
     headAfter = snapshot.head;
     afterPaths = snapshot.paths;
     afterPathStates = snapshot.pathStates;
@@ -1385,7 +1481,7 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
   }
 
   try {
-    const attribution = await committedAttribution(options.repository, headBefore, headAfter);
+    const attribution = await committedAttribution(options.repository, headBefore, headAfter, gitLimits);
     headRelationship = attribution.headRelationship;
     commitsMade = attribution.commitsMade;
     committedPaths = attribution.committedPaths;
@@ -1542,6 +1638,7 @@ interface ParsedCliOptions {
   readonly codexBin?: string;
   readonly timeoutMs?: number;
   readonly captureCapBytes?: number;
+  readonly gitTimeoutMs?: number;
 }
 
 function usage(): string {
@@ -1553,6 +1650,7 @@ function usage(): string {
     "  [--reasoning-effort low|medium|high|xhigh|max]",
     "  [--require-command NAME]...",
     "  [--codex-bin PATH] [--timeout-ms MS] [--capture-cap-bytes BYTES]",
+    "  [--git-timeout-ms MS]",
   ].join("\n");
 }
 
@@ -1617,12 +1715,13 @@ function parseCli(argv: readonly string[]): ParsedCliOptions {
   if (gitMetadataAuthority !== undefined && !isGitMetadataAuthority(gitMetadataAuthority)) throw new Error("--git-metadata-authority must be none or write");
   const reasoningEffort = values.get("reasoning-effort");
   if (reasoningEffort !== undefined && !isReasoningEffort(reasoningEffort)) throw new Error("--reasoning-effort must be low, medium, high, xhigh, or max");
-  const known = new Set([...required, "sandbox", "confinement", "edit-authority", "git-metadata-authority", "reasoning-effort", "codex-bin", "timeout-ms", "capture-cap-bytes"]);
+  const known = new Set([...required, "sandbox", "confinement", "edit-authority", "git-metadata-authority", "reasoning-effort", "codex-bin", "timeout-ms", "capture-cap-bytes", "git-timeout-ms"]);
   for (const key of values.keys()) {
     if (!known.has(key)) throw new Error(`unknown argument --${key}`);
   }
   const timeoutValue = values.get("timeout-ms");
   const captureCapValue = values.get("capture-cap-bytes");
+  const gitTimeoutValue = values.get("git-timeout-ms");
 
   return {
     repository: values.get("repository") as string,
@@ -1642,6 +1741,9 @@ function parseCli(argv: readonly string[]): ParsedCliOptions {
     ...(captureCapValue === undefined
       ? {}
       : { captureCapBytes: parsePositiveIntegerCli(captureCapValue, "--capture-cap-bytes") }),
+    ...(gitTimeoutValue === undefined
+      ? {}
+      : { gitTimeoutMs: parsePositiveIntegerCli(gitTimeoutValue, "--git-timeout-ms") }),
   };
 }
 
