@@ -12,7 +12,11 @@
 
 import { parseArgs } from "node:util";
 import { spawnSync } from "node:child_process";
-import { createLedgerStatusReader, DEFAULT_LEDGER_STATUS_ENDPOINT } from "../src/studio-status-read-client.js";
+import {
+  createLedgerStatusReader,
+  DEFAULT_LEDGER_STATUS_ENDPOINT,
+  normalizeLedgerEndpointBase,
+} from "../src/studio-status-read-client.js";
 import { runOvernightSummaryOnce } from "../src/overnight-studio-summary.js";
 
 /** Declared command surface; pinned by test/studio-monitors-read-only.test.ts. */
@@ -54,11 +58,19 @@ function observeLocalHealth(): { gitClean: boolean; typecheckPass: boolean; test
 }
 
 export async function runCli(): Promise<void> {
-  const endpoint = String(args.endpoint || DEFAULT_LEDGER_STATUS_ENDPOINT).replace(/\/+$/, "");
   const token = String(args.token || "");
   const project = String(args.project!);
   const pollIntervalMs = Math.max(10, parseInt(String(args["poll-interval"] || "60"), 10)) * 1000;
   const runOnce = args.once || false;
+
+  let endpoint: string;
+  try {
+    endpoint = normalizeLedgerEndpointBase(String(args.endpoint || DEFAULT_LEDGER_STATUS_ENDPOINT));
+  } catch {
+    console.error("[Summary] Refused endpoint configuration; nothing displayed, no connection attempted.");
+    process.exitCode = 1;
+    return;
+  }
 
   console.log(`🌙 [Summary] Stensibly overnight studio summary (read-only) — local checks plus one ledger snapshot`);
   console.log(`🌙 [Summary] Endpoint: ${endpoint} | Project: ${project}`);

@@ -17,6 +17,12 @@ import {
   persistDashboardSnapshot,
   readDashboardSnapshot,
 } from './dashboard-snapshot-cache.js';
+import {
+  collectRenderedBlockedIds,
+  reconcileBatchTargets,
+  summarizeBatchResults,
+} from './decision-tray-batch.js';
+import { resolveItemActionOutcome } from './item-resolution.js';
 import { createItemDetailController } from './item-detail-controller.js';
 import { createItemCreateController } from './item-create-controller.js';
 import { createSessionContextController } from './session-context-controller.js';
@@ -24,6 +30,8 @@ import { isHostedSessionSentinel } from './hosted-session.js';
 import { createStudioRadar } from './studio-radar.js';
 
 const DEFAULT_ENDPOINT = 'https://api.stensibly.com';
+const TRAY_BATCH_LABEL = '⚡ Clear Blockers';
+const TRAY_BATCH_PROGRESS = 'Clearing…';
 
 const form = document.querySelector('#connect-form');
 const dashboard = document.querySelector('#dashboard');
@@ -130,6 +138,7 @@ const stripNext = document.querySelector('#strip-next');
 const stripActionDone = document.querySelector('#strip-action-done');
 const stripActionOpen = document.querySelector('#strip-action-open');
 let currentRadarItem = null;
+let trayRenderedBlockedIds = [];
 
 const radar = createStudioRadar({
   canvas: radarCanvas,
@@ -196,14 +205,20 @@ document.querySelector('#decision-tray')?.addEventListener('click', async (event
 
 document.querySelector('#tray-batch-approve')?.addEventListener('click', async (event) => {
   const button = event.target;
-  if (button instanceof HTMLButtonElement) {
-    button.disabled = true;
-    button.textContent = 'Clearing…';
-    const blocked = items.filter((i) => i.status === 'blocked');
-    for (const item of blocked) {
-      await completeItemDirect(item.id);
+  if (!(button instanceof HTMLButtonElement) || button.disabled) return;
+  button.disabled = true;
+  button.textContent = TRAY_BATCH_PROGRESS;
+  try {
+    const { targets, stale } = reconcileBatchTargets(trayRenderedBlockedIds, isStillVisibleBlockedItem);
+    const results = [];
+    for (const itemId of targets) {
+      results.push({ id: itemId, outcome: await resolveItemOutcome(itemId) });
     }
-    button.textContent = '⚡ Mark All Done';
+    const summary = summarizeBatchResults(results, { staleCount: stale.length });
+    showQuickToast(summary.summaryLine, summary.failed > 0);
+    if (summary.resolved > 0) await refreshCurrent({ interactive: true });
+  } finally {
+    button.textContent = TRAY_BATCH_LABEL;
     button.disabled = false;
   }
 });
@@ -1035,10 +1050,12 @@ function renderDecisionTray(visible) {
   const blocked = visible.filter((item) => item.status === 'blocked');
   if (!blocked.length) {
     decisionTray.hidden = true;
+    trayRenderedBlockedIds = [];
     return;
   }
 
   decisionTray.hidden = false;
+  trayRenderedBlockedIds = collectRenderedBlockedIds(visible);
   decisionCards.innerHTML = blocked.map((item) => {
     return `<article class="decision-card">
       <div class="decision-card-top">
@@ -1055,6 +1072,29 @@ function renderDecisionTray(visible) {
   }).join('');
 }
 
+function isStillVisibleBlockedItem(itemId) {
+  const selected = projectFilter.value;
+  return items.some((item) => item.id === itemId
+    && item.status === 'blocked'
+    && (!selected || item.project === selected));
+}
+
+async function resolveItemOutcome(itemId) {
+  const item = items.find((i) => i.id === itemId);
+  if (!item) return 'failed';
+  try {
+    return await resolveItemActionOutcome({
+      endpoint,
+      token,
+      itemId,
+      item,
+      actor: sessionContext.getActor() || { id: 'operator', name: 'Operator', kind: 'human' },
+    });
+  } catch {
+    return 'failed';
+  }
+}
+
 async function completeItemDirect(itemId) {
   if (!connected || !token) {
     showQuickToast('Connect to a studio first.', true);
@@ -1063,49 +1103,16 @@ async function completeItemDirect(itemId) {
   const item = items.find((i) => i.id === itemId);
   if (!item) return;
 
-  try {
-    const key = `stn.done-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const actor = sessionContext.getActor() || { id: 'operator', name: 'Operator', kind: 'human' };
-    const response = await fetch(`${endpoint}/api/v1/items/${encodeURIComponent(itemId)}/complete`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${token}`,
-        'content-type': 'application/json',
-        'idempotency-key': key,
-      },
-      body: JSON.stringify({
-        actor,
-        rationale: 'Operator 1-tap Okay, Go confirmation',
-      }),
-    });
-
-    if (response.ok) {
-      showQuickToast(`Completed "${item.title.slice(0, 30)}"!`);
-      await refreshCurrent({ interactive: true });
-    } else {
-      const transResponse = await fetch(`${endpoint}/api/v1/items/${encodeURIComponent(itemId)}/unblock`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
-          'idempotency-key': key,
-        },
-        body: JSON.stringify({
-          actor,
-          rationale: 'Operator 1-tap Okay, Go unblock',
-        }),
-      });
-      if (transResponse.ok) {
-        showQuickToast(`Unblocked "${item.title.slice(0, 30)}"!`);
-        await refreshCurrent({ interactive: true });
-      } else {
-        showQuickToast(`Updated "${item.title.slice(0, 30)}"`);
-        await refreshCurrent({ interactive: true });
-      }
-    }
-  } catch (error) {
-    showQuickToast(error instanceof Error ? error.message : 'Action failed', true);
+  const outcome = await resolveItemOutcome(itemId);
+  if (outcome === 'completed') {
+    showQuickToast(`Completed "${item.title.slice(0, 30)}"!`);
+  } else if (outcome === 'unblocked') {
+    showQuickToast(`Unblocked "${item.title.slice(0, 30)}"!`);
+  } else {
+    showQuickToast(`Could not update "${item.title.slice(0, 30)}". Open the record to retry.`, true);
+    return;
   }
+  await refreshCurrent({ interactive: true });
 }
 
 

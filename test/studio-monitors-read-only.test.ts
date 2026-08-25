@@ -311,13 +311,16 @@ describe("rendered wording matches the evidence emitted", () => {
 });
 
 describe("dashboard wording reconciliation", () => {
-  test("decision tray batch action is labeled by its real completion effect", () => {
+  test("decision tray batch action is labeled by its real resolution effect", () => {
     const html = readFileSync(join(REPO_ROOT, "site", "index.html"), "utf8");
     const appJs = readFileSync(join(REPO_ROOT, "site", "app.js"), "utf8");
     expect(html).not.toContain("Approve All Ready");
     expect(appJs).not.toContain("Approve All Ready");
-    expect(html).toContain("Mark All Done");
-    expect(appJs).toContain("Mark All Done");
+    // Completion can fall back to unblock, so a blanket "done" claim is untrue.
+    expect(html).not.toContain("Mark All Done");
+    expect(appJs).not.toContain("Mark All Done");
+    expect(html).toContain("Clear Blockers");
+    expect(appJs).toContain("TRAY_BATCH_LABEL = '⚡ Clear Blockers'");
   });
 });
 
