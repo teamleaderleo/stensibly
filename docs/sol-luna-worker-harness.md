@@ -34,8 +34,9 @@ directory; see [Lifecycle rules](#lifecycle-rules).
 1. **Run-start clearing.** Before any launch, the harness removes its managed
    artifact names (`stdout.jsonl`, `stderr.log`, `worker-result.json`,
    `receipt.json`) and every `.sol-luna-worker-tmp-*` temporary file from the
-   output directory. A reused directory can never present prior-run evidence or
-   a stale receipt as current truth. Unmanaged files are left untouched.
+   output directory. Cleanup must succeed before launch; an unreadable directory
+   or undeletable managed artifact fails the run before a child starts. Unmanaged
+   files are left untouched.
 2. **Atomic receipt publication.** The final receipt is written to a
    same-directory `.sol-luna-worker-tmp-*` file and then renamed onto
    `receipt.json`. Observers never see a partially written receipt, and failed
@@ -110,14 +111,17 @@ The receipt records four explicit path lists plus head movement:
 | Field | Meaning |
 | --- | --- |
 | `git.headBefore` / `git.headAfter` | Resolved `HEAD` before the preflight and after the child exits (`null` when unreadable). |
+| `git.headRelationship` | `unchanged`, `descendant`, `non_descendant`, or `unknown`; commit attribution is admitted only for descendants. |
 | `git.dirtyPathsBefore` | Working-tree changes including untracked files present before the run. |
 | `git.dirtyPathsAfter` | Same snapshot taken after the run. |
 | `git.committedPaths` | Paths committed between the two heads via `git diff --name-only --no-renames`; renames list both old and new names. |
-| `git.changedPaths` | **Worker-caused delta:** `committedPaths ∪ (dirtyPathsAfter ∖ dirtyPathsBefore)`. |
+| `git.baselineContaminatedCommittedPaths` | Committed paths that were already dirty before the run; their byte authorship is uncertain. |
+| `git.changedPaths` | **Observed path delta:** `committedPaths ∪ (dirtyPathsAfter ∖ dirtyPathsBefore)`. This is activity evidence, not exclusive authorship of bytes. |
 
-Pre-existing dirt is never labelled as worker-created change: paths already
-dirty before the run stay visible in the before/after lists but are excluded
-from `changedPaths`. If Git state cannot be read before the run,
+Pre-existing worktree dirt stays visible in the before/after lists. A path that
+is committed during the run remains in `committedPaths`, but baseline
+contamination is explicit and no exclusive byte authorship is claimed. If Git
+state cannot be read before the run,
 `changedPaths` is reported empty and the failure appears in `harnessError`;
 causality is never guessed.
 
@@ -152,9 +156,11 @@ causality is never guessed.
   "git": {
     "headBefore": "f933a72d8b5f9296d81a5f51b0403bcaeba44795",
     "headAfter": "95748b009896267810c60da95a1fc50492043bb2",
+    "headRelationship": "descendant",
     "dirtyPathsBefore": [],
     "dirtyPathsAfter": ["notes/untracked-scratch.md"],
     "committedPaths": ["src/feature.ts"],
+    "baselineContaminatedCommittedPaths": [],
     "changedPaths": ["src/feature.ts", "notes/untracked-scratch.md"]
   },
   "child": {

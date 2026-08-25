@@ -79,13 +79,15 @@ export interface SolLunaWorkerReceipt {
   readonly git: {
     readonly headBefore: string | null;
     readonly headAfter: string | null;
+    readonly headRelationship: "unknown" | "unchanged" | "descendant" | "non_descendant";
     readonly dirtyPathsBefore: readonly string[];
     readonly dirtyPathsAfter: readonly string[];
     readonly committedPaths: readonly string[];
+    /** Committed paths whose pre-run dirty bytes make content provenance uncertain. */
+    readonly baselineContaminatedCommittedPaths: readonly string[];
     /**
-     * Worker-caused delta: paths committed between headBefore and headAfter plus
-     * paths that became dirty during the run. Paths already dirty before the run
-     * are excluded; the full before/after lists above remain inspectable.
+     * Observed path delta: descendant-commit paths plus paths that became dirty
+     * during the run. This records activity, not exclusive authorship of bytes.
      */
     readonly changedPaths: readonly string[];
   };
@@ -140,6 +142,12 @@ interface ProcessCapture {
 interface GitSnapshot {
   readonly head: string;
   readonly paths: readonly string[];
+}
+
+interface GitAttribution {
+  readonly headRelationship: "unknown" | "unchanged" | "descendant" | "non_descendant";
+  readonly committedPaths: readonly string[];
+  readonly error: string | null;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -200,10 +208,8 @@ function codexEnvironment(): Record<string, string> {
  */
 function boundedAccumulator(cap: number) {
   const half = Math.floor(cap / 2);
-  const head: Buffer[] = [];
-  let headBytes = 0;
-  const tail: Buffer[] = [];
-  let tailBytes = 0;
+  let head = Buffer.alloc(0);
+  let tail = Buffer.alloc(0);
   let fullBytes = 0;
   return {
     push(chunk: Uint8Array): void {
@@ -211,20 +217,22 @@ function boundedAccumulator(cap: number) {
         ? chunk
         : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
       fullBytes += buffer.length;
-      if (headBytes < half) {
-        head.push(buffer);
-        headBytes += buffer.length;
-        return;
+      let offset = 0;
+      if (head.length < half) {
+        const take = Math.min(half - head.length, buffer.length);
+        head = Buffer.concat([head, buffer.subarray(0, take)]);
+        offset = take;
       }
-      tail.push(buffer);
-      tailBytes += buffer.length;
-      while (tail.length > 1 && tailBytes - (tail[0]?.length ?? 0) >= half) {
-        const dropped = tail.shift();
-        tailBytes -= dropped?.length ?? 0;
+      const remainder = buffer.subarray(offset);
+      if (remainder.length >= half) {
+        tail = Buffer.from(remainder.subarray(remainder.length - half));
+      } else if (remainder.length > 0) {
+        const combined = Buffer.concat([tail, remainder]);
+        tail = combined.length <= half ? combined : Buffer.from(combined.subarray(combined.length - half));
       }
     },
     snapshot(): { data: Buffer; fullOutputBytes: number; omittedBytes: number } {
-      const rawHead = Buffer.concat(head).subarray(0, half);
+      const rawHead = head;
       let headEnd = rawHead.length;
       for (let index = rawHead.length - 1; index >= 0; index -= 1) {
         if (rawHead[index] === 0x0a) {
@@ -233,7 +241,7 @@ function boundedAccumulator(cap: number) {
         }
       }
       const keptHead = rawHead.subarray(0, headEnd);
-      const rawTail = Buffer.concat(tail);
+      const rawTail = tail;
       let tailStart = Math.max(0, rawTail.length - half);
       while (tailStart < rawTail.length && rawTail[tailStart] !== 0x0a) tailStart += 1;
       if (tailStart < rawTail.length) tailStart += 1;
@@ -266,24 +274,37 @@ function deliverStdin(
         detail: failed ? detail : null,
       });
     };
-    stdin.on("error", (error: Error & { code?: string }) => {
+    const fail = (error: Error & { code?: string }): void => {
       failed = true;
       detail = error.code ?? errorMessage(error);
-    });
+    };
+    const failAndSettle = (error: Error & { code?: string }): void => {
+      fail(error);
+      settle();
+    };
+    stdin.on("error", failAndSettle);
     stdin.on("close", settle);
+    if (stdin.destroyed || stdin.closed || !stdin.writable) {
+      failAndSettle(Object.assign(new Error("child stdin was already closed"), { code: "STDIN_CLOSED" }));
+      return;
+    }
     let offset = 0;
     const writeMore = (): void => {
-      while (offset < payload.length && !isAborted()) {
-        const end = Math.min(offset + STDIN_CHUNK_BYTES, payload.length);
-        const accepted = stdin.write(payload.subarray(offset, end));
-        offset = end;
-        if (!accepted) {
-          stdin.once("drain", writeMore);
-          return;
+      try {
+        while (offset < payload.length && !isAborted()) {
+          const end = Math.min(offset + STDIN_CHUNK_BYTES, payload.length);
+          const accepted = stdin.write(payload.subarray(offset, end));
+          offset = end;
+          if (!accepted) {
+            stdin.once("drain", writeMore);
+            return;
+          }
         }
+        if (isAborted()) return;
+        stdin.end();
+      } catch (error) {
+        failAndSettle(error instanceof Error ? error : new Error(String(error)));
       }
-      if (isAborted()) return;
-      stdin.end();
     };
     writeMore();
   });
@@ -451,12 +472,20 @@ async function captureProcess(
     });
 
     if (pid !== null && pid !== undefined && options.stdin !== undefined) {
-      void deliverStdin(child.stdin, options.stdin, () => stdinAborted).then((result) => {
-        stdinDelivery = result.delivery;
-        stdinDetail = result.detail;
-        stdinSettled = true;
-        maybeFinish();
-      });
+      void deliverStdin(child.stdin, options.stdin, () => stdinAborted).then(
+        (result) => {
+          stdinDelivery = result.delivery;
+          stdinDetail = result.detail;
+          stdinSettled = true;
+          maybeFinish();
+        },
+        (error) => {
+          stdinDelivery = "child_closed_stdin_early";
+          stdinDetail = errorMessage(error);
+          stdinSettled = true;
+          maybeFinish();
+        },
+      );
     }
 
     if (pid !== null && pid !== undefined && options.timeoutMs !== undefined) {
@@ -668,12 +697,28 @@ async function gitSnapshot(repository: string): Promise<GitSnapshot> {
   return { head, paths: parseStatusPaths(statusBytes) };
 }
 
-async function committedChangedPaths(
+async function committedAttribution(
   repository: string,
   headBefore: string | null,
   headAfter: string | null,
-): Promise<string[]> {
-  if (headBefore === null || headAfter === null || headBefore === headAfter) return [];
+): Promise<GitAttribution> {
+  if (headBefore === null || headAfter === null) {
+    return { headRelationship: "unknown", committedPaths: [], error: null };
+  }
+  if (headBefore === headAfter) {
+    return { headRelationship: "unchanged", committedPaths: [], error: null };
+  }
+  const ancestry = await captureProcess(["git", "-C", repository, "merge-base", "--is-ancestor", headBefore, headAfter]);
+  if (ancestry.exitCode !== 0) {
+    const nonDescendant = ancestry.exitCode === 1;
+    return {
+      headRelationship: nonDescendant ? "non_descendant" : "unknown",
+      committedPaths: [],
+      error: nonDescendant
+        ? "final Git head is not a descendant of the baseline head"
+        : `unable to establish Git head ancestry (exit ${ancestry.exitCode ?? "unknown"})`,
+    };
+  }
   const names = await gitOutput(repository, [
     "diff",
     "--name-only",
@@ -683,7 +728,7 @@ async function committedChangedPaths(
     headAfter,
     "--",
   ]);
-  return parseNamePaths(names);
+  return { headRelationship: "descendant", committedPaths: parseNamePaths(names), error: null };
 }
 
 /**
@@ -694,21 +739,19 @@ async function clearManagedRunArtifacts(outputDir: string): Promise<void> {
   let entries: string[];
   try {
     entries = await readdir(outputDir);
-  } catch {
-    return;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+    throw error;
   }
   const managed = new Set<string>(Object.values(ARTIFACT_NAMES));
   await Promise.all(
     entries
       .filter((entry) => managed.has(entry) || entry.startsWith(TMP_PREFIX))
-      .map(async (entry) => {
-        try {
-          await rm(join(outputDir, entry), { force: true });
-        } catch {
-          // Publication below still overwrites or reports failures truthfully.
-        }
-      }),
+      .map((entry) => rm(join(outputDir, entry), { force: true })),
   );
+  const remaining = (await readdir(outputDir))
+    .filter((entry) => managed.has(entry) || entry.startsWith(TMP_PREFIX));
+  if (remaining.length > 0) throw new Error("managed run artifacts could not be cleared");
 }
 
 /**
@@ -810,6 +853,7 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
   let afterPaths: readonly string[] = [];
   let beforeGitReadable = false;
   let committedPaths: readonly string[] = [];
+  let headRelationship: SolLunaWorkerReceipt["git"]["headRelationship"] = "unknown";
   let preflightExitCode: number | null = null;
   let chatGptAuthenticated = false;
   let childExitCode: number | null = null;
@@ -904,19 +948,24 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
   }
 
   try {
-    committedPaths = await committedChangedPaths(options.repository, headBefore, headAfter);
+    const attribution = await committedAttribution(options.repository, headBefore, headAfter);
+    headRelationship = attribution.headRelationship;
+    committedPaths = attribution.committedPaths;
+    if (attribution.error !== null) harnessError = appendHarnessError(harnessError, attribution.error);
   } catch (error) {
     harnessError = appendHarnessError(harnessError, `unable to read committed Git changes: ${errorMessage(error)}`);
   }
 
-  // Explicit causality: changedPaths is the worker-caused delta, not a union of
-  // every path that happened to be dirty. Pre-existing dirt remains visible in
-  // the separate before/after dirty lists instead of being claimed as worker work.
+  // This is an observed path delta. A commit made during the run may include
+  // baseline-dirty bytes, so contaminated committed paths remain explicit below.
   const workerDirtyDelta = beforeGitReadable
     ? afterPaths.filter((path) => !beforePaths.includes(path))
     : [];
   const changedPaths = beforeGitReadable
     ? [...new Set([...committedPaths, ...workerDirtyDelta])].sort()
+    : [];
+  const baselineContaminatedCommittedPaths = beforeGitReadable
+    ? committedPaths.filter((path) => beforePaths.includes(path))
     : [];
 
   const artifacts: SolLunaWorkerReceipt["artifacts"] = {
@@ -955,9 +1004,11 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
     git: {
       headBefore,
       headAfter,
+      headRelationship,
       dirtyPathsBefore: beforePaths,
       dirtyPathsAfter: afterPaths,
       committedPaths,
+      baselineContaminatedCommittedPaths,
       changedPaths,
     },
     child: {
