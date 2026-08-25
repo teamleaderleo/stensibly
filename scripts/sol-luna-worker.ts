@@ -953,21 +953,38 @@ function gitCommandLabel(args: readonly string[]): string {
   return `git ${args[0] ?? "command"}`;
 }
 
-async function gitOutput(
-  repository: string,
+function requireSettledGitCapture(
+  result: ProcessCapture,
   args: readonly string[],
   limits: GitObservationLimits,
-): Promise<Uint8Array> {
-  const result = await gitCapture(repository, args, limits);
+  allowedExitCodes: readonly number[],
+): ProcessCapture {
   if (result.spawnError !== null) {
     throw new Error(`${gitCommandLabel(args)} failed to start or finish: ${result.spawnError}`);
   }
   if (result.timedOut) {
     throw new Error(`${gitCommandLabel(args)} timed out after ${limits.timeoutMs}ms`);
   }
-  if (result.exitCode !== 0) {
-    throw new Error(`${gitCommandLabel(args)} exited with status ${result.exitCode}`);
+  if (result.exitCode === null || !allowedExitCodes.includes(result.exitCode)) {
+    throw new Error(`${gitCommandLabel(args)} exited with status ${result.exitCode ?? "unknown"}`);
   }
+  if (result.stdoutOmittedBytes > 0) {
+    throw new Error(`${gitCommandLabel(args)} stdout exceeded the ${limits.captureCapBytes}-byte capture bound`);
+  }
+  return result;
+}
+
+async function gitOutput(
+  repository: string,
+  args: readonly string[],
+  limits: GitObservationLimits,
+): Promise<Uint8Array> {
+  const result = requireSettledGitCapture(
+    await gitCapture(repository, args, limits),
+    args,
+    limits,
+    [0],
+  );
   return result.stdout;
 }
 
@@ -1055,10 +1072,12 @@ async function gitSnapshot(repository: string, limits: GitObservationLimits): Pr
   if (head.length === 0) throw new Error("git HEAD was empty");
   const paths = parseStatusPaths(statusBytes);
   const pathStates = await Promise.all(paths.map(async (path) => {
+    const hashObjectArgs = ["hash-object", "--no-filters", "--", path] as const;
     const [staged, unstaged, worktree] = await Promise.all([
       gitOutput(repository, ["diff", "--binary", "--no-ext-diff", "--no-renames", "--cached", head, "--", path], limits),
       gitOutput(repository, ["diff", "--binary", "--no-ext-diff", "--no-renames", "--", path], limits),
-      gitCapture(repository, ["hash-object", "--no-filters", "--", path], limits),
+      gitCapture(repository, hashObjectArgs, limits).then((result) =>
+        requireSettledGitCapture(result, hashObjectArgs, limits, [0, 128])),
     ]);
     const hash = createHash("sha256")
       .update("staged\0").update(staged)

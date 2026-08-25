@@ -1189,6 +1189,35 @@ describe("bounded noninteractive Git observations (#1666)", () => {
     expect(await waitFor(() => !pidAlive(fakePid), 10_000)).toBe(true);
   });
 
+  test("a hung hash-object observation cannot become a fabricated worktree fingerprint", async () => {
+    const setup = await setupFakeCodex();
+    await writeFile(join(setup.options.repository, "tracked.txt"), "locally modified\n");
+    const pidPath = join(setup.root, "fake-hash-object.pid");
+    const injection = await injectFakeGit(setup.root, [
+      'for arg in "$@"; do',
+      '  if [ "$arg" = "hash-object" ]; then',
+      `    printf '%s\\n' "$$" > ${JSON.stringify(pidPath)}`,
+      "    sleep 30",
+      "  fi",
+      "done",
+      'exec @REAL_GIT@ "$@"',
+    ].join("\n"));
+    const startedAt = Date.now();
+    const result = await withPathOverride(prependedPath(injection.binDir), () =>
+      runSolLunaWorker({ ...setup.options, gitTimeoutMs: 500 }));
+    const elapsed = Date.now() - startedAt;
+
+    expect(elapsed).toBeLessThan(15_000);
+    expect(result.exitCode).toBe(1);
+    expect(result.receipt.success).toBe(false);
+    expect(result.receipt.harnessError).toContain("git hash-object timed out after 500ms");
+    expect(result.receipt.harnessError).toContain("unable to read Git state");
+    expect(result.receipt.git.headBefore).toBeNull();
+    expect(result.receipt.git.dirtyPathsBefore).toEqual([]);
+    const fakePid = Number.parseInt((await Bun.file(pidPath).text()).trim(), 10);
+    expect(await waitFor(() => !pidAlive(fakePid), 10_000)).toBe(true);
+  });
+
   test("Git spawn errors stay unknown relationship and never become non-descendant state", async () => {
     const setup = await setupFakeCodex();
     const emptyBin = join(setup.root, "empty-bin");

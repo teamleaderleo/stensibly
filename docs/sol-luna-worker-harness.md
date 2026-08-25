@@ -322,7 +322,6 @@ reporting success.
   ChatGPT authentication, mention no API key, and exit `0`; ambiguous output
   mentioning both fails closed.
 - All spawns use argv arrays. No shell interpolation exists anywhere; hostile
-- All spawns use argv arrays. No shell interpolation exists anywhere; hostile
   repository/brief/schema paths reach Codex as data values. Bare command names
   are never shebang-inspected; see
   [Command resolution invariant](#command-resolution-invariant).
