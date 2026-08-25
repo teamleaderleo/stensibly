@@ -3,6 +3,7 @@
 - **Issue:** #1663
 - **Prior implementation:** #1661
 - **Audit:** Palisade post-merge findings on #1661
+- **Hardening:** #1666 (command resolution, bounded Git observations)
 
 ## Purpose
 
@@ -28,7 +29,8 @@ bun run sol-luna:worker -- \
   [--require-command NAME]... \
   [--codex-bin codex] \
   [--timeout-ms 600000] \
-  [--capture-cap-bytes 8388608]
+  [--capture-cap-bytes 8388608] \
+  [--git-timeout-ms 120000]
 ```
 
 The harness is deliberately local and disposable. One run owns one output
@@ -70,6 +72,65 @@ directory; see [Lifecycle rules](#lifecycle-rules).
 - Process groups require Unix semantics. On platforms without them the harness
   falls back to signalling only the direct child; this fallback is best-effort,
   and the supported targets are macOS and Linux.
+
+## Git observation bounds
+
+Every Git observation — the before/after snapshots (`rev-parse`, `status`,
+per-path `diff`, `hash-object`), the metadata probes (`--git-dir`,
+`--git-common-dir`, `--git-path`), and ancestry attribution (`merge-base`,
+`rev-list`, `diff-tree`) — runs through one shared capture lifecycle:
+
+- **Explicit wall-clock timeout.** `--git-timeout-ms` (default `120000`, two
+  minutes) bounds each spawned Git invocation independently. An expired probe
+  is killed through the same SIGTERM → SIGKILL process-group escalation as a
+  timed-out Codex child.
+- **Noninteractive environment.** Every observation sets
+  `GIT_TERMINAL_PROMPT=0` on top of the existing config neutralization
+  (`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null`,
+  `GIT_CONFIG_NOSYSTEM=1`). A credential prompt fails closed instead of
+  blocking an unattended run, and no global/system config can inject an
+  askpass helper, credential helper, or hook.
+- **Bounded capture.** The same per-stream `--capture-cap-bytes` ceiling
+  applies to Git stdout/stderr.
+- **Bounded truthful failure.** A timed-out, spawn-failed, or unexpected
+  non-zero observation becomes a specific `harnessError`; it can never surface
+  as successful empty output. The narrow exception is `hash-object` status 128
+  for a worktree path observed absent both immediately before and after the
+  capture, which represents the missing side of a deleted-path snapshot.
+  Ancestry truthfulness is preserved: only
+  `merge-base --is-ancestor` exit code 1 maps to `headRelationship:
+  "non_descendant"`. A merge-base timeout, spawn failure, or other exit stays
+  `headRelationship: "unknown"` with its concrete error recorded.
+- **No schema change.** Git observation limits are runtime options; receipt
+  schema v3 and every field are unchanged.
+
+## Command resolution invariant
+
+Spawn resolution never turns repository- or coordinator-controlled files into
+command entrypoints:
+
+1. **Bare names are PATH-owned.** An argv[0] with no slash — including `git`
+   and `codex` — is returned unchanged and is never opened for shebang
+   inspection. The operating system's PATH lookup owns it, so hostile files
+   named exactly `git` or `codex` in the coordinator CWD can neither be read
+   as scripts nor executed.
+2. **One absolute target for path-like entries.** A path-like argv[0] (with a
+   slash) is resolved to a single absolute target. That identical target is
+   both inspected for a shebang and, when a shebang exists, passed to the
+   interpreter as the script argument. Inspection and execution therefore use
+   the same pathname, including for chained shebangs (bounded depth); the
+   harness does not claim inode identity if another process replaces that path
+   between inspection and spawn.
+3. **Kernel-equivalent expansion.** Shebang expansion produces an argv-only
+   interpreter invocation (`interpreter [arg] <inspected-target> …`) matching
+   kernel behavior where Bun's posix_spawn layer does not perform it.
+
+Deterministic regressions cover hostile coordinator-CWD files named `git` and
+`codex` (executable payloads and FIFO read-traps), relative/absolute script
+expansion identity, fake-Git hangs under `--git-timeout-ms`, stripped-PATH
+spawn failures staying `"unknown"` rather than `"non_descendant"`, and
+noninteractive/config-neutralized environment propagation to every
+observation.
 
 ## Stdin delivery observation
 
@@ -266,7 +327,9 @@ reporting success.
   ChatGPT authentication, mention no API key, and exit `0`; ambiguous output
   mentioning both fails closed.
 - All spawns use argv arrays. No shell interpolation exists anywhere; hostile
-  repository/brief/schema paths reach Codex as data values.
+  repository/brief/schema paths reach Codex as data values. Bare command names
+  are never shebang-inspected; see
+  [Command resolution invariant](#command-resolution-invariant).
 - A commander must declare every executable that the brief promises through a
   repeatable `--require-command NAME`. Before authentication or worker launch,
   the harness resolves each name using the worker's explicit effective PATH,

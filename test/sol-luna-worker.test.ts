@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import {
   codexEnvironment,
   preflightRequiredCommands,
+  resolveSpawnCommand,
   runSolLunaCli,
   runSolLunaWorker,
   type SolLunaWorkerOptions,
+  type SolLunaWorkerReceipt,
 } from "../scripts/sol-luna-worker.js";
 import {
   compileCodexPermissionProfile,
@@ -334,6 +336,7 @@ function cliArgs(options: SolLunaWorkerOptions): string[] {
     "--codex-bin", options.codexBin ?? "codex",
     ...(options.timeoutMs === undefined ? [] : ["--timeout-ms", String(options.timeoutMs)]),
     ...(options.captureCapBytes === undefined ? [] : ["--capture-cap-bytes", String(options.captureCapBytes)]),
+    ...(options.gitTimeoutMs === undefined ? [] : ["--git-timeout-ms", String(options.gitTimeoutMs)]),
   ];
 }
 
@@ -434,6 +437,33 @@ function pidAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+async function runCliInCwd(
+  options: SolLunaWorkerOptions,
+  cwd: string,
+  env?: Record<string, string>,
+): Promise<{ exitCode: number; stdoutText: string; stderrText: string }> {
+  const scriptPath = join(import.meta.dir, "..", "scripts", "sol-luna-worker.ts");
+  const cli = Bun.spawn([process.execPath, scriptPath, ...cliArgs(options)], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
+  });
+  const [stdoutText, stderrText, exitCode] = await Promise.all([
+    new Response(cli.stdout).text(),
+    new Response(cli.stderr).text(),
+    cli.exited,
+  ]);
+  return { exitCode, stdoutText, stderrText };
+}
+
+function hostilePayloadSource(markerPath: string): string {
+  return `#!/bin/sh
+printf 'hostile-executed\\n' >> ${JSON.stringify(markerPath)}
+exit 97
+`;
 }
 
 describe("disposable Sol/Luna Codex worker harness", () => {
@@ -922,5 +952,424 @@ describe("disposable Sol/Luna Codex worker harness", () => {
     expect(result.receipt.git.changedPaths).toEqual([]);
     expect(result.receipt.harnessError).toContain("unable to read final Git state");
     expect(result.receipt.child.outcome).toBe("harness_failed");
+  });
+});
+
+describe("spawn command resolution safety (#1666)", () => {
+  test("bare argv[0] names are returned unchanged for OS PATH lookup", async () => {
+    expect(await resolveSpawnCommand(["git", "-c", "core.fsmonitor=false", "status"])).toEqual([
+      "git", "-c", "core.fsmonitor=false", "status",
+    ]);
+    expect(await resolveSpawnCommand(["codex", "exec", "--json"])).toEqual(["codex", "exec", "--json"]);
+    expect(await resolveSpawnCommand(["git"])).toEqual(["git"]);
+  });
+
+  test("path-like scripts expand to interpreter plus one identical absolute inspected target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sol-luna-resolve-"));
+    temporaryRoots.push(root);
+    const script = join(root, "entry.sh");
+    await writeFile(script, "#!/bin/sh\nprintf '%s\\n' \"$0\"\n");
+    await chmod(script, 0o755);
+    const relativeScript = relative(process.cwd(), script);
+
+    const absoluteExpansion = await resolveSpawnCommand([script, "--flag"]);
+    expect(absoluteExpansion[0]).toBe("/bin/sh");
+    expect(absoluteExpansion[1]).toBe(script);
+    expect(absoluteExpansion[2]).toBe("--flag");
+
+    // The identical absolute target is what the interpreter receives as the
+    // script argument, regardless of how the caller spelled the path.
+    const relativeExpansion = await resolveSpawnCommand([relativeScript]);
+    expect(relativeExpansion).toEqual(["/bin/sh", script]);
+  });
+
+  test("shebang interpreter arguments are preserved between interpreter and script target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sol-luna-resolve-arg-"));
+    temporaryRoots.push(root);
+    const script = join(root, "strict.sh");
+    await writeFile(script, "#!/bin/sh -e\nexit 0\n");
+    await chmod(script, 0o755);
+
+    expect(await resolveSpawnCommand([script])).toEqual(["/bin/sh", "-e", script]);
+  });
+
+  test("non-script path-like executables keep their arguments and become absolute", async () => {
+    expect(await resolveSpawnCommand(["/bin/echo", "hi"])).toEqual(["/bin/echo", "hi"]);
+  });
+
+  test("chained path-like shebangs stay bounded and pass each original target onward", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sol-luna-resolve-chain-"));
+    temporaryRoots.push(root);
+    const outer = join(root, "outer.sh");
+    const inner = join(root, "inner.sh");
+    await writeFile(outer, `#!${inner}\nexit 0\n`);
+    await writeFile(inner, "#!/bin/sh\nexit 0\n");
+    await chmod(outer, 0o755);
+    await chmod(inner, 0o755);
+
+    expect(await resolveSpawnCommand([outer])).toEqual(["/bin/sh", inner, outer]);
+  });
+
+  test("coordinator-CWD files named git and codex with shebang payloads are neither read nor executed", async () => {
+    const setup = await setupFakeCodex();
+    const hostileRoot = await mkdtemp(join(tmpdir(), "sol-luna-hostile-cwd-"));
+    temporaryRoots.push(hostileRoot);
+    const gitMarker = join(hostileRoot, "git-marker.txt");
+    const codexMarker = join(hostileRoot, "codex-marker.txt");
+    for (const [name, marker] of [["git", gitMarker], ["codex", codexMarker]] as const) {
+      await writeFile(join(hostileRoot, name), hostilePayloadSource(marker));
+      await chmod(join(hostileRoot, name), 0o755);
+    }
+
+    // The worker subprocess runs with its coordinator CWD inside hostileRoot,
+    // so any bare-name inspection or expansion would read or execute these.
+    const { exitCode } = await runCliInCwd(setup.options, hostileRoot);
+    const receipt = await readJson(join(setup.options.outputDir, "receipt.json"));
+
+    expect(exitCode).toBe(0);
+    expect(receipt.success).toBe(true);
+    expect(receipt.git).toMatchObject({ headBefore: expect.stringMatching(/^[0-9a-f]{40}$/u) });
+    expect(await Bun.file(gitMarker).exists()).toBe(false);
+    expect(await Bun.file(codexMarker).exists()).toBe(false);
+  });
+
+  test("coordinator-CWD FIFOs named git and codex prove bare names are never opened for inspection", async () => {
+    const setup = await setupFakeCodex();
+    const hostileRoot = await mkdtemp(join(tmpdir(), "sol-luna-hostile-fifo-"));
+    temporaryRoots.push(hostileRoot);
+    // Opening a FIFO for reading blocks forever until a writer appears, so any
+    // reintroduced bare-name peek would hang the observation deterministically
+    // instead of completing. The bounded race below turns that into a fast,
+    // deterministic failure rather than a stuck suite.
+    for (const name of ["git", "codex"]) {
+      await shell("mkfifo", [join(hostileRoot, name)], process.cwd());
+    }
+    const raced = await Promise.race([
+      runCliInCwd(setup.options, hostileRoot).then((result) => ({ kind: "completed" as const, result })),
+      Bun.sleep(25_000).then(() => ({ kind: "hung" as const })),
+    ]);
+
+    expect(raced.kind).toBe("completed");
+    if (raced.kind === "completed") {
+      const receipt = await readJson(join(setup.options.outputDir, "receipt.json"));
+      expect(raced.result.exitCode).toBe(0);
+      expect(receipt.success).toBe(true);
+    }
+  });
+
+  test("a shebang-wrapped codexBin is executed through its exact inspected absolute target", async () => {
+    const setup = await setupFakeCodex();
+    const wrapperPath = join(setup.root, "wrapper codex;[safe]");
+    const executedLog = join(setup.root, "executed-targets.log");
+    await writeFile(wrapperPath, [
+      "#!/bin/sh",
+      `printf '%s\\n' "$0" >> ${JSON.stringify(executedLog)}`,
+      `exec ${JSON.stringify(setup.executable)} "$@"`,
+      "",
+    ].join("\n"));
+    await chmod(wrapperPath, 0o755);
+
+    const result = await runSolLunaWorker({ ...setup.options, codexBin: wrapperPath });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.receipt.success).toBe(true);
+    const executedTargets = (await Bun.file(executedLog).text()).split("\n").filter((line) => line.length > 0);
+    // The preflight and the worker child both went through the wrapper, and sh
+    // recorded exactly the inspected absolute target as its script argument.
+    expect(executedTargets.length).toBeGreaterThanOrEqual(2);
+    for (const target of executedTargets) expect(target).toBe(wrapperPath);
+  });
+});
+
+describe("bounded noninteractive Git observations (#1666)", () => {
+  interface FakeGitInjection {
+    readonly binDir: string;
+    readonly logPath: string;
+    readonly pidPath?: string;
+  }
+
+  async function injectFakeGit(
+    root: string,
+    body: string,
+  ): Promise<FakeGitInjection> {
+    const probe = Bun.spawnSync(["sh", "-c", "command -v git"], { stdout: "pipe", stderr: "pipe" });
+    const realGit = probe.stdout.toString().trim();
+    if (probe.exitCode !== 0 || realGit.length === 0) throw new Error("real git binary unavailable for delegation");
+    const binDir = join(root, "fake-git-bin");
+    await mkdir(binDir);
+    const logPath = join(root, "git-observations.log");
+    const source = [
+      "#!/bin/sh",
+      `printf '%s\\n' "prompt=\${GIT_TERMINAL_PROMPT-UNSET} nosystem=\${GIT_CONFIG_NOSYSTEM-UNSET} global=\${GIT_CONFIG_GLOBAL-UNSET} cmd=$*" >> ${JSON.stringify(logPath)}`,
+      body.replaceAll("@REAL_GIT@", JSON.stringify(realGit)),
+      "",
+    ].join("\n");
+    await writeFile(join(binDir, "git"), source);
+    await chmod(join(binDir, "git"), 0o755);
+    return { binDir, logPath };
+  }
+
+  function prependedPath(binDir: string): string {
+    return `${binDir}:${process.env.PATH ?? ""}`;
+  }
+
+  async function runWithIsolatedPath(
+    setup: FakeCodexSetup,
+    path: string,
+    overrides: Partial<SolLunaWorkerOptions> = {},
+  ): Promise<{ exitCode: number; receipt: SolLunaWorkerReceipt }> {
+    const { exitCode } = await runCliInCwd(
+      { ...setup.options, ...overrides },
+      setup.root,
+      { PATH: path },
+    );
+    const receipt = await readJson(join(setup.options.outputDir, "receipt.json")) as unknown as SolLunaWorkerReceipt;
+    return { exitCode, receipt };
+  }
+
+  function synchronizedHashObjectFailure(
+    target: string,
+    diffMarkers: string,
+    transition: "appear" | "disappear",
+  ): string {
+    const mutation = transition === "appear"
+      ? `printf '%s\\n' appeared > ${JSON.stringify(target)}`
+      : `rm -f -- ${JSON.stringify(target)}`;
+    return [
+      "is_hash=0; is_diff=0; is_target=0",
+      'for arg in "$@"; do',
+      '  [ "$arg" = "hash-object" ] && is_hash=1',
+      '  [ "$arg" = "diff" ] && is_diff=1',
+      '  [ "$arg" = "tracked.txt" ] && is_target=1',
+      "done",
+      'if [ "$is_diff" -eq 1 ] && [ "$is_target" -eq 1 ]; then',
+      '  @REAL_GIT@ "$@"; status=$?',
+      '  if [ "$status" -eq 0 ]; then',
+      `    mkdir ${JSON.stringify(join(diffMarkers, "one"))} 2>/dev/null || mkdir ${JSON.stringify(join(diffMarkers, "two"))}`,
+      "  fi",
+      '  exit "$status"',
+      "fi",
+      'if [ "$is_hash" -eq 1 ] && [ "$is_target" -eq 1 ]; then',
+      "  attempts=0",
+      `  while [ ! -d ${JSON.stringify(join(diffMarkers, "two"))} ]; do`,
+      "    attempts=$((attempts + 1))",
+      '    [ "$attempts" -ge 500 ] && exit 99',
+      "    sleep 0.01",
+      "  done",
+      `  ${mutation}`,
+      "  exit 128",
+      "fi",
+      'exec @REAL_GIT@ "$@"',
+    ].join("\n");
+  }
+
+  test("every Git observation runs noninteractively with neutralized config through one capture lifecycle", async () => {
+    const setup = await setupFakeCodex();
+    const injection = await injectFakeGit(setup.root, `exec @REAL_GIT@ "$@"`);
+    // A modified tracked path plus an untracked path forces the per-path
+    // diff/hash-object observations to run alongside the metadata probes.
+    await writeFile(join(setup.options.repository, "tracked.txt"), "locally modified\n");
+    await writeFile(join(setup.options.repository, "scratch-untracked.txt"), "untracked\n");
+    const result = await runWithIsolatedPath(setup, prependedPath(injection.binDir));
+    const lines = (await Bun.file(injection.logPath).text()).split("\n").filter((line) => line.length > 0);
+
+    expect(result.exitCode).toBe(0);
+    expect(lines.length).toBeGreaterThanOrEqual(9);
+    for (const line of lines) {
+      expect(line).toContain("prompt=0");
+      expect(line).toContain("nosystem=1");
+      expect(line).toContain("global=/dev/null");
+    }
+    const observed = lines.map((line) => line.slice(line.indexOf("cmd=") + 4));
+    const hasObservation = (...fragments: string[]) =>
+      observed.some((command) => fragments.every((fragment) => command.includes(fragment)));
+    // Metadata probes, snapshot, per-path diffs, hash-object: all present.
+    expect(hasObservation("--git-dir")).toBe(true);
+    expect(hasObservation("--git-common-dir")).toBe(true);
+    expect(hasObservation("--git-path", "HEAD")).toBe(true);
+    expect(hasObservation("--git-path", "index")).toBe(true);
+    expect(hasObservation("rev-parse", "HEAD")).toBe(true);
+    expect(hasObservation("status", "--porcelain=v1")).toBe(true);
+    expect(hasObservation("diff", "--cached")).toBe(true);
+    expect(hasObservation("diff", "--binary")).toBe(true);
+    expect(hasObservation("hash-object", "--no-filters")).toBe(true);
+  });
+
+  test("a hung Git observation fails bounded via --git-timeout-ms without success or empty output", async () => {
+    const setup = await setupFakeCodex();
+    const injection = await injectFakeGit(setup.root, [
+      `printf '%s\\n' "$$" > ${JSON.stringify(join(setup.root, "fake-git.pid"))}`,
+      "sleep 30",
+    ].join("\n"));
+    const startedAt = Date.now();
+    const { exitCode } = await runCliInCwd(
+      { ...setup.options, gitTimeoutMs: 500 },
+      setup.root,
+      { PATH: prependedPath(injection.binDir) },
+    );
+    const elapsed = Date.now() - startedAt;
+    const receipt = await readJson(join(setup.options.outputDir, "receipt.json"));
+
+    expect(elapsed).toBeLessThan(15_000);
+    expect(exitCode).toBe(1);
+    expect(receipt.success).toBe(false);
+    expect(String(receipt.harnessError)).toContain("timed out after 500ms");
+    expect(receipt.git).toMatchObject({
+      headBefore: null,
+      headAfter: null,
+      headRelationship: "unknown",
+      changedPaths: [],
+      commitsMade: [],
+    });
+    expect(receipt.child).toMatchObject({ outcome: "harness_failed" });
+
+    const fakePid = Number.parseInt((await Bun.file(join(setup.root, "fake-git.pid")).text()).trim(), 10);
+    expect(Number.isSafeInteger(fakePid)).toBe(true);
+    expect(await waitFor(() => !pidAlive(fakePid), 10_000)).toBe(true);
+  });
+
+  test("a hung hash-object observation cannot become a fabricated worktree fingerprint", async () => {
+    const setup = await setupFakeCodex();
+    await writeFile(join(setup.options.repository, "tracked.txt"), "locally modified\n");
+    const pidPath = join(setup.root, "fake-hash-object.pid");
+    const injection = await injectFakeGit(setup.root, [
+      'for arg in "$@"; do',
+      '  if [ "$arg" = "hash-object" ]; then',
+      `    printf '%s\\n' "$$" > ${JSON.stringify(pidPath)}`,
+      "    sleep 30",
+      "  fi",
+      "done",
+      'exec @REAL_GIT@ "$@"',
+    ].join("\n"));
+    const startedAt = Date.now();
+    const result = await runWithIsolatedPath(
+      setup,
+      prependedPath(injection.binDir),
+      { gitTimeoutMs: 500 },
+    );
+    const elapsed = Date.now() - startedAt;
+
+    expect(elapsed).toBeLessThan(15_000);
+    expect(result.exitCode).toBe(1);
+    expect(result.receipt.success).toBe(false);
+    expect(result.receipt.harnessError).toContain("git hash-object timed out after 500ms");
+    expect(result.receipt.harnessError).toContain("unable to read Git state");
+    expect(result.receipt.git.headBefore).toBeNull();
+    expect(result.receipt.git.dirtyPathsBefore).toEqual([]);
+    const fakePid = Number.parseInt((await Bun.file(pidPath).text()).trim(), 10);
+    expect(await waitFor(() => !pidAlive(fakePid), 10_000)).toBe(true);
+  });
+
+  test("hash-object fatal status for an existing dirty path fails closed", async () => {
+    const setup = await setupFakeCodex();
+    await writeFile(join(setup.options.repository, "tracked.txt"), "locally modified\n");
+    const injection = await injectFakeGit(setup.root, [
+      'for arg in "$@"; do',
+      '  if [ "$arg" = "hash-object" ]; then',
+      "    exit 128",
+      "  fi",
+      "done",
+      'exec @REAL_GIT@ "$@"',
+    ].join("\n"));
+
+    const result = await runWithIsolatedPath(setup, prependedPath(injection.binDir));
+
+    expect(result.exitCode).toBe(1);
+    expect(result.receipt.success).toBe(false);
+    expect(result.receipt.harnessError).toContain(
+      "git hash-object exited with status 128 without a stable missing worktree path",
+    );
+    expect(result.receipt.git.headBefore).toBeNull();
+    expect(result.receipt.git.dirtyPathsBefore).toEqual([]);
+  });
+
+  test("a path appearing during hash-object cannot be treated as stably missing", async () => {
+    const setup = await setupFakeCodex();
+    const target = join(setup.options.repository, "tracked.txt");
+    const diffMarkers = join(setup.root, "appearing-diff-markers");
+    await rm(target);
+    await mkdir(diffMarkers);
+    const injection = await injectFakeGit(
+      setup.root,
+      synchronizedHashObjectFailure(target, diffMarkers, "appear"),
+    );
+
+    const result = await runWithIsolatedPath(setup, prependedPath(injection.binDir));
+
+    expect(result.exitCode).toBe(1);
+    expect(result.receipt.harnessError).toContain("before=absent, after=present");
+    expect(result.receipt.git.dirtyPathsBefore).toEqual([]);
+  });
+
+  test("a path disappearing during hash-object cannot be treated as stably missing", async () => {
+    const setup = await setupFakeCodex();
+    const target = join(setup.options.repository, "tracked.txt");
+    const diffMarkers = join(setup.root, "disappearing-diff-markers");
+    await writeFile(target, "locally modified\n");
+    await mkdir(diffMarkers);
+    const injection = await injectFakeGit(
+      setup.root,
+      synchronizedHashObjectFailure(target, diffMarkers, "disappear"),
+    );
+
+    const result = await runWithIsolatedPath(setup, prependedPath(injection.binDir));
+
+    expect(result.exitCode).toBe(1);
+    expect(result.receipt.harnessError).toContain("before=present, after=absent");
+    expect(result.receipt.git.dirtyPathsBefore).toEqual([]);
+  });
+
+  test("hash-object status 128 retains deleted-path snapshot semantics", async () => {
+    const setup = await setupFakeCodex();
+    await rm(join(setup.options.repository, "tracked.txt"));
+
+    const result = await runSolLunaWorker(setup.options);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.receipt.harnessError).toBeNull();
+    expect(result.receipt.git.dirtyPathsBefore).toEqual(["tracked.txt"]);
+    expect(result.receipt.git.dirtyPathsAfter).toEqual(["tracked.txt"]);
+    expect(result.receipt.git.workerCreatedDirtyPaths).toEqual([]);
+  });
+
+  test("Git spawn errors stay unknown relationship and never become non-descendant state", async () => {
+    const setup = await setupFakeCodex();
+    const emptyBin = join(setup.root, "empty-bin");
+    await mkdir(emptyBin);
+    const result = await runWithIsolatedPath(setup, emptyBin);
+    const receipt = result.receipt;
+
+    expect(result.exitCode).toBe(1);
+    expect(receipt.success).toBe(false);
+    expect(receipt.harnessError).toContain("unable to read Git state");
+    expect(receipt.git.headBefore).toBeNull();
+    expect(receipt.git.headAfter).toBeNull();
+    // A missing git binary is an observation failure, not evidence of a
+    // non-descendant head movement.
+    expect(receipt.git.headRelationship).toBe("unknown");
+    expect(receipt.git.commitsMade).toEqual([]);
+    expect(receipt.git.committedPaths).toEqual([]);
+    expect(receipt.child.outcome).toBe("harness_failed");
+  });
+
+  test("a failing merge-base ancestry probe stays unknown and never becomes non-descendant state", async () => {
+    const setup = await setupFakeCodex({ mode: "rewind" });
+    const injection = await injectFakeGit(setup.root, [
+      'for arg in "$@"; do',
+      '  if [ "$arg" = "merge-base" ]; then',
+      "    exit 127",
+      "  fi",
+      "done",
+      'exec @REAL_GIT@ "$@"',
+    ].join("\n"));
+    const result = await runWithIsolatedPath(setup, prependedPath(injection.binDir));
+    const receipt = result.receipt;
+
+    // The rewind moved HEAD off-branch; ancestry could not be established
+    // because the merge-base probe failed, which must stay "unknown".
+    expect(receipt.git.headBefore).not.toBeNull();
+    expect(receipt.git.headAfter).not.toBeNull();
+    expect(receipt.git.headRelationship).toBe("unknown");
+    expect(String(receipt.harnessError)).toContain("unable to establish Git head ancestry (exit 127)");
   });
 });
