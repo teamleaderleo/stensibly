@@ -4,7 +4,9 @@ const workflowPath = new URL(
   "../.github/workflows/apply-bun-lock-candidate.yml",
   import.meta.url,
 );
+const ciWorkflowPath = new URL("../.github/workflows/ci.yml", import.meta.url);
 const workflow = await Bun.file(workflowPath).text();
+const ciWorkflow = await Bun.file(ciWorkflowPath).text();
 
 describe("fenced Bun lock writer workflow", () => {
   test("runs only for one exact current same-repository pull request", () => {
@@ -75,15 +77,17 @@ describe("fenced Bun lock writer workflow", () => {
     expect(workflow).not.toContain("--force\n");
   });
 
-  test("publishes once and lets the branch push trigger canonical CI", () => {
+  test("publishes once and relies on the PR synchronize event for canonical CI", () => {
     expect(workflow).toContain('generated_head="$(git rev-parse HEAD)"');
     expect(workflow).toContain(
       'if [[ "${remote_head}" != "${generated_head}" ]]',
     );
     expect(workflow).not.toContain("gh workflow run");
     expect(workflow).not.toContain("expected_sha=\"${generated_head}\"");
+    expect(ciWorkflow).toContain("pull_request:");
+    expect(ciWorkflow).toContain("- synchronize");
     expect(workflow).toContain(
-      "validation: branch push triggers canonical CI for the generated commit",
+      "validation: PR synchronize triggers canonical CI for the generated commit",
     );
   });
 
