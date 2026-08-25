@@ -63,7 +63,7 @@ describe("authenticated MCP worker enrolment", () => {
     expect(nextDay.idempotencyKey).not.toBe(first.idempotencyKey);
   });
 
-  test("mounts only with a durable provider and exposes only three public inputs", async () => {
+  test("mounts only with a durable provider and makes callsign optional", async () => {
     const store = new StensiblyStore(":memory:");
     const bareServer = createMcpServer(new SqliteWorkLedger(store));
     const calls: WorkerEnrolmentProviderInput[] = [];
@@ -91,7 +91,7 @@ describe("authenticated MCP worker enrolment", () => {
       );
       expect(tool?.inputSchema).toMatchObject({
         type: "object",
-        required: ["project", "workerSessionId", "callsign"],
+        required: ["project", "workerSessionId"],
       });
       expect(Object.keys((tool?.inputSchema as { properties: object }).properties).sort())
         .toEqual(["callsign", "project", "workerSessionId"]);
@@ -107,7 +107,7 @@ describe("authenticated MCP worker enrolment", () => {
         workerSessionId: "chat.session-42",
         callsign: "Keel",
       });
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         version: 1,
         outcome: "accepted",
         reason: null,
@@ -115,6 +115,7 @@ describe("authenticated MCP worker enrolment", () => {
           workerRef: "wrk_test",
           workerSessionId: "chat.session-42",
           callsign: "Keel",
+          sigil: expect.any(String),
           callsignLeaseGeneration: 1,
           status: "active",
           startedAt: calls[0]!.request.startedAt,
@@ -145,7 +146,79 @@ describe("authenticated MCP worker enrolment", () => {
     }
   });
 
-  test("converges a later-bucket active-session collision and rejects forged bindings", async () => {
+  test("selects a pool-backed callsign and retries only active collisions", async () => {
+    const calls: WorkerEnrolmentProviderInput[] = [];
+    const result = await callWithProvider((input) => {
+      calls.push(input);
+      return calls.length === 1
+        ? backendResult(input, "rejected", "callsign_active_collision")
+        : backendResult(input, "accepted");
+    }, false, { project, workerSessionId: "chat.session-auto" });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.request.callsign).not.toBeNull();
+    expect(calls[1]!.request.callsign).not.toBe(calls[0]!.request.callsign);
+    expect(result).toMatchObject({
+      outcome: "accepted",
+      reason: null,
+      reused: false,
+      worker: {
+        workerSessionId: "chat.session-auto",
+        callsign: calls[1]!.request.callsign,
+        sigil: expect.any(String),
+        callsignLeaseGeneration: 1,
+      },
+    });
+  });
+
+  test("reports explicit pool exhaustion after every curated name collides", async () => {
+    const calls: WorkerEnrolmentProviderInput[] = [];
+    const result = await callWithProvider((input) => {
+      calls.push(input);
+      return backendResult(input, "rejected", "callsign_active_collision");
+    }, false, { project, workerSessionId: "chat.session-full-pool" });
+
+    expect(new Set(calls.map((entry) => entry.request.callsign)).size).toBe(96);
+    expect(result).toEqual({
+      version: 1,
+      outcome: "rejected",
+      reason: "callsign_pool_exhausted",
+      worker: null,
+      reused: false,
+      grantsAuthority: false,
+    });
+  });
+
+  test("reuses an existing automatic session even when the current candidate differs", async () => {
+    const result = await callWithProvider((input) => {
+      const current = backendResult(input, "rejected", "active_session_exists") as {
+        worker: Record<string, unknown>;
+      };
+      return {
+        ...current,
+        worker: {
+          ...current.worker,
+          callsign: "Keel",
+          callsignLeaseId: "csl_existing",
+          callsignLeaseGeneration: 7,
+        },
+      };
+    }, false, { project, workerSessionId: "chat.session-existing" });
+
+    expect(result).toMatchObject({
+      outcome: "accepted",
+      reason: null,
+      reused: true,
+      worker: {
+        workerSessionId: "chat.session-existing",
+        callsign: "Keel",
+        sigil: expect.any(String),
+        callsignLeaseGeneration: 7,
+      },
+    });
+  });
+
+  test("converges a later-bucket explicit active-session collision and rejects forged bindings", async () => {
     const reused = await callWithProvider((input) =>
       backendResult(input, "rejected", "active_session_exists")
     );
@@ -266,7 +339,7 @@ function testClient(name: string): Client {
 function backendResult(
   input: WorkerEnrolmentProviderInput,
   outcome: "accepted" | "rejected",
-  reason: "active_session_exists" | null = null,
+  reason: "active_session_exists" | "callsign_active_collision" | null = null,
 ) {
   return {
     version: 1,
@@ -315,6 +388,11 @@ async function call(
 async function callWithProvider(
   provider: (input: WorkerEnrolmentProviderInput) => unknown,
   expectError = false,
+  args: Record<string, unknown> = {
+    project,
+    workerSessionId: "chat.session-42",
+    callsign: "Keel",
+  },
 ): Promise<Record<string, unknown> | string> {
   const store = new StensiblyStore(":memory:");
   const ledger = Object.assign(new SqliteWorkLedger(store), {
@@ -330,7 +408,7 @@ async function callWithProvider(
     await client.connect(clientTransport);
     const result = await client.callTool({
       name: "enrol_worker",
-      arguments: { project, workerSessionId: "chat.session-42", callsign: "Keel" },
+      arguments: args,
     });
     const text = textContent(result);
     if (expectError) {
