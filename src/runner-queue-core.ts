@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { normalizeRunnerConcurrencyPolicy } from "./runner-concurrency.js";
 import type { ClaimRunnerWorkInput } from "./runner-contracts.js";
+import { runnerProfileProvenanceV1 } from "./runner-profile-provenance.js";
 import { actorSchema, type ActorInput } from "./schemas.js";
 import {
   ensureRunSchema,
@@ -16,6 +17,7 @@ interface CandidateRow {
   actor_id: string;
   runner_type: string;
   runner_profile: string;
+  runner_profile_version: string | null;
   external_run_id: string | null;
   status: WorkRunStatus;
   generation: number;
@@ -176,6 +178,7 @@ export function claimRunnerWork(
         source: "generic_runner_claim",
         runnerType: candidate.runner_type,
         runnerProfile: candidate.runner_profile,
+        runnerProfileVersion: candidate.runner_profile_version,
         generation: nextGeneration,
         leaseGeneration: nextLeaseGeneration,
         leaseExpiresAt,
@@ -233,21 +236,25 @@ function selectCandidate(
   return store.db
     .query<
       CandidateRow,
-      [string, string, string | null, string | null, string, number]
+      [string, string, string | null, string | null, string | null, string, number]
     >(`
       SELECT r.*, i.project_id
       FROM work_runs r
       JOIN items i ON i.id = r.item_id
       WHERE r.runner_type = ?1
         AND r.runner_profile = ?2
-        AND (?3 IS NULL OR i.project_id = ?3)
-        AND (?4 IS NULL OR r.id = ?4)
+        AND (
+          (?3 IS NULL AND r.runner_profile_version IS NULL)
+          OR r.runner_profile_version = ?3
+        )
+        AND (?4 IS NULL OR i.project_id = ?4)
+        AND (?5 IS NULL OR r.id = ?5)
         AND (
           r.status = 'queued'
           OR (
             r.status = 'failed'
             AND r.next_retry_at IS NOT NULL
-            AND r.next_retry_at <= ?5
+            AND r.next_retry_at <= ?6
             AND r.retry_attempt < r.max_attempts
           )
         )
@@ -257,8 +264,8 @@ function selectCandidate(
           JOIN items active_item ON active_item.id = active.item_id
           WHERE active_item.project_id = i.project_id
             AND active.status IN ('starting', 'running', 'waiting')
-            AND (active.lease_expires_at IS NULL OR active.lease_expires_at > ?5)
-        ) < ?6
+            AND (active.lease_expires_at IS NULL OR active.lease_expires_at > ?6)
+        ) < ?7
       ORDER BY
         CASE WHEN r.status = 'failed' THEN 0 ELSE 1 END,
         COALESCE(r.next_retry_at, r.created_at) ASC,
@@ -269,6 +276,7 @@ function selectCandidate(
     .get(
       input.runnerType,
       input.runnerProfile,
+      input.runnerProfileVersion,
       input.project ?? null,
       input.runId ?? null,
       now,
@@ -349,6 +357,7 @@ function upsertActor(store: StensiblyStore, rawActor: ActorInput, now: string): 
 function normalizeInput(raw: ClaimRunnerWorkInput) {
   const actor = actorSchema.parse(raw.actor);
   if (actor.kind === "human") throw new TypeError("Runner actor must be an agent or service");
+  const provenance = runnerProfileProvenanceV1(raw.runnerProfile, raw.runnerProfileVersion);
   const project = optionalProject(raw.project);
   const runId = optionalText(raw.runId, "Run ID", 240);
   const externalRunId = optionalText(raw.externalRunId, "External run ID", 240);
@@ -356,7 +365,8 @@ function normalizeInput(raw: ClaimRunnerWorkInput) {
   return {
     actor,
     runnerType: requiredText(raw.runnerType, "Runner type", 80),
-    runnerProfile: requiredText(raw.runnerProfile, "Runner profile", 160),
+    runnerProfile: provenance.profileId,
+    runnerProfileVersion: provenance.profileVersion,
     ...(project ? { project } : {}),
     ...(runId ? { runId } : {}),
     ...(externalRunId ? { externalRunId } : {}),
@@ -371,6 +381,9 @@ function claimRequest(input: ReturnType<typeof normalizeInput>) {
     actor: input.actor,
     runnerType: input.runnerType,
     runnerProfile: input.runnerProfile,
+    ...(input.runnerProfileVersion === null
+      ? {}
+      : { runnerProfileVersion: input.runnerProfileVersion }),
     project: input.project ?? null,
     runId: input.runId ?? null,
     externalRunId: input.externalRunId ?? null,
@@ -385,6 +398,7 @@ function mapRun(row: CandidateRow): WorkRun {
     actorId: row.actor_id,
     runnerType: row.runner_type,
     runnerProfile: row.runner_profile,
+    runnerProfileVersion: row.runner_profile_version,
     externalRunId: row.external_run_id,
     status: row.status,
     generation: row.generation,
