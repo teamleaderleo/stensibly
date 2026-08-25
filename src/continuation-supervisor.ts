@@ -16,6 +16,7 @@ import {
   resolveContinuation,
   type ContinuationProposal,
 } from "./continuations.js";
+import { runnerProfileProvenanceV1 } from "./runner-profile-provenance.js";
 import { getWorkRun } from "./runs.js";
 import {
   ConflictError,
@@ -30,6 +31,7 @@ export interface QueueContinuationForSupervisorInput {
   expectedGeneration: number;
   runnerType: string;
   runnerProfile: string;
+  runnerProfileVersion?: string | null;
   leaseSeconds?: number;
   maxAttempts?: number;
   retryBackoffSeconds?: number;
@@ -50,6 +52,7 @@ export interface RunContinuationSupervisorPolicyInput {
   supervisor: ActorInput;
   runnerType: string;
   runnerProfile: string;
+  runnerProfileVersion?: string | null;
   project?: string;
   limit?: number;
   leaseSeconds?: number;
@@ -157,10 +160,14 @@ export function queueContinuationForSupervisor(
     const runnerProfile = continuation.action.kind === "dispatch_item"
       ? continuation.action.runnerProfile ?? input.runnerProfile
       : input.runnerProfile;
+    const runnerProfileVersion = runnerProfile === input.runnerProfile
+      ? input.runnerProfileVersion
+      : null;
     const dispatch = dispatchNextWork(store, {
       actor: input.supervisor,
       runnerType: input.runnerType,
       runnerProfile,
+      runnerProfileVersion,
       project: materialized.item.project,
       itemId: materialized.item.id,
       continuationRef: continuation.id,
@@ -278,6 +285,7 @@ export function runContinuationSupervisorPolicy(
         expectedGeneration: proposal.generation,
         runnerType: input.runnerType,
         runnerProfile: input.runnerProfile,
+        runnerProfileVersion: input.runnerProfileVersion,
         leaseSeconds: input.leaseSeconds,
         maxAttempts: input.maxAttempts,
         retryBackoffSeconds: input.retryBackoffSeconds,
@@ -380,7 +388,10 @@ function continuationTouchesOnlyProject(
 
 function normalizeQueueInput(input: QueueContinuationForSupervisorInput) {
   const id = requiredText(input.id, "Continuation ID", 240);
-  const runnerProfile = requiredText(input.runnerProfile, "Runner profile", 160);
+  const provenance = runnerProfileProvenanceV1(
+    input.runnerProfile,
+    input.runnerProfileVersion,
+  );
   return {
     id,
     actor: normalizeActor(input.actor, "Approval actor"),
@@ -390,7 +401,8 @@ function normalizeQueueInput(input: QueueContinuationForSupervisorInput) {
       "Expected generation",
     ),
     runnerType: requiredText(input.runnerType, "Runner type", 80),
-    runnerProfile,
+    runnerProfile: provenance.profileId,
+    runnerProfileVersion: provenance.profileVersion,
     leaseSeconds: positiveInteger(input.leaseSeconds ?? 900, "Lease seconds", 86_400, 30),
     maxAttempts: positiveInteger(input.maxAttempts ?? 3, "Maximum attempts", 20),
     retryBackoffSeconds: positiveInteger(
@@ -402,7 +414,7 @@ function normalizeQueueInput(input: QueueContinuationForSupervisorInput) {
     executionEnvelope: parseExecutionEnvelope(
       input.executionEnvelope
         ?? compatibilityExecutionEnvelope(
-          `Execute continuation ${id} with runner profile ${runnerProfile}`,
+          `Execute continuation ${id} with runner profile ${provenance.profileId}`,
         ),
     ),
     idempotencyKey: optionalText(input.idempotencyKey, "Idempotency key", 240),
@@ -415,10 +427,15 @@ function normalizePolicyInput(input: RunContinuationSupervisorPolicyInput) {
   if (project && !/^[a-z0-9][a-z0-9-_]*$/.test(project)) {
     throw new TypeError("Project must be a lowercase slug");
   }
+  const provenance = runnerProfileProvenanceV1(
+    input.runnerProfile,
+    input.runnerProfileVersion,
+  );
   return {
     supervisor: normalizeSupervisor(input.supervisor),
     runnerType: requiredText(input.runnerType, "Runner type", 80),
-    runnerProfile: requiredText(input.runnerProfile, "Runner profile", 160),
+    runnerProfile: provenance.profileId,
+    runnerProfileVersion: provenance.profileVersion,
     ...(project ? { project } : {}),
     limit: positiveInteger(input.limit ?? 20, "Policy limit", 100),
     leaseSeconds: positiveInteger(input.leaseSeconds ?? 900, "Lease seconds", 86_400, 30),
@@ -440,6 +457,9 @@ function queueRequest(input: ReturnType<typeof normalizeQueueInput>) {
     expectedGeneration: input.expectedGeneration,
     runnerType: input.runnerType,
     runnerProfile: input.runnerProfile,
+    ...(input.runnerProfileVersion === null
+      ? {}
+      : { runnerProfileVersion: input.runnerProfileVersion }),
     leaseSeconds: input.leaseSeconds,
     maxAttempts: input.maxAttempts,
     retryBackoffSeconds: input.retryBackoffSeconds,
