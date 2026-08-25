@@ -57,7 +57,7 @@ function fakeCodexSource(input: {
   readonly resultPath: string;
   readonly authMode: "chatgpt" | "api-key";
   readonly workerExit: number;
-  readonly workerMode: "normal" | "timeout";
+  readonly workerMode: "normal" | "timeout" | "commit" | "rewind" | "clean";
   readonly envPath: string;
   readonly workerCreatedPath: string;
 }): string {
@@ -80,6 +80,22 @@ if (process.argv[2] === "login" && process.argv[3] === "status") {
 
 if (workerMode === "timeout") await new Promise((resolve) => setTimeout(resolve, 500));
 if (workerCreatedPath) await Bun.write(workerCreatedPath, "worker-created\\n");
+if (workerMode === "commit") {
+  const repository = workerCreatedPath.slice(0, workerCreatedPath.lastIndexOf("/"));
+  const add = Bun.spawnSync(["git", "-C", repository, "add", "worker-created.txt"]);
+  if (add.exitCode !== 0) throw new Error("fake git add failed");
+  const commit = Bun.spawnSync(["git", "-C", repository, "-c", "user.name=Sol Luna Test", "-c", "user.email=sol-luna@example.invalid", "commit", "-q", "-m", "worker commit"]);
+  if (commit.exitCode !== 0) throw new Error("fake git commit failed");
+}
+if (workerMode === "rewind") {
+  const repository = workerCreatedPath.slice(0, workerCreatedPath.lastIndexOf("/"));
+  const reset = Bun.spawnSync(["git", "-C", repository, "reset", "--hard", "HEAD^"]);
+  if (reset.exitCode !== 0) throw new Error("fake git rewind failed");
+}
+if (workerMode === "clean") {
+  const { unlink } = await import("node:fs/promises");
+  await unlink(workerCreatedPath);
+}
 if (argsPath) await Bun.write(argsPath, JSON.stringify(process.argv.slice(2)));
 if (stdinPath) await Bun.write(stdinPath, await Bun.stdin.text());
 if (resultPath) {
@@ -101,7 +117,7 @@ process.exit(workerExit);
 async function setupFakeCodex(overrides: Partial<{
   readonly authMode: "chatgpt" | "api-key";
   readonly workerExit: number;
-  readonly workerMode: "normal" | "timeout";
+  readonly workerMode: "normal" | "timeout" | "commit" | "rewind" | "clean";
 }> = {}): Promise<FakeCodexSetup> {
   const root = await mkdtemp(join(tmpdir(), "sol-luna-worker-test-"));
   temporaryRoots.push(root);
@@ -116,6 +132,15 @@ async function setupFakeCodex(overrides: Partial<{
   const envPath = join(root, "codex-env.json");
   const workerCreatedPath = join(repository, "worker-created.txt");
   await mkdirRepository(repository);
+  if (overrides.workerMode === "rewind") {
+    await writeFile(join(repository, "tracked.txt"), "second commit\n");
+    await shell("git", ["-C", repository, "add", "tracked.txt"], process.cwd());
+    await shell(
+      "git",
+      ["-C", repository, "-c", "user.name=Sol Luna Test", "-c", "user.email=sol-luna@example.invalid", "commit", "-q", "-m", "second"],
+      process.cwd(),
+    );
+  }
   await writeFile(brief, "Canonical brief bytes\nline two\n");
   await writeFile(schema, JSON.stringify({ type: "object" }));
   await writeFile(resultPath, JSON.stringify({
@@ -360,6 +385,7 @@ describe("disposable Sol/Luna Codex worker harness", () => {
     expect(receipt.git).toMatchObject({
       headBefore: expect.stringMatching(/^[0-9a-f]{40}$/u),
       headAfter: expect.stringMatching(/^[0-9a-f]{40}$/u),
+      headRelationship: "unchanged",
       baselineDirtyPaths: [],
       workerCreatedDirtyPaths: ["worker-created.txt"],
       commitsMade: [],
@@ -438,6 +464,69 @@ describe("disposable Sol/Luna Codex worker harness", () => {
     expect(result.receipt.git.workerCreatedDirtyPaths).toEqual(["worker-created.txt"]);
     expect(result.receipt.git.finalDirtyPaths).toEqual(["preexisting.txt", "worker-created.txt"]);
     expect(result.receipt.git.changedPaths).toEqual(["worker-created.txt"]);
+  });
+
+  test("attributes a worker edit to a path that was already dirty", async () => {
+    const setup = await setupFakeCodex();
+    await writeFile(setup.workerCreatedPath, "baseline dirty\n");
+
+    const result = await runSolLunaWorker(setup.options);
+
+    expect(result.receipt.git.baselineDirtyPaths).toEqual(["worker-created.txt"]);
+    expect(result.receipt.git.workerCreatedDirtyPaths).toEqual(["worker-created.txt"]);
+    expect(result.receipt.git.finalDirtyPaths).toEqual(["worker-created.txt"]);
+    expect(result.receipt.git.changedPaths).toEqual(["worker-created.txt"]);
+  });
+
+  test("attributes a worker edit across staged and unstaged baseline state", async () => {
+    const setup = await setupFakeCodex();
+    await writeFile(setup.workerCreatedPath, "staged baseline\n");
+    await shell("git", ["-C", setup.options.repository, "add", "worker-created.txt"], process.cwd());
+    await writeFile(setup.workerCreatedPath, "unstaged baseline\n");
+
+    const result = await runSolLunaWorker(setup.options);
+
+    expect(result.receipt.git.baselineDirtyPaths).toEqual(["worker-created.txt"]);
+    expect(result.receipt.git.workerCreatedDirtyPaths).toEqual(["worker-created.txt"]);
+    expect(result.receipt.git.changedPaths).toEqual(["worker-created.txt"]);
+  });
+
+  test("attributes a baseline-dirty path that the worker cleans", async () => {
+    const setup = await setupFakeCodex({ workerMode: "clean" });
+    await writeFile(setup.workerCreatedPath, "baseline dirty\n");
+
+    const result = await runSolLunaWorker(setup.options);
+
+    expect(result.receipt.git.baselineDirtyPaths).toEqual(["worker-created.txt"]);
+    expect(result.receipt.git.workerCreatedDirtyPaths).toEqual(["worker-created.txt"]);
+    expect(result.receipt.git.finalDirtyPaths).toEqual([]);
+    expect(result.receipt.git.changedPaths).toEqual(["worker-created.txt"]);
+  });
+
+  test("retains committed attribution for a path that was dirty at baseline", async () => {
+    const setup = await setupFakeCodex({ workerMode: "commit" });
+    await writeFile(setup.workerCreatedPath, "baseline dirty\n");
+
+    const result = await runSolLunaWorker({ ...setup.options, gitMetadataAuthority: "write" });
+
+    expect(result.receipt.git.headRelationship).toBe("descendant");
+    expect(result.receipt.git.commitsMade).toHaveLength(1);
+    expect(result.receipt.git.committedPaths).toEqual(["worker-created.txt"]);
+    expect(result.receipt.git.workerCreatedDirtyPaths).toEqual(["worker-created.txt"]);
+    expect(result.receipt.git.changedPaths).toEqual(["worker-created.txt"]);
+  });
+
+  test("fails closed on non-descendant head movement while retaining exact heads", async () => {
+    const setup = await setupFakeCodex({ workerMode: "rewind" });
+
+    const result = await runSolLunaWorker({ ...setup.options, gitMetadataAuthority: "write" });
+
+    expect(result.receipt.git.headBefore).not.toBe(result.receipt.git.headAfter);
+    expect(result.receipt.git.headRelationship).toBe("non_descendant");
+    expect(result.receipt.git.commitsMade).toEqual([]);
+    expect(result.receipt.git.committedPaths).toEqual([]);
+    expect(result.receipt.harnessError).toContain("not a descendant");
+    expect(result.receipt.child.outcome).toBe("harness_failed");
   });
 
   test("kills an over-budget worker and records a timeout outcome", async () => {

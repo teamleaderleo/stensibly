@@ -133,6 +133,7 @@ export interface SolLunaWorkerReceipt {
   readonly git: {
     readonly headBefore: string | null;
     readonly headAfter: string | null;
+    readonly headRelationship: "unknown" | "unchanged" | "descendant" | "non_descendant";
     readonly baselineDirtyPaths: readonly string[];
     readonly workerCreatedDirtyPaths: readonly string[];
     readonly commitsMade: readonly string[];
@@ -197,6 +198,7 @@ interface ProcessCapture {
 interface GitSnapshot {
   readonly head: string;
   readonly paths: readonly string[];
+  readonly pathStates: Readonly<Record<string, string>>;
 }
 
 interface GitMetadataLocation {
@@ -208,8 +210,10 @@ interface GitMetadataLocation {
 }
 
 interface GitAttribution {
+  readonly headRelationship: "unknown" | "unchanged" | "descendant" | "non_descendant";
   readonly commitsMade: readonly string[];
   readonly committedPaths: readonly string[];
+  readonly error: string | null;
 }
 
 interface WorkerShellEnvironment {
@@ -585,7 +589,25 @@ async function gitSnapshot(repository: string): Promise<GitSnapshot> {
   ]);
   const head = utf8(headBytes).trim();
   if (head.length === 0) throw new Error("git HEAD was empty");
-  return { head, paths: parseStatusPaths(statusBytes) };
+  const paths = parseStatusPaths(statusBytes);
+  const states = await Promise.all(paths.map(async (path) => {
+    const [staged, unstaged, worktree] = await Promise.all([
+      gitOutput(repository, ["diff", "--binary", "--no-ext-diff", "--no-renames", "--cached", head, "--", path]),
+      gitOutput(repository, ["diff", "--binary", "--no-ext-diff", "--no-renames", "--", path]),
+      captureProcess(
+        ["git", "-c", "core.fsmonitor=false", "-C", repository, "hash-object", "--no-filters", "--", path],
+        { env: { ...codexEnvironment(), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } },
+      ),
+    ]);
+    const hash = createHash("sha256")
+      .update("staged\0").update(staged)
+      .update("unstaged\0").update(unstaged)
+      .update("worktree-exit\0").update(String(worktree.exitCode)).update("\0")
+      .update(worktree.stdout)
+      .digest("hex");
+    return [path, `sha256:${hash}`] as const;
+  }));
+  return { head, paths, pathStates: Object.fromEntries(states) };
 }
 
 function resolveGitPath(repository: string, gitPath: string): string {
@@ -701,10 +723,27 @@ async function committedChanges(
   repository: string,
   headBefore: string | null,
   headAfter: string | null,
-  baselinePaths: readonly string[],
 ): Promise<GitAttribution> {
-  if (headBefore === null || headAfter === null || headBefore === headAfter) {
-    return { commitsMade: [], committedPaths: [] };
+  if (headBefore === null || headAfter === null) {
+    return { headRelationship: "unknown", commitsMade: [], committedPaths: [], error: null };
+  }
+  if (headBefore === headAfter) {
+    return { headRelationship: "unchanged", commitsMade: [], committedPaths: [], error: null };
+  }
+  const ancestry = await captureProcess(
+    ["git", "-c", "core.fsmonitor=false", "-C", repository, "merge-base", "--is-ancestor", headBefore, headAfter],
+    { env: { ...codexEnvironment(), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } },
+  );
+  if (ancestry.exitCode !== 0) {
+    const headRelationship = ancestry.exitCode === 1 ? "non_descendant" : "unknown";
+    return {
+      headRelationship,
+      commitsMade: [],
+      committedPaths: [],
+      error: ancestry.exitCode === 1
+        ? "final Git head is not a descendant of the baseline head"
+        : `unable to establish Git head ancestry (exit ${ancestry.exitCode})`,
+    };
   }
   const [commitBytes, names] = await Promise.all([
     gitOutput(repository, ["rev-list", "--reverse", `${headBefore}..${headAfter}`]),
@@ -719,8 +758,10 @@ async function committedChanges(
     ]),
   ]);
   return {
+    headRelationship: "descendant",
     commitsMade: utf8(commitBytes).split(/\r?\n/u).map((commit) => commit.trim()).filter((commit) => commit.length > 0),
-    committedPaths: parseNamePaths(names).filter((path) => !baselinePaths.includes(path)),
+    committedPaths: parseNamePaths(names),
+    error: null,
   };
 }
 
@@ -869,7 +910,9 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
   let harnessError: string | null = runtimeInitializationError;
   let headBefore: string | null = null;
   let headAfter: string | null = null;
+  let headRelationship: SolLunaWorkerReceipt["git"]["headRelationship"] = "unknown";
   let baselineDirtyPaths: readonly string[] = [];
+  let baselinePathStates: Readonly<Record<string, string>> = {};
   let finalDirtyPaths: readonly string[] = [];
   let workerCreatedDirtyPaths: readonly string[] = [];
   let commitsMade: readonly string[] = [];
@@ -902,6 +945,7 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
       const snapshot = await gitSnapshot(options.repository);
       headBefore = snapshot.head;
       baselineDirtyPaths = snapshot.paths;
+      baselinePathStates = snapshot.pathStates;
       gitLocation = await gitMetadataLocation(options.repository);
     } catch (error) {
       harnessError = appendHarnessError(harnessError, `unable to read Git state: ${errorMessage(error)}`);
@@ -1017,19 +1061,25 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
     harnessError = appendHarnessError(harnessError, `unable to clean worker runtime: ${errorMessage(error)}`);
   }
 
+  let finalPathStates: Readonly<Record<string, string>> = {};
   try {
     const snapshot = await gitSnapshot(options.repository);
     headAfter = snapshot.head;
     finalDirtyPaths = snapshot.paths;
+    finalPathStates = snapshot.pathStates;
   } catch (error) {
     harnessError = appendHarnessError(harnessError, `unable to read final Git state: ${errorMessage(error)}`);
   }
 
-  workerCreatedDirtyPaths = finalDirtyPaths.filter((path) => !baselineDirtyPaths.includes(path));
+  workerCreatedDirtyPaths = [...new Set([...baselineDirtyPaths, ...finalDirtyPaths])]
+    .filter((path) => baselinePathStates[path] !== finalPathStates[path])
+    .sort();
   try {
-    const attribution = await committedChanges(options.repository, headBefore, headAfter, baselineDirtyPaths);
+    const attribution = await committedChanges(options.repository, headBefore, headAfter);
+    headRelationship = attribution.headRelationship;
     commitsMade = attribution.commitsMade;
     committedPaths = attribution.committedPaths;
+    if (attribution.error !== null) harnessError = appendHarnessError(harnessError, attribution.error);
   } catch (error) {
     harnessError = appendHarnessError(harnessError, `unable to read committed Git changes: ${errorMessage(error)}`);
   }
@@ -1082,6 +1132,7 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
     git: {
       headBefore,
       headAfter,
+      headRelationship,
       baselineDirtyPaths,
       workerCreatedDirtyPaths,
       commitsMade,
