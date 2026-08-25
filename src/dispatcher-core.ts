@@ -9,6 +9,7 @@ import {
   consumePromiseWakeupsForDispatch,
   ensurePromiseWakeupConsumptionSchema,
 } from "./promise-wakeup-consumption.js";
+import { runnerProfileProvenanceV1 } from "./runner-profile-provenance.js";
 import {
   ensureRunSchema,
   listRetryEligibleRuns,
@@ -53,6 +54,7 @@ export interface DispatchNextWorkInput {
   actor: ActorInput;
   runnerType: string;
   runnerProfile: string;
+  runnerProfileVersion?: string | null;
   project?: string;
   itemId?: string;
   externalRunId?: string;
@@ -91,6 +93,7 @@ interface RunRow {
   actor_id: string;
   runner_type: string;
   runner_profile: string;
+  runner_profile_version: string | null;
   external_run_id: string | null;
   status: WorkRun["status"];
   generation: number;
@@ -218,18 +221,18 @@ export function dispatchNextWork(
     store.db
       .query(`
         INSERT INTO work_runs (
-          id, item_id, actor_id, runner_type, runner_profile, external_run_id,
-          status, generation, lease_generation, lease_owner_id, lease_expires_at,
-          last_heartbeat_at, checkpoint, outcome, continuation_ref, usage_json,
-          retry_attempt, max_attempts, retry_backoff_seconds, next_retry_at,
+          id, item_id, actor_id, runner_type, runner_profile, runner_profile_version,
+          external_run_id, status, generation, lease_generation, lease_owner_id,
+          lease_expires_at, last_heartbeat_at, checkpoint, outcome, continuation_ref,
+          usage_json, retry_attempt, max_attempts, retry_backoff_seconds, next_retry_at,
           creation_request_json, idempotency_key, created_at, updated_at,
           started_at, ended_at
         ) VALUES (
           ?1, ?2, ?3, ?4, ?5, ?6,
-          'queued', 1, 1, ?3, ?7,
-          NULL, NULL, NULL, ?8, '{}',
-          0, ?9, ?10, NULL,
-          ?11, NULL, ?12, ?12,
+          ?7, 'queued', 1, 1, ?3,
+          ?8, NULL, NULL, NULL, ?9,
+          '{}', 0, ?10, ?11, NULL,
+          ?12, NULL, ?13, ?13,
           NULL, NULL
         )
       `)
@@ -239,6 +242,7 @@ export function dispatchNextWork(
         input.actor.id,
         input.runnerType,
         input.runnerProfile,
+        input.runnerProfileVersion,
         input.externalRunId ?? null,
         leaseExpiresAt,
         input.continuationRef ?? null,
@@ -281,6 +285,7 @@ export function dispatchNextWork(
         leaseExpiresAt,
         runnerType: input.runnerType,
         runnerProfile: input.runnerProfile,
+        runnerProfileVersion: input.runnerProfileVersion,
         source: "supervisor_dispatch",
         wakeupSource: "local",
         readyPromiseWakeups: consumedPromiseWakeupIds.length,
@@ -503,6 +508,7 @@ function normalizeSurveyInput(raw: SurveyDispatchInput): { project?: string; lim
 function normalizeDispatchInput(raw: DispatchNextWorkInput) {
   const actor = actorSchema.parse(raw.actor);
   if (actor.kind === "human") throw new TypeError("Supervisor dispatch actor must be an agent or service");
+  const provenance = runnerProfileProvenanceV1(raw.runnerProfile, raw.runnerProfileVersion);
   const project = optionalProject(raw.project);
   const itemId = optionalText(raw.itemId, "Item ID", 240);
   const externalRunId = optionalText(raw.externalRunId, "External run ID", 240);
@@ -511,7 +517,8 @@ function normalizeDispatchInput(raw: DispatchNextWorkInput) {
   return {
     actor,
     runnerType: requiredText(raw.runnerType, "Runner type", 80),
-    runnerProfile: requiredText(raw.runnerProfile, "Runner profile", 160),
+    runnerProfile: provenance.profileId,
+    runnerProfileVersion: provenance.profileVersion,
     ...(project ? { project } : {}),
     ...(itemId ? { itemId } : {}),
     ...(externalRunId ? { externalRunId } : {}),
@@ -528,6 +535,9 @@ function dispatchRequest(input: ReturnType<typeof normalizeDispatchInput>) {
     actor: input.actor,
     runnerType: input.runnerType,
     runnerProfile: input.runnerProfile,
+    ...(input.runnerProfileVersion === null
+      ? {}
+      : { runnerProfileVersion: input.runnerProfileVersion }),
     project: input.project ?? null,
     itemId: input.itemId ?? null,
     externalRunId: input.externalRunId ?? null,
@@ -545,6 +555,7 @@ function mapRun(row: RunRow): WorkRun {
     actorId: row.actor_id,
     runnerType: row.runner_type,
     runnerProfile: row.runner_profile,
+    runnerProfileVersion: row.runner_profile_version,
     externalRunId: row.external_run_id,
     status: row.status,
     generation: row.generation,
