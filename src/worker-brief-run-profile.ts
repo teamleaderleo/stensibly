@@ -47,6 +47,14 @@ export type RunBoundWorkerBriefV1 = Omit<
 
 export type CompatibleRunProfileWorkerBriefV1 = WorkerBriefV1 | RunBoundWorkerBriefV1;
 
+interface AdmittedRunBindingV1 {
+  id: unknown;
+  generation: unknown;
+  leaseGeneration: unknown;
+  runnerProfile: unknown;
+  runnerProfileVersion: unknown;
+}
+
 /**
  * Compile worker guidance from one authoritative durable run.
  *
@@ -60,21 +68,18 @@ export function compileRunBoundWorkerBriefV1(
   run: WorkerBriefRunBindingV1,
   capabilityClass: WorkerBriefCapabilityClass,
 ): RunBoundWorkerBriefV1 {
-  requireExplicitProfileVersion(run);
+  const binding = admitRunBinding(run);
   const profile = runnerProfileProvenanceV1(
-    run.runnerProfile,
-    run.runnerProfileVersion,
+    binding.runnerProfile,
+    binding.runnerProfileVersion,
   );
-  const base = compileWorkerBriefV1({
-    ...input,
-    dispatch: {
-      runId: run.id,
-      runGeneration: run.generation,
-      leaseGeneration: run.leaseGeneration,
-      runnerProfile: profile.profileId,
-      capabilityClass,
-    },
-  });
+  const base = compileWorkerBriefV1(withDispatch(input, {
+    runId: binding.id as string,
+    runGeneration: binding.generation as number,
+    leaseGeneration: binding.leaseGeneration as number,
+    runnerProfile: profile.profileId,
+    capabilityClass,
+  }));
   const { semanticDigest: _semanticDigest, ...baseWithoutDigest } = base;
   const withoutDigest = deepFreeze({
     ...baseWithoutDigest,
@@ -129,21 +134,21 @@ export function assertRunBoundWorkerBriefCurrentV1(
   current: RunBoundWorkerBriefFreshnessFactsV1,
   run: WorkerBriefRunBindingV1,
 ): void {
-  requireExplicitProfileVersion(run);
+  const binding = admitRunBinding(run);
   assertWorkerBriefCurrentV1(
     brief as unknown as WorkerBriefV1,
     {
       ...current,
-      runId: run.id,
-      runGeneration: run.generation,
-      leaseGeneration: run.leaseGeneration,
+      runId: binding.id as string,
+      runGeneration: binding.generation as number,
+      leaseGeneration: binding.leaseGeneration as number,
     },
   );
 
   const briefProfile = workerBriefRunnerProfileProvenanceV1(brief);
   const currentProfile = runnerProfileProvenanceV1(
-    run.runnerProfile,
-    run.runnerProfileVersion,
+    binding.runnerProfile,
+    binding.runnerProfileVersion,
   );
   const compatibility = compareRunnerProfileProvenanceV1(
     briefProfile,
@@ -175,17 +180,61 @@ export function runBoundWorkerBriefJsonV1(
   return workerBriefJson(brief as unknown as WorkerBriefV1);
 }
 
-function requireExplicitProfileVersion(run: WorkerBriefRunBindingV1): void {
-  if (!Object.prototype.hasOwnProperty.call(run, "runnerProfileVersion")) {
-    throw new RangeError(
-      "Run-bound worker brief requires an explicit runner profile version or null",
-    );
+function withDispatch(
+  input: CompileRunBoundWorkerBriefInputV1,
+  dispatch: CompileWorkerBriefInputV1["dispatch"],
+): CompileWorkerBriefInputV1 {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new TypeError("Run-bound worker brief compile input must be an object");
   }
-  if (run.runnerProfileVersion === undefined) {
-    throw new RangeError(
-      "Run-bound worker brief requires an explicit runner profile version or null",
-    );
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  if (Object.prototype.hasOwnProperty.call(descriptors, "dispatch")) {
+    throw new TypeError("Run-bound worker brief compile input cannot supply dispatch");
   }
+  Object.defineProperty(descriptors, "dispatch", {
+    enumerable: true,
+    configurable: true,
+    writable: true,
+    value: dispatch,
+  });
+  return Object.create(Object.getPrototypeOf(input), descriptors) as CompileWorkerBriefInputV1;
+}
+
+function admitRunBinding(run: WorkerBriefRunBindingV1): AdmittedRunBindingV1 {
+  if (!run || typeof run !== "object" || Array.isArray(run)) {
+    throw new TypeError("Worker brief run binding must be an object");
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(run);
+  const output = Object.create(null) as Record<string, unknown>;
+  for (const key of [
+    "id",
+    "generation",
+    "leaseGeneration",
+    "runnerProfile",
+    "runnerProfileVersion",
+  ] as const) {
+    const descriptor = descriptors[key];
+    if (!descriptor) {
+      if (key === "runnerProfileVersion") {
+        throw new RangeError(
+          "Run-bound worker brief requires an explicit runner profile version or null",
+        );
+      }
+      throw new TypeError(`Worker brief run binding is missing field ${key}`);
+    }
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+      throw new TypeError(
+        `Worker brief run binding field ${key} must be an enumerable data property`,
+      );
+    }
+    if (key === "runnerProfileVersion" && descriptor.value === undefined) {
+      throw new RangeError(
+        "Run-bound worker brief requires an explicit runner profile version or null",
+      );
+    }
+    output[key] = descriptor.value;
+  }
+  return output as unknown as AdmittedRunBindingV1;
 }
 
 function deepFreeze<T>(value: T): T {
