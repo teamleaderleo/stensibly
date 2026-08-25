@@ -112,6 +112,24 @@ describe("MCP OAuth registration admission", () => {
     });
   });
 
+  test("applies admission controls to encoded registration route characters", async () => {
+    for (const path of ["/oauth/%72egister", "/%6fauth/register"]) {
+      const limiter = new SequenceLimiter([true]);
+      const result = await runRequest(registrationRequest(
+        ["https://evil.example/callback"],
+        path,
+      ), {
+        enabled: true,
+        rateLimiter: limiter,
+        allowedRedirectOrigins: "https://chatgpt.com",
+      });
+
+      expect(result.response.status).toBe(400);
+      expect(result.registrationCalls).toBe(0);
+      expect(limiter.keys).toEqual(["oauth-register"]);
+    }
+  });
+
   test("rejects deceptive hosts, subdomains, credentials, fragments, and HTTP downgrade", async () => {
     const rejected = [
       "https://chatgpt.com.evil.example/oauth/callback",
@@ -271,8 +289,11 @@ async function runRequest(
   return { response, registrationCalls, downstreamAuthorization, logs };
 }
 
-function registrationRequest(redirectUris: string[]): Request {
-  return new Request(`${issuer}/oauth/register`, {
+function registrationRequest(
+  redirectUris: string[],
+  path = "/oauth/register",
+): Request {
+  return new Request(`${issuer}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
