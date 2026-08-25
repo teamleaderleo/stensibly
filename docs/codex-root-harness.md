@@ -141,6 +141,33 @@ not exclusively attributable to the harness, and it must not be collapsed into
 the RSS result or described as an improvement. It supports bounded residency and
 cloud offload, not increasing the local root-count constant.
 
+## Native cloud placement dogfood
+
+The installed `codex-cli 0.146.0`, authenticated by ChatGPT subscription, exposes
+native `codex cloud exec/status/list/diff/apply`. Cloud task identity is provider
+runtime evidence, not portfolio topology. The first placement epoch reused two
+already-dispatched read-only reviews instead of creating duplicate work:
+
+- Compass: Quarry #1046 rereview of
+  `teamleaderleo/quarry@pascal/876-review-replay-repair-r1`, required head
+  `e3094f7b69524c3e3813d3eedd22796e4aada3d5`, task
+  `task_e_6a8da2702674832694c6781dd6561769`;
+- Turnkey: Stensibly #1702 review of
+  `teamleaderleo/stensibly@ox/kepler/issue-1691-runner-profile-fence`, required
+  head `d764cf9b3d161d4f8758576e50f0fec27e493fbd`, task
+  `task_e_6a8da26f1a10832694d7d11aaddf1ecc`.
+
+Both were pending with no diff at the first status read. Their briefs require
+exact-ref structured receipts, transfer no local credentials, permit no provider
+mutation, and exclude unrelated work. This Mac retained the one local,
+Mac-dependent campaign while the reviews ran remotely. At the first placement
+read, the prior local observation showed 60% free memory, 1.650 GB swap, and a
+single Codex process at 6.186 GB RSS. While both cloud tasks were pending, a later
+observation showed 85% free, 1.430 GB swap, and the replacement Codex process at
+612 MB plus its local helper children. The Codex app restarted between samples,
+so this is operational relief evidence—not causal per-task memory attribution.
+No cloud review created another local app-server root.
+
 ## Publication receipts
 
 The existing Sol/Luna worker receipt owns head lineage and worktree activity and
