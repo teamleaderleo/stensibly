@@ -94,7 +94,7 @@ export function compileMcpPublishedContract(
     grantsAuthority: false as const,
     authorizesToolRegistration: false as const,
     authorizesPublication: false as const,
-  };
+  } as const;
 
   return deepFreeze({
     ...canonical,
