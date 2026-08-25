@@ -107,6 +107,23 @@ describe("hosted auth start admission", () => {
     ))?.status).toBe(503);
   });
 
+  test("does not expose the Cloudflare client identity in a rejection", async () => {
+    const clientAddress = "203.0.113.15";
+    const response = await enforceHostedAuthStartAdmission(
+      authStartRequest("/auth/github/start", clientAddress),
+      {
+        enabled: true,
+        rateLimiter: recordingLimiter([], false),
+      },
+    );
+
+    expect(response?.status).toBe(429);
+    expect(response?.headers.get("cache-control")).toBe("no-store");
+    expect(response?.headers.get("retry-after")).toBe("60");
+    expect(await response?.text()).not.toContain(clientAddress);
+    expect(JSON.stringify([...response?.headers.entries() ?? []])).not.toContain(clientAddress);
+  });
+
   test("does not affect other routes, methods, or disabled hosted auth", async () => {
     const limiter: EdgeRateLimiter = {
       async limit() {
