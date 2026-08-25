@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { withRunnerProfileVersions } from "../src/run-profile-version-sqlite.ts";
 import {
   createWorkRun,
   getWorkRun,
@@ -107,6 +108,57 @@ describe("SQLite runner profile version provenance", () => {
     } finally {
       store.close();
     }
+  });
+
+  test("hydrates a multi-run projection with one profile-version query", () => {
+    let batchQueries = 0;
+    const fakeStore = {
+      db: {
+        query(sql: string) {
+          if (sql.includes("PRAGMA table_info(work_runs)")) {
+            return { all: () => [{ name: "runner_profile_version" }] };
+          }
+          if (sql.includes("FROM json_each(?1)")) {
+            batchQueries += 1;
+            return {
+              all: (encodedIds: string) => {
+                expect(JSON.parse(encodedIds)).toEqual(["run_a", "run_b", "run_c"]);
+                return [
+                  {
+                    id: "run_a",
+                    runner_profile: "codex-default",
+                    runner_profile_version: "v1",
+                  },
+                  {
+                    id: "run_b",
+                    runner_profile: "codex-default",
+                    runner_profile_version: null,
+                  },
+                  {
+                    id: "run_c",
+                    runner_profile: "codex-default",
+                    runner_profile_version: "v3",
+                  },
+                ];
+              },
+            };
+          }
+          throw new Error(`Unexpected SQL in batch hydration test: ${sql}`);
+        },
+        exec() {
+          throw new Error("Batch hydration should not migrate an already-current schema");
+        },
+      },
+    } as unknown as StensiblyStore;
+
+    const hydrated = withRunnerProfileVersions(fakeStore, [
+      { id: "run_a", runnerProfile: "codex-default" },
+      { id: "run_b", runnerProfile: "codex-default" },
+      { id: "run_c", runnerProfile: "codex-default" },
+    ]);
+
+    expect(batchQueries).toBe(1);
+    expect(hydrated.map((run) => run.runnerProfileVersion)).toEqual(["v1", null, "v3"]);
   });
 
   test("preserves the creation version through heartbeat, failure, and retry", () => {
@@ -247,7 +299,7 @@ describe("SQLite runner profile version provenance", () => {
         maxAttempts: 3,
         retryBackoffSeconds: 60,
         idempotencyKey: "legacy-profile-version-create",
-      }, baseTime)).toThrow("historical runs cannot be retrofitted");
+      }, baseTime)).toThrow("different runner profile provenance");
 
       const afterRejectedRetrofit = migratedStore.db
         .query<{ runner_profile_version: string | null }, [string]>(`
