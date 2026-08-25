@@ -10,7 +10,11 @@
  */
 
 import { parseArgs } from "node:util";
-import { createLedgerStatusReader, DEFAULT_LEDGER_STATUS_ENDPOINT } from "../src/studio-status-read-client.js";
+import {
+  createLedgerStatusReader,
+  DEFAULT_LEDGER_STATUS_ENDPOINT,
+  normalizeLedgerEndpointBase,
+} from "../src/studio-status-read-client.js";
 import { runStudioBriefOnce } from "../src/studio-brief-monitor.js";
 
 /** Declared command surface; pinned by test/studio-monitors-read-only.test.ts. */
@@ -29,11 +33,19 @@ const { values: args } = parseArgs({
 });
 
 export async function runCli(): Promise<void> {
-  const endpoint = String(args.endpoint || DEFAULT_LEDGER_STATUS_ENDPOINT).replace(/\/+$/, "");
   const token = String(args.token || "");
   const project = String(args.project!);
   const pollIntervalMs = Math.max(5, parseInt(String(args["poll-interval"] || "30"), 10)) * 1000;
   const runOnce = args.once || false;
+
+  let endpoint: string;
+  try {
+    endpoint = normalizeLedgerEndpointBase(String(args.endpoint || DEFAULT_LEDGER_STATUS_ENDPOINT));
+  } catch {
+    console.error("[Monitor] Refused endpoint configuration; nothing displayed, no connection attempted.");
+    process.exitCode = 1;
+    return;
+  }
 
   console.log(`[Monitor] Stensibly studio brief monitor (read-only) — observes the ledger; claims nothing`);
   console.log(`[Monitor] Endpoint: ${endpoint} | Project: ${project}`);
