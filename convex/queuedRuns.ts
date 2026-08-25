@@ -218,6 +218,7 @@ function publicQueuedRun(run: any, itemId: string, execution: any) {
     actorId: run.actorExternalId,
     runnerType: run.runnerType,
     runnerProfile: run.runnerProfile,
+    runnerProfileVersion: run.runnerProfileVersion ?? null,
     externalRunId: run.externalRunId ?? null,
     status: run.status,
     generation: run.generation,
