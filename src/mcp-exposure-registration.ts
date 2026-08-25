@@ -90,14 +90,16 @@ export function createMcpExposureRegistrationFilter(
     server: filtered,
     complete(registeredToolNames) {
       const registered = [...registeredToolNames].sort(codeUnitCompare);
-      const selected = [...expectedToolNames].sort(codeUnitCompare);
+      const selectedEncountered = expectedToolNames
+        .filter((toolName) => encountered.has(toolName))
+        .sort(codeUnitCompare);
       if (
-        registered.length !== selected.length
-        || registered.some((toolName, index) => toolName !== selected[index])
+        registered.length !== selectedEncountered.length
+        || registered.some((toolName, index) => toolName !== selectedEncountered[index])
       ) {
         throw new RangeError("MCP exposure registration did not match selected tools");
       }
-      return Object.freeze(selected);
+      return Object.freeze(selectedEncountered);
     },
   };
 }
