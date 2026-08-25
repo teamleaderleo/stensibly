@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import {
-  GLAEDA_RECEIPT_INTAKE_SCHEMA_VERSION,
+  LEGACY_SMOLRUNNER_V1_RECEIPT_INTAKE_SCHEMA_VERSION,
   compareGlaedaReceiptTransitions,
-  glaedaReceiptIntakeSchema,
   glaedaReceiptStates,
+  legacySmolRunnerV1ReceiptIntakeSchema,
   parseGlaedaReceiptIntake,
   projectGlaedaReceiptLiveness,
   type GlaedaReceiptIntake,
@@ -16,13 +16,14 @@ const historicalSmolRunnerV1 = JSON.parse(readFileSync(
 )) as GlaedaReceiptIntake;
 
 describe("Glaeda receipt intake compatibility", () => {
-  test("uses Glaeda-facing aliases while preserving exact SmolRunner v1 decoding", () => {
-    expect(GLAEDA_RECEIPT_INTAKE_SCHEMA_VERSION).toBe(1);
+  test("uses a Glaeda-facing parser while preserving exact SmolRunner v1 decoding", () => {
+    expect(LEGACY_SMOLRUNNER_V1_RECEIPT_INTAKE_SCHEMA_VERSION).toBe(1);
     expect(glaedaReceiptStates).toContain("running");
     expect(historicalSmolRunnerV1.receipt.producer.name).toBe("smolrunner");
     expect(historicalSmolRunnerV1.attempt.executorAdapter).toBe("smolrunner");
 
-    expect(glaedaReceiptIntakeSchema.parse(historicalSmolRunnerV1)).toEqual(historicalSmolRunnerV1);
+    expect(legacySmolRunnerV1ReceiptIntakeSchema.parse(historicalSmolRunnerV1))
+      .toEqual(historicalSmolRunnerV1);
 
     const transition = parseGlaedaReceiptIntake(historicalSmolRunnerV1);
     expect(transition).toMatchObject({
