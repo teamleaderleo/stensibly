@@ -33,7 +33,7 @@ describe("hosted runner adapter command recovery", () => {
     await expect(t.mutation(convexApi.runnerAdapterCommandRecoveries.claim, recoveryInput))
       .rejects.toThrow("cannot replace live original authority");
 
-    const checkpoint = checkpointReference(fixture.runGeneration);
+    const checkpoint = checkpointReference(fixture.runGeneration, fixture.adapterId);
     await t.run(async (ctx) => {
       const run = (await ctx.db.query("queuedRuns").collect())
         .find((entry) => entry.externalId === fixture.runId);
@@ -267,8 +267,9 @@ async function reserveCommand(t: ReturnType<typeof convexTest>, label: string) {
     runGeneration: claimed.generation,
     leaseGeneration: claimed.leaseGeneration,
     actor: runnerA,
-    adapterId: "vercel-ai-sdk",
-    profileId: "default",
+    adapterId: claimed.runnerType,
+    profileId: claimed.runnerProfile,
+    profileVersion: claimed.runnerProfileVersion ?? null,
     requestFingerprint: `sha256:${"a".repeat(64)}`,
     commandId,
     commandFingerprint,
@@ -278,16 +279,17 @@ async function reserveCommand(t: ReturnType<typeof convexTest>, label: string) {
     runId: claimed.id as string,
     runGeneration: claimed.generation as number,
     leaseGeneration: claimed.leaseGeneration as number,
+    adapterId: claimed.runnerType as string,
     commandId,
     commandFingerprint,
   };
 }
 
-function checkpointReference(runGeneration: number) {
+function checkpointReference(runGeneration: number, adapterId: string) {
   return {
     version: 1 as const,
     kind: "checkpoint" as const,
-    adapterId: "vercel-ai-sdk",
+    adapterId,
     externalId: "hosted-recovery-checkpoint-opaque",
     digest: `sha256:${"c".repeat(64)}`,
     uri: null,
