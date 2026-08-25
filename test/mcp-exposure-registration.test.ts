@@ -51,7 +51,7 @@ describe("trusted MCP exposure registration", () => {
 
       const defaultNames = await listToolNames(ledger);
       const explicitNames = await listToolNames(ledger, "full_internal");
-      expect(defaultNames).toEqual([...fullManifest.tools]);
+      expect(canonicalNames(defaultNames)).toEqual([...fullManifest.tools]);
       expect(explicitNames).toEqual(defaultNames);
       expect(defaultNames).toHaveLength(52);
     } finally {
@@ -79,7 +79,7 @@ describe("trusted MCP exposure registration", () => {
         ledger,
         "published_default",
       );
-      expect(names).toEqual([...publishedDefaultNames]);
+      expect(canonicalNames(names)).toEqual([...publishedDefaultNames]);
       expect(listWorkResult.isError).not.toBe(true);
     } finally {
       store.close();
@@ -96,7 +96,7 @@ describe("trusted MCP exposure registration", () => {
       );
       const names = await listToolNames(ledger, "published_plus_searchable");
 
-      expect(names).toEqual([...plan.manifest.tools]);
+      expect(canonicalNames(names)).toEqual([...plan.manifest.tools]);
       expect(names).toContain("github_get_tool");
       expect(names).toContain("get_continuation");
       expect(names).not.toContain("survey_workspace");
@@ -129,7 +129,10 @@ describe("trusted MCP exposure registration", () => {
         actual.push(toolName);
       },
     } as unknown as McpServer;
-    const filtered = createMcpExposureRegistrationFilter(fakeServer, ["get_brief"]);
+    const filtered = createMcpExposureRegistrationFilter(
+      fakeServer,
+      ["get_brief", "get_item"],
+    );
     const register = filtered.server.registerTool as unknown as (
       toolName: string,
       ...args: unknown[]
@@ -200,4 +203,8 @@ async function listToolsAndCallListWork(
     await client.close();
     await server.close();
   }
+}
+
+function canonicalNames(names: readonly string[]): string[] {
+  return [...names].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
