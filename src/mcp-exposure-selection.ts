@@ -28,9 +28,16 @@ export interface McpCapabilityExposureSelection {
 const exposuresByProfile: Readonly<
   Record<McpCapabilityExposureProfile, readonly McpCapabilityExposure[]>
 > = Object.freeze({
-  published_default: Object.freeze(["core"]),
-  published_plus_searchable: Object.freeze(["core", "searchable"]),
-  full_internal: Object.freeze(["core", "searchable", "hidden"]),
+  published_default: Object.freeze(["core"] as McpCapabilityExposure[]),
+  published_plus_searchable: Object.freeze([
+    "core",
+    "searchable",
+  ] as McpCapabilityExposure[]),
+  full_internal: Object.freeze([
+    "core",
+    "searchable",
+    "hidden",
+  ] as McpCapabilityExposure[]),
 });
 
 export function compileMcpCapabilityExposureSelection(
