@@ -21,6 +21,21 @@ describe("Work Pulse frontend fixtures", () => {
     expect(Object.isFrozen(workPulseFixture.attempts[0]?.polar)).toBe(true);
   });
 
+  test("binds compiled worker-brief facts to attempts without granting authority", () => {
+    expect(workPulseFixture.briefs).toHaveLength(3);
+    for (const brief of workPulseFixture.briefs) {
+      expect(brief.digest).toMatch(/^sha256:[a-f0-9]{64}$/u);
+      expect(brief.policySnapshotSha256).toMatch(/^sha256:[a-f0-9]{64}$/u);
+      expect(brief.grantsAuthority).toBe(false);
+      expect(["explicit", "terse"]).toContain(brief.presentation);
+      expect(brief.sourceRefs.length).toBeGreaterThan(0);
+      expect(workPulseFixture.attempts.some((attempt) => attempt.id === brief.attemptId)).toBe(true);
+    }
+    expect(new Set(workPulseFixture.briefs.map((brief) => brief.attemptId)).size).toBe(3);
+    expect(workPulseFixture.briefs.find((brief) => brief.id === "brief-sable-overlay")?.sourceRefs)
+      .toContain("recipe:implement_bounded_issue@r1");
+  });
+
   test("uses callsign as attribution while preserving separate run and authority identity", () => {
     const sable = workPulseFixture.attempts.filter((attempt) => attempt.callsign === "Sable");
     expect(sable).toHaveLength(2);
@@ -123,6 +138,49 @@ describe("Work Pulse frontend fixtures", () => {
     const attentionDrift = cloneFixture();
     attentionDrift.attention[0].reason = "failed";
     expect(() => parseWorkPulseFixture(attentionDrift)).toThrow("absent from attempt");
+  });
+
+  test("rejects malformed worker briefs without invoking accessors", () => {
+    const unknownAttempt = cloneFixture();
+    unknownAttempt.briefs[0].attemptId = "missing-attempt";
+    expect(() => parseWorkPulseFixture(unknownAttempt)).toThrow("Unknown attempt in brief");
+
+    const authorityClaim = cloneFixture();
+    authorityClaim.briefs[0].grantsAuthority = true;
+    expect(() => parseWorkPulseFixture(authorityClaim)).toThrow("grantsAuthority must be false");
+
+    const badDigest = cloneFixture();
+    badDigest.briefs[0].digest = "sha256:nope";
+    expect(() => parseWorkPulseFixture(badDigest)).toThrow("Brief digest is invalid");
+
+    const badPresentation = cloneFixture();
+    badPresentation.briefs[0].presentation = "secret";
+    expect(() => parseWorkPulseFixture(badPresentation)).toThrow("Brief presentation is unsupported");
+
+    const duplicateAttempt = cloneFixture();
+    duplicateAttempt.briefs[1].attemptId = duplicateAttempt.briefs[0].attemptId;
+    expect(() => parseWorkPulseFixture(duplicateAttempt)).toThrow("Duplicate brief attempt bindings");
+
+    const duplicateId = cloneFixture();
+    duplicateId.briefs[1].id = duplicateId.briefs[0].id;
+    expect(() => parseWorkPulseFixture(duplicateId)).toThrow("Duplicate brief ids");
+
+    const unknownField = cloneFixture();
+    unknownField.briefs[0].promptMass = "entire chat transcript";
+    expect(() => parseWorkPulseFixture(unknownField)).toThrow("unknown field promptMass");
+
+    let reads = 0;
+    const accessor = cloneFixture();
+    Object.defineProperty(accessor, "briefs", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        reads += 1;
+        return [];
+      },
+    });
+    expect(() => parseWorkPulseFixture(accessor)).toThrow();
+    expect(reads).toBe(0);
   });
 
   test("requires the complete five-view task vocabulary", () => {

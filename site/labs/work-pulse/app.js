@@ -63,6 +63,7 @@
     fragment.append(summaryStrip(fixture));
     fragment.append(attentionLedger(fixture.attention, attemptsById));
     fragment.append(attemptRoster(fixture.attempts));
+    fragment.append(workerBriefs(fixture, attemptsById));
     fragment.append(relationAndTimeline(fixture, attemptsById));
     return fragment;
   }
@@ -108,7 +109,44 @@
       metric("Attention records", String(fixture.attention.length), "Only declared reasons enter the ledger"),
       metric("Stale receipts", String(stale), "Age comes from accepted receipt evidence"),
       metric("Relations", String(fixture.relations.length), "Every line has a named kind and evidence identity"),
+      metric("Compiled briefs", String(fixture.briefs.length), "Deterministic guidance digests bound to attempts, granting no authority"),
     ]);
+  }
+
+  function workerBriefs(fixture, attemptsById) {
+    const section = element("section", {
+      className: "panel",
+      "aria-labelledby": "briefs-title",
+    });
+    section.append(sectionHeading(
+      "briefs-title",
+      "Worker briefs",
+      "Compiled guidance identity per attempt: exact digest, compiler generation, policy snapshot, source references, and presentation. Guidance only; live authority stays with the dispatch lease.",
+    ));
+    const list = element("div", { className: "record-list" });
+    for (const brief of fixture.briefs) {
+      const attempt = requiredAttempt(attemptsById, brief.attemptId);
+      list.append(element("article", {
+        className: "record-card",
+        "data-state": attempt.state,
+        "data-record-id": brief.id,
+      }, [
+        element("div", { className: "card-heading" }, [
+          element("h3", { text: `${attempt.callsign} · ${attempt.outcomeId}` }),
+          element("span", { className: "state-chip", text: `${brief.presentation} brief` }),
+        ]),
+        element("dl", { className: "identity-grid" }, [
+          fact("Digest", brief.digest),
+          fact("Compiler", `worker-brief/v1 @ ${brief.compilerVersion}`),
+          fact("Policy snapshot", brief.policySnapshotSha256),
+          fact("Attempt", `${brief.attemptId} / run ${attempt.runId}`),
+          fact("Authority", "none granted"),
+        ]),
+        element("div", { className: "reference-row" }, brief.sourceRefs.map((ref) => identityLine("Source", ref))),
+      ]));
+    }
+    section.append(list);
+    return section;
   }
 
   function attentionLedger(entries, attemptsById) {
