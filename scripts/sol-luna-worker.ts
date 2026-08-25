@@ -1,12 +1,20 @@
-import { createHash, randomBytes } from "node:crypto";
-import { mkdir, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { mkdir, open, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Writable } from "node:stream";
+import {
+  CODEX_PERMISSION_PROFILE_VERSION,
+  compileCodexPermissionProfile,
+  parseSupportedCodexCliVersion,
+  permissionProfileConfigArgs,
+  permissionProfileReceiptArgs,
+  type CompiledCodexPermissionProfile,
+} from "./codex-permission-profile.js";
 
 const CODEX_COMMAND = "codex";
 const CODEX_MODEL = "gpt-5.6-luna";
-const CODEX_REASONING_CONFIG = 'model_reasoning_effort="max"';
 const CHATGPT_LOGIN_STATUS = "Logged in using ChatGPT";
 const RECEIPT_SCHEMA_VERSION = "sol-luna-worker-receipt/2" as const;
 const DEFAULT_TIMEOUT_MS = 600_000;
@@ -22,6 +30,23 @@ const ARTIFACT_NAMES = {
 } as const;
 
 export type SolLunaSandbox = "read-only" | "workspace-write";
+export type SolLunaConfinement = "permission-profile" | "legacy-sandbox";
+export type SolLunaEditAuthority = "read-only" | "workspace-write";
+export type SolLunaGitMetadataAuthority = "none" | "write";
+export type SolLunaReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+export const DEFAULT_SOL_LUNA_REASONING_EFFORT: SolLunaReasoningEffort = "max";
+export const CODEX_ENVIRONMENT_ALLOWLIST = [
+  "PATH", "TMPDIR", "HOME", "CODEX_HOME", "XDG_CONFIG_HOME",
+  "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
+  "LANG", "LC_ALL", "LC_CTYPE", "LANGUAGE",
+  "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+  "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+] as const;
+
+export const SAFE_WORKER_PATH = [...new Set([
+  dirname(process.execPath), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
+])].join(delimiter);
 
 export interface SolLunaWorkerOptions {
   readonly repository: string;
@@ -31,6 +56,10 @@ export interface SolLunaWorkerOptions {
   readonly runId: string;
   readonly assignedRole: string;
   readonly sandbox?: SolLunaSandbox;
+  readonly confinement?: SolLunaConfinement;
+  readonly editAuthority?: SolLunaEditAuthority;
+  readonly gitMetadataAuthority?: SolLunaGitMetadataAuthority;
+  readonly reasoningEffort?: SolLunaReasoningEffort;
   readonly codexBin?: string;
   /** Wall-clock bound applied to each spawned Codex invocation. Defaults to 10 minutes. */
   readonly timeoutMs?: number;
@@ -71,10 +100,20 @@ export interface SolLunaWorkerReceipt {
   };
   readonly repository: string;
   readonly sandbox: SolLunaSandbox;
+  readonly confinement: {
+    readonly mode: SolLunaConfinement;
+    readonly clientVersion: string | null;
+    readonly permissionProfileSupported: boolean;
+    readonly profileVersion: typeof CODEX_PERMISSION_PROFILE_VERSION | null;
+    readonly profileFingerprint: string | null;
+    readonly networkEnabled: false | null;
+  };
   readonly preflight: {
     readonly command: readonly ["codex", "login", "status"];
     readonly exitCode: number | null;
     readonly chatGptAuthenticated: boolean;
+    readonly editAuthority: EditAuthorityPreflight;
+    readonly gitMetadataAuthority: GitMetadataAuthorityPreflight;
   };
   readonly git: {
     readonly headBefore: string | null;
@@ -82,20 +121,33 @@ export interface SolLunaWorkerReceipt {
     readonly headRelationship: "unknown" | "unchanged" | "descendant" | "non_descendant";
     readonly dirtyPathsBefore: readonly string[];
     readonly dirtyPathsAfter: readonly string[];
+    readonly workerCreatedDirtyPaths: readonly string[];
+    readonly commitsMade: readonly string[];
     readonly committedPaths: readonly string[];
     /** Committed paths whose pre-run dirty bytes make content provenance uncertain. */
     readonly baselineContaminatedCommittedPaths: readonly string[];
     /**
-     * Observed path delta: descendant-commit paths plus paths that became dirty
-     * during the run. This records activity, not exclusive authorship of bytes.
+     * Observed path activity: descendant-commit paths plus dirty paths whose
+     * content/state changed during the run. This records activity, not
+     * exclusive authorship of bytes.
      */
     readonly changedPaths: readonly string[];
   };
   readonly child: {
     readonly commandShape: {
       readonly executable: "codex";
+      readonly confinement: SolLunaConfinement;
+      readonly profileFingerprint: string | null;
       readonly args: readonly string[];
       readonly stdin: "canonical-brief";
+      readonly reasoningEffort: SolLunaReasoningEffort;
+      readonly wallClockTimeoutMs: number;
+      readonly shellEnvironment: {
+        readonly inherit: "none";
+        readonly path: string;
+        readonly home: string;
+        readonly tmpdir: string;
+      };
     };
     readonly exitCode: number | null;
     readonly signal: string | null;
@@ -103,6 +155,7 @@ export interface SolLunaWorkerReceipt {
     readonly outcome: SolLunaChildOutcome;
     readonly stdinOutcome: SolLunaStdinOutcome;
     readonly stdinDetail: string | null;
+    readonly wallClockTimeoutMs: number;
   };
   readonly codex: {
     readonly sessionOrThreadId: string | null;
@@ -113,6 +166,12 @@ export interface SolLunaWorkerReceipt {
     readonly stdoutJsonl: SolLunaStreamArtifact;
     readonly stderr: SolLunaStreamArtifact;
     readonly finalWorkerResult: SolLunaArtifact | null;
+  };
+  readonly integration: {
+    readonly workerSuccessIsProvisional: true;
+    readonly status: "not_adjudicated";
+    readonly gatesAdjudicated: false;
+    readonly note: string;
   };
   readonly success: boolean;
   readonly harnessError: string | null;
@@ -142,15 +201,84 @@ interface ProcessCapture {
 interface GitSnapshot {
   readonly head: string;
   readonly paths: readonly string[];
+  readonly pathStates: Readonly<Record<string, string>>;
+}
+
+interface GitMetadataLocation {
+  readonly gitDir: string;
+  readonly commonGitDir: string;
+  readonly headPath: string;
+  readonly indexPath: string;
+  readonly probeDirectory: string;
+}
+
+interface WorkerShellEnvironment {
+  readonly root: string;
+  readonly home: string;
+  readonly tmpdir: string;
+}
+
+type AuthorityProbeStatus = "not_required" | "not_run" | "passed" | "failed";
+
+interface EditAuthorityPreflight {
+  readonly declared: SolLunaEditAuthority;
+  readonly status: AuthorityProbeStatus;
+  readonly probePath: string | null;
+  readonly error: string | null;
+}
+
+interface GitMetadataAuthorityPreflight {
+  readonly declared: SolLunaGitMetadataAuthority;
+  readonly status: AuthorityProbeStatus;
+  readonly gitDir: string | null;
+  readonly headPath: string | null;
+  readonly indexPath: string | null;
+  readonly probeDirectory: string | null;
+  readonly probePath: string | null;
+  readonly error: string | null;
 }
 
 interface GitAttribution {
   readonly headRelationship: "unknown" | "unchanged" | "descendant" | "non_descendant";
+  readonly commitsMade: readonly string[];
   readonly committedPaths: readonly string[];
   readonly error: string | null;
 }
 
 type JsonObject = Record<string, unknown>;
+type CodexEnvironmentKey = typeof CODEX_ENVIRONMENT_ALLOWLIST[number];
+type ProcessEnvironment = Readonly<Record<string, string | undefined>>;
+
+function pathIsWithin(target: string, parent: string): boolean {
+  const difference = relative(parent, target);
+  return difference === "" || (!difference.startsWith("..") && !isAbsolute(difference));
+}
+
+async function canonicalizeProspectivePath(target: string): Promise<string> {
+  try {
+    return await realpath(target);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    const parent = dirname(target);
+    if (parent === target) throw error;
+    return join(await canonicalizeProspectivePath(parent), basename(target));
+  }
+}
+
+async function permissionProfileOutputError(outputDir: string, repository: string): Promise<string | null> {
+  const [canonicalOutput, canonicalRepository, ...canonicalTempRoots] = await Promise.all([
+    canonicalizeProspectivePath(outputDir),
+    realpath(repository),
+    ...[resolve(tmpdir()), "/tmp", "/private/tmp"].map(canonicalizeProspectivePath),
+  ]);
+  if (pathIsWithin(canonicalOutput, canonicalRepository) || pathIsWithin(canonicalRepository, canonicalOutput)) {
+    return "permission-profile output directory must not overlap the repository";
+  }
+  if (canonicalTempRoots.some((root) => pathIsWithin(canonicalOutput, root))) {
+    return "permission-profile output directory must not be under system temp";
+  }
+  return null;
+}
 
 function requireText(value: string, label: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -167,11 +295,44 @@ function requirePositiveInteger(value: number | undefined, label: string, fallba
   return resolved;
 }
 
+function isReasoningEffort(value: string): value is SolLunaReasoningEffort {
+  return value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max";
+}
+
+function isEditAuthority(value: string): value is SolLunaEditAuthority {
+  return value === "read-only" || value === "workspace-write";
+}
+
+function isGitMetadataAuthority(value: string): value is SolLunaGitMetadataAuthority {
+  return value === "none" || value === "write";
+}
+
+function isConfinement(value: string): value is SolLunaConfinement {
+  return value === "permission-profile" || value === "legacy-sandbox";
+}
+
 function normalizeOptions(input: SolLunaWorkerOptions): Required<SolLunaWorkerOptions> {
   const sandbox = input.sandbox ?? "read-only";
+  const confinement = input.confinement ?? "permission-profile";
   if (sandbox !== "read-only" && sandbox !== "workspace-write") {
     throw new Error("sandbox must be read-only or workspace-write");
   }
+  if (!isConfinement(confinement)) throw new Error("confinement must be permission-profile or legacy-sandbox");
+  const editAuthority = input.editAuthority ?? sandbox;
+  if (!isEditAuthority(editAuthority)) throw new Error("edit authority must be read-only or workspace-write");
+  if (editAuthority === "workspace-write" && sandbox !== "workspace-write") {
+    throw new Error("workspace-write edit authority requires a workspace-write sandbox");
+  }
+  const gitMetadataAuthority = input.gitMetadataAuthority ?? "none";
+  if (!isGitMetadataAuthority(gitMetadataAuthority)) throw new Error("Git metadata authority must be none or write");
+  if (confinement === "permission-profile" && editAuthority === "workspace-write") {
+    throw new Error("permission-profile confinement supports patch-as-data, not direct workspace writes");
+  }
+  if (confinement === "permission-profile" && gitMetadataAuthority === "write") {
+    throw new Error("permission-profile confinement does not grant Git metadata write");
+  }
+  const reasoningEffort = input.reasoningEffort ?? DEFAULT_SOL_LUNA_REASONING_EFFORT;
+  if (!isReasoningEffort(reasoningEffort)) throw new Error("reasoning effort must be low, medium, high, xhigh, or max");
   return {
     repository: resolve(requireText(input.repository, "repository")),
     brief: resolve(requireText(input.brief, "brief")),
@@ -180,6 +341,10 @@ function normalizeOptions(input: SolLunaWorkerOptions): Required<SolLunaWorkerOp
     runId: requireText(input.runId, "run ID"),
     assignedRole: requireText(input.assignedRole, "assigned role"),
     sandbox,
+    confinement,
+    editAuthority,
+    gitMetadataAuthority,
+    reasoningEffort,
     codexBin: requireText(input.codexBin ?? CODEX_COMMAND, "Codex executable"),
     timeoutMs: requirePositiveInteger(input.timeoutMs, "timeoutMs", DEFAULT_TIMEOUT_MS),
     captureCapBytes: requirePositiveInteger(
@@ -190,13 +355,12 @@ function normalizeOptions(input: SolLunaWorkerOptions): Required<SolLunaWorkerOp
   };
 }
 
-function codexEnvironment(): Record<string, string> {
+export function codexEnvironment(source: ProcessEnvironment = process.env): Record<string, string> {
   const environment: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const key of CODEX_ENVIRONMENT_ALLOWLIST) {
+    const value = source[key as CodexEnvironmentKey];
     if (value !== undefined) environment[key] = value;
   }
-  delete environment.OPENAI_API_KEY;
-  delete environment.CODEX_API_KEY;
   return environment;
 }
 
@@ -680,11 +844,85 @@ function parseNamePaths(nameBytes: Uint8Array): string[] {
 }
 
 async function gitOutput(repository: string, args: readonly string[]): Promise<Uint8Array> {
-  const result = await captureProcess(["git", "-C", repository, ...args]);
+  const result = await captureProcess(["git", "-c", "core.fsmonitor=false", "-C", repository, ...args], {
+    env: { ...codexEnvironment(), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+  });
   if (result.exitCode !== 0) {
     throw new Error(`git ${args[0] ?? "command"} exited with status ${result.exitCode}`);
   }
   return result.stdout;
+}
+
+function resolveGitPath(repository: string, gitPath: string): string {
+  return isAbsolute(gitPath) ? resolve(gitPath) : resolve(repository, gitPath);
+}
+
+async function gitMetadataLocation(repository: string): Promise<GitMetadataLocation> {
+  const [gitDirBytes, commonGitDirBytes, headPathBytes, indexPathBytes] = await Promise.all([
+    gitOutput(repository, ["rev-parse", "--git-dir"]),
+    gitOutput(repository, ["rev-parse", "--git-common-dir"]),
+    gitOutput(repository, ["rev-parse", "--git-path", "HEAD"]),
+    gitOutput(repository, ["rev-parse", "--git-path", "index"]),
+  ]);
+  const gitDirValue = utf8(gitDirBytes).trim();
+  const commonGitDirValue = utf8(commonGitDirBytes).trim();
+  const headPathValue = utf8(headPathBytes).trim();
+  const indexPathValue = utf8(indexPathBytes).trim();
+  if (gitDirValue.length === 0 || commonGitDirValue.length === 0 || headPathValue.length === 0 || indexPathValue.length === 0) {
+    throw new Error("Git metadata paths were empty");
+  }
+  const headPath = resolveGitPath(repository, headPathValue);
+  return {
+    gitDir: resolveGitPath(repository, gitDirValue),
+    commonGitDir: resolveGitPath(repository, commonGitDirValue),
+    headPath,
+    indexPath: resolveGitPath(repository, indexPathValue),
+    probeDirectory: dirname(headPath),
+  };
+}
+
+function probePath(parent: string, prefix: string): string {
+  const suffix = createHash("sha256").update(`${parent}:${prefix}:${randomUUID()}`).digest("hex").slice(0, 20);
+  return join(parent, `${prefix}-${suffix}`);
+}
+
+async function writeAndRemoveProbe(target: string, contents: string): Promise<{ status: "passed" | "failed"; error: string | null }> {
+  let created = false;
+  try {
+    await writeFile(target, contents, { flag: "wx" });
+    created = true;
+    await rm(target);
+    return { status: "passed", error: null };
+  } catch (error) {
+    if (created) await rm(target, { force: true }).catch(() => {});
+    return { status: "failed", error: errorMessage(error) };
+  }
+}
+
+async function probeEditAuthority(repository: string, runId: string): Promise<EditAuthorityPreflight> {
+  const target = probePath(repository, `.stensibly-sol-luna-write-probe-${createHash("sha256").update(runId).digest("hex").slice(0, 12)}`);
+  const result = await writeAndRemoveProbe(target, `workspace write probe ${runId}\n`);
+  return { declared: "workspace-write", status: result.status, probePath: target, error: result.error };
+}
+
+async function probeGitMetadataAuthority(location: GitMetadataLocation, runId: string): Promise<GitMetadataAuthorityPreflight> {
+  const target = probePath(location.probeDirectory, `.stensibly-sol-luna-git-probe-${createHash("sha256").update(runId).digest("hex").slice(0, 12)}`);
+  const result = await writeAndRemoveProbe(target, `Git metadata write probe ${runId}\n`);
+  return {
+    declared: "write", status: result.status, gitDir: location.gitDir, headPath: location.headPath,
+    indexPath: location.indexPath, probeDirectory: location.probeDirectory, probePath: target, error: result.error,
+  };
+}
+
+function notRequiredEditAuthorityPreflight(declared: SolLunaEditAuthority): EditAuthorityPreflight {
+  return { declared, status: declared === "read-only" ? "not_required" : "not_run", probePath: null, error: null };
+}
+
+function notRequiredGitMetadataPreflight(declared: SolLunaGitMetadataAuthority): GitMetadataAuthorityPreflight {
+  return {
+    declared, status: declared === "none" ? "not_required" : "not_run", gitDir: null, headPath: null,
+    indexPath: null, probeDirectory: null, probePath: null, error: null,
+  };
 }
 
 async function gitSnapshot(repository: string): Promise<GitSnapshot> {
@@ -694,7 +932,24 @@ async function gitSnapshot(repository: string): Promise<GitSnapshot> {
   ]);
   const head = utf8(headBytes).trim();
   if (head.length === 0) throw new Error("git HEAD was empty");
-  return { head, paths: parseStatusPaths(statusBytes) };
+  const paths = parseStatusPaths(statusBytes);
+  const pathStates = await Promise.all(paths.map(async (path) => {
+    const [staged, unstaged, worktree] = await Promise.all([
+      gitOutput(repository, ["diff", "--binary", "--no-ext-diff", "--no-renames", "--cached", head, "--", path]),
+      gitOutput(repository, ["diff", "--binary", "--no-ext-diff", "--no-renames", "--", path]),
+      captureProcess(["git", "-c", "core.fsmonitor=false", "-C", repository, "hash-object", "--no-filters", "--", path], {
+        env: { ...codexEnvironment(), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+      }),
+    ]);
+    const hash = createHash("sha256")
+      .update("staged\0").update(staged)
+      .update("unstaged\0").update(unstaged)
+      .update("worktree-exit\0").update(String(worktree.exitCode)).update("\0")
+      .update(worktree.stdout)
+      .digest("hex");
+    return [path, `sha256:${hash}`] as const;
+  }));
+  return { head, paths, pathStates: Object.fromEntries(pathStates) };
 }
 
 async function committedAttribution(
@@ -703,32 +958,36 @@ async function committedAttribution(
   headAfter: string | null,
 ): Promise<GitAttribution> {
   if (headBefore === null || headAfter === null) {
-    return { headRelationship: "unknown", committedPaths: [], error: null };
+    return { headRelationship: "unknown", commitsMade: [], committedPaths: [], error: null };
   }
   if (headBefore === headAfter) {
-    return { headRelationship: "unchanged", committedPaths: [], error: null };
+    return { headRelationship: "unchanged", commitsMade: [], committedPaths: [], error: null };
   }
-  const ancestry = await captureProcess(["git", "-C", repository, "merge-base", "--is-ancestor", headBefore, headAfter]);
+  const ancestry = await captureProcess(["git", "-c", "core.fsmonitor=false", "-C", repository, "merge-base", "--is-ancestor", headBefore, headAfter], {
+    env: { ...codexEnvironment(), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+  });
   if (ancestry.exitCode !== 0) {
     const nonDescendant = ancestry.exitCode === 1;
     return {
       headRelationship: nonDescendant ? "non_descendant" : "unknown",
+      commitsMade: [],
       committedPaths: [],
       error: nonDescendant
         ? "final Git head is not a descendant of the baseline head"
         : `unable to establish Git head ancestry (exit ${ancestry.exitCode ?? "unknown"})`,
     };
   }
-  const names = await gitOutput(repository, [
-    "diff",
-    "--name-only",
-    "--no-renames",
-    "-z",
-    headBefore,
-    headAfter,
-    "--",
-  ]);
-  return { headRelationship: "descendant", committedPaths: parseNamePaths(names), error: null };
+  const commitBytes = await gitOutput(repository, ["rev-list", "--reverse", `${headBefore}..${headAfter}`]);
+  const commitsMade = utf8(commitBytes).split(/\r?\n/u).map((commit) => commit.trim()).filter((commit) => commit.length > 0);
+  const touchedByCommit = await Promise.all(commitsMade.map((commit) => gitOutput(repository, [
+    "diff-tree", "--no-commit-id", "--name-only", "--no-renames", "-r", "-z", `${commit}^`, commit, "--",
+  ])));
+  return {
+    headRelationship: "descendant",
+    commitsMade,
+    committedPaths: [...new Set(touchedByCommit.flatMap(parseNamePaths))].sort(),
+    error: null,
+  };
 }
 
 /**
@@ -777,7 +1036,25 @@ async function publishAtomically(targetPath: string, bytes: Uint8Array): Promise
   }
 }
 
-function commandShape(sandbox: SolLunaSandbox): SolLunaWorkerReceipt["child"]["commandShape"] {
+function tomlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function configArgs(reasoningEffort: SolLunaReasoningEffort, environment: WorkerShellEnvironment): string[] {
+  return [
+    "--config", `model_reasoning_effort=${tomlString(reasoningEffort)}`,
+    "--config", 'shell_environment_policy.inherit="none"',
+    "--config", `shell_environment_policy.set.PATH=${tomlString(SAFE_WORKER_PATH)}`,
+    "--config", `shell_environment_policy.set.HOME=${tomlString(environment.home)}`,
+    "--config", `shell_environment_policy.set.TMPDIR=${tomlString(environment.tmpdir)}`,
+  ];
+}
+
+function commandShape(
+  options: Required<SolLunaWorkerOptions>,
+  profile: CompiledCodexPermissionProfile | null,
+): SolLunaWorkerReceipt["child"]["commandShape"] {
+  const environment = { root: "<worker-runtime>", home: "<worker-home>", tmpdir: "<worker-tmpdir>" };
   return {
     executable: CODEX_COMMAND,
     args: [
@@ -786,31 +1063,38 @@ function commandShape(sandbox: SolLunaSandbox): SolLunaWorkerReceipt["child"]["c
       "--json",
       "--model",
       CODEX_MODEL,
-      "--config",
-      CODEX_REASONING_CONFIG,
-      "--sandbox",
-      sandbox,
+      ...(profile === null ? [] : permissionProfileReceiptArgs(profile)),
+      ...configArgs(options.reasoningEffort, environment),
+      ...(profile === null ? ["--sandbox", options.sandbox] : []),
       "--cd",
       "<repository>",
       "--output-schema",
       "<output-schema>",
       "-",
     ],
+    confinement: options.confinement,
+    profileFingerprint: profile?.fingerprint ?? null,
     stdin: "canonical-brief",
+    reasoningEffort: options.reasoningEffort,
+    wallClockTimeoutMs: options.timeoutMs,
+    shellEnvironment: { inherit: "none", path: SAFE_WORKER_PATH, home: environment.home, tmpdir: environment.tmpdir },
   };
 }
 
-function childArgs(options: Required<SolLunaWorkerOptions>): string[] {
+function childArgs(
+  options: Required<SolLunaWorkerOptions>,
+  environment: WorkerShellEnvironment,
+  profile: CompiledCodexPermissionProfile | null,
+): string[] {
   return [
     "exec",
     "--ephemeral",
     "--json",
     "--model",
     CODEX_MODEL,
-    "--config",
-    CODEX_REASONING_CONFIG,
-    "--sandbox",
-    options.sandbox,
+    ...(profile === null ? [] : permissionProfileConfigArgs(profile)),
+    ...configArgs(options.reasoningEffort, environment),
+    ...(profile === null ? ["--sandbox", options.sandbox] : []),
     "--cd",
     options.repository,
     "--output-schema",
@@ -836,24 +1120,67 @@ function reportsChatGptAuthentication(capture: {
 
 export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<SolLunaWorkerRun> {
   const options = normalizeOptions(input);
+  if (options.confinement === "permission-profile") {
+    const outputError = await permissionProfileOutputError(options.outputDir, options.repository);
+    if (outputError !== null) throw new Error(outputError);
+  }
   await mkdir(options.outputDir, { recursive: true });
+  if (options.confinement === "permission-profile") {
+    const outputError = await permissionProfileOutputError(options.outputDir, options.repository);
+    if (outputError !== null) throw new Error(outputError);
+  }
   await clearManagedRunArtifacts(options.outputDir);
 
   const stdoutPath = resolve(options.outputDir, ARTIFACT_NAMES.stdout);
   const stderrPath = resolve(options.outputDir, ARTIFACT_NAMES.stderr);
   const workerResultPath = resolve(options.outputDir, ARTIFACT_NAMES.workerResult);
   const receiptPath = resolve(options.outputDir, ARTIFACT_NAMES.receipt);
+  const workerRuntimeRoot = `${options.outputDir}.runtime`;
+  const workerEnvironment: WorkerShellEnvironment = {
+    root: workerRuntimeRoot,
+    home: join(workerRuntimeRoot, "home"),
+    tmpdir: join(workerRuntimeRoot, "tmp"),
+  };
+  let workerRuntimeCreated = false;
+  let runtimeInitializationError: string | null = null;
+  try {
+    await mkdir(workerRuntimeRoot, { mode: 0o700 });
+    workerRuntimeCreated = true;
+    await mkdir(workerEnvironment.home, { mode: 0o700 });
+    await mkdir(workerEnvironment.tmpdir, { mode: 0o700 });
+  } catch (error) {
+    runtimeInitializationError = `unable to claim worker runtime: ${errorMessage(error)}`;
+    if (workerRuntimeCreated) {
+      try {
+        await rm(workerRuntimeRoot, { recursive: true });
+        workerRuntimeCreated = false;
+      } catch (cleanupError) {
+        runtimeInitializationError = `${runtimeInitializationError}; owned runtime cleanup failed: ${errorMessage(cleanupError)}`;
+      }
+    }
+  }
   let workerCapture: ProcessCapture | null = null;
   let workerResultBytes: Uint8Array | null = null;
   let workerResult: JsonObject | null = null;
-  let harnessError: string | null = null;
+  let harnessError: string | null = runtimeInitializationError;
   let headBefore: string | null = null;
   let headAfter: string | null = null;
   let beforePaths: readonly string[] = [];
   let afterPaths: readonly string[] = [];
   let beforeGitReadable = false;
+  let beforePathStates: Readonly<Record<string, string>> = {};
+  let afterPathStates: Readonly<Record<string, string>> = {};
+  let afterGitReadable = false;
+  let workerCreatedDirtyPaths: readonly string[] = [];
+  let commitsMade: readonly string[] = [];
   let committedPaths: readonly string[] = [];
   let headRelationship: SolLunaWorkerReceipt["git"]["headRelationship"] = "unknown";
+  let gitLocation: GitMetadataLocation | null = null;
+  let compiledProfile: CompiledCodexPermissionProfile | null = null;
+  let clientVersion: string | null = null;
+  let permissionProfileSupported = false;
+  let editAuthorityPreflight = notRequiredEditAuthorityPreflight(options.editAuthority);
+  let gitMetadataAuthorityPreflight = notRequiredGitMetadataPreflight(options.gitMetadataAuthority);
   let preflightExitCode: number | null = null;
   let chatGptAuthenticated = false;
   let childExitCode: number | null = null;
@@ -877,9 +1204,51 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
       const snapshot = await gitSnapshot(options.repository);
       headBefore = snapshot.head;
       beforePaths = snapshot.paths;
+      beforePathStates = snapshot.pathStates;
       beforeGitReadable = true;
+      gitLocation = await gitMetadataLocation(options.repository);
     } catch (error) {
       harnessError = appendHarnessError(harnessError, `unable to read Git state: ${errorMessage(error)}`);
+    }
+
+    if (harnessError === null && options.editAuthority === "workspace-write") {
+      editAuthorityPreflight = await probeEditAuthority(options.repository, options.runId);
+      if (editAuthorityPreflight.status !== "passed") {
+        harnessError = appendHarnessError(harnessError, `workspace edit authority preflight failed: ${editAuthorityPreflight.error ?? "probe failed"}`);
+      }
+    }
+
+    if (harnessError === null && options.gitMetadataAuthority === "write") {
+      if (gitLocation === null) {
+        harnessError = appendHarnessError(harnessError, "Git metadata location was unavailable");
+      } else {
+        gitMetadataAuthorityPreflight = await probeGitMetadataAuthority(gitLocation, options.runId);
+        if (gitMetadataAuthorityPreflight.status !== "passed") {
+          harnessError = appendHarnessError(harnessError, `Git metadata authority preflight failed: ${gitMetadataAuthorityPreflight.error ?? "probe failed"}`);
+        }
+      }
+    }
+
+    if (harnessError === null && options.confinement === "permission-profile") {
+      const version = await captureProcess([options.codexBin, "--version"], {
+        env: codexEnvironment(), timeoutMs: options.timeoutMs, captureCapBytes: options.captureCapBytes,
+      });
+      clientVersion = parseSupportedCodexCliVersion(utf8(version.stdout));
+      permissionProfileSupported = version.spawnError === null && version.exitCode === 0 && clientVersion !== null;
+      if (!permissionProfileSupported) {
+        harnessError = "Codex client does not report permission-profile support (requires codex-cli >= 0.138)";
+      } else if (gitLocation === null) {
+        harnessError = "Git metadata location was unavailable for permission-profile compilation";
+      } else {
+        compiledProfile = compileCodexPermissionProfile({
+          repository: options.repository,
+          gitDir: gitLocation.gitDir,
+          commonGitDir: gitLocation.commonGitDir,
+          runtimeDir: workerEnvironment.root,
+          outputDir: options.outputDir,
+          workspaceAccess: "read",
+        });
+      }
     }
 
     if (harnessError === null) {
@@ -905,7 +1274,7 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
     if (harnessError === null) {
       try {
         const captured = await captureProcess(
-          [options.codexBin, ...childArgs(options)],
+          [options.codexBin, ...childArgs(options, workerEnvironment, compiledProfile)],
           {
             stdin: new Uint8Array(briefBytes),
             env: codexEnvironment(),
@@ -940,9 +1309,17 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
   }
 
   try {
+    if (workerRuntimeCreated) await rm(workerRuntimeRoot, { recursive: true });
+  } catch (error) {
+    harnessError = appendHarnessError(harnessError, `unable to clean worker runtime: ${errorMessage(error)}`);
+  }
+
+  try {
     const snapshot = await gitSnapshot(options.repository);
     headAfter = snapshot.head;
     afterPaths = snapshot.paths;
+    afterPathStates = snapshot.pathStates;
+    afterGitReadable = true;
   } catch (error) {
     harnessError = appendHarnessError(harnessError, `unable to read final Git state: ${errorMessage(error)}`);
   }
@@ -950,6 +1327,7 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
   try {
     const attribution = await committedAttribution(options.repository, headBefore, headAfter);
     headRelationship = attribution.headRelationship;
+    commitsMade = attribution.commitsMade;
     committedPaths = attribution.committedPaths;
     if (attribution.error !== null) harnessError = appendHarnessError(harnessError, attribution.error);
   } catch (error) {
@@ -958,11 +1336,13 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
 
   // This is an observed path delta. A commit made during the run may include
   // baseline-dirty bytes, so contaminated committed paths remain explicit below.
-  const workerDirtyDelta = beforeGitReadable
-    ? afterPaths.filter((path) => !beforePaths.includes(path))
-    : [];
+  if (beforeGitReadable && afterGitReadable) {
+    workerCreatedDirtyPaths = [...new Set([...beforePaths, ...afterPaths])]
+      .filter((path) => beforePathStates[path] !== afterPathStates[path])
+      .sort();
+  }
   const changedPaths = beforeGitReadable
-    ? [...new Set([...committedPaths, ...workerDirtyDelta])].sort()
+    ? [...new Set([...committedPaths, ...workerCreatedDirtyPaths])].sort()
     : [];
   const baselineContaminatedCommittedPaths = beforeGitReadable
     ? committedPaths.filter((path) => beforePaths.includes(path))
@@ -996,10 +1376,20 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
     run: { id: options.runId, assignedRole: options.assignedRole },
     repository: options.repository,
     sandbox: options.sandbox,
+    confinement: {
+      mode: options.confinement,
+      clientVersion,
+      permissionProfileSupported,
+      profileVersion: compiledProfile?.version ?? null,
+      profileFingerprint: compiledProfile?.fingerprint ?? null,
+      networkEnabled: compiledProfile?.networkEnabled ?? null,
+    },
     preflight: {
       command: preflightShape(),
       exitCode: preflightExitCode,
       chatGptAuthenticated,
+      editAuthority: editAuthorityPreflight,
+      gitMetadataAuthority: gitMetadataAuthorityPreflight,
     },
     git: {
       headBefore,
@@ -1007,12 +1397,14 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
       headRelationship,
       dirtyPathsBefore: beforePaths,
       dirtyPathsAfter: afterPaths,
+      workerCreatedDirtyPaths,
+      commitsMade,
       committedPaths,
       baselineContaminatedCommittedPaths,
       changedPaths,
     },
     child: {
-      commandShape: commandShape(options.sandbox),
+      commandShape: commandShape(options, compiledProfile),
       exitCode: childExitCode,
       signal: childSignal,
       timedOut: childTimedOut,
@@ -1021,6 +1413,7 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
         ? workerCapture?.stdinDelivery ?? "not_started"
         : "not_started",
       stdinDetail: childStarted && workerCapture?.spawnError === null ? workerCapture?.stdinDetail ?? null : null,
+      wallClockTimeoutMs: options.timeoutMs,
     },
     codex: {
       sessionOrThreadId: codexId,
@@ -1028,6 +1421,12 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
       tokenUsage,
     },
     artifacts,
+    integration: {
+      workerSuccessIsProvisional: true,
+      status: "not_adjudicated",
+      gatesAdjudicated: false,
+      note: "Worker success is provisional; integration status and gates were not adjudicated by this worker run.",
+    },
     success: outcome === "worker_succeeded",
     harnessError,
   };
@@ -1059,6 +1458,10 @@ interface ParsedCliOptions {
   readonly runId: string;
   readonly assignedRole: string;
   readonly sandbox: SolLunaSandbox;
+  readonly confinement?: SolLunaConfinement;
+  readonly editAuthority?: SolLunaEditAuthority;
+  readonly gitMetadataAuthority?: SolLunaGitMetadataAuthority;
+  readonly reasoningEffort?: SolLunaReasoningEffort;
   readonly codexBin?: string;
   readonly timeoutMs?: number;
   readonly captureCapBytes?: number;
@@ -1068,6 +1471,9 @@ function usage(): string {
   return [
     "Usage: bun scripts/sol-luna-worker.ts --repository PATH --brief FILE --output-schema FILE",
     "  --output-dir DIR --run-id ID --assigned-role ROLE [--sandbox read-only|workspace-write]",
+    "  [--confinement permission-profile|legacy-sandbox]",
+    "  [--edit-authority read-only|workspace-write] [--git-metadata-authority none|write]",
+    "  [--reasoning-effort low|medium|high|xhigh|max]",
     "  [--codex-bin PATH] [--timeout-ms MS] [--capture-cap-bytes BYTES]",
   ].join("\n");
 }
@@ -1119,7 +1525,15 @@ function parseCli(argv: readonly string[]): ParsedCliOptions {
   if (sandbox !== "read-only" && sandbox !== "workspace-write") {
     throw new Error("--sandbox must be read-only or workspace-write");
   }
-  const known = new Set([...required, "sandbox", "codex-bin", "timeout-ms", "capture-cap-bytes"]);
+  const confinement = values.get("confinement");
+  if (confinement !== undefined && !isConfinement(confinement)) throw new Error("--confinement must be permission-profile or legacy-sandbox");
+  const editAuthority = values.get("edit-authority");
+  if (editAuthority !== undefined && !isEditAuthority(editAuthority)) throw new Error("--edit-authority must be read-only or workspace-write");
+  const gitMetadataAuthority = values.get("git-metadata-authority");
+  if (gitMetadataAuthority !== undefined && !isGitMetadataAuthority(gitMetadataAuthority)) throw new Error("--git-metadata-authority must be none or write");
+  const reasoningEffort = values.get("reasoning-effort");
+  if (reasoningEffort !== undefined && !isReasoningEffort(reasoningEffort)) throw new Error("--reasoning-effort must be low, medium, high, xhigh, or max");
+  const known = new Set([...required, "sandbox", "confinement", "edit-authority", "git-metadata-authority", "reasoning-effort", "codex-bin", "timeout-ms", "capture-cap-bytes"]);
   for (const key of values.keys()) {
     if (!known.has(key)) throw new Error(`unknown argument --${key}`);
   }
@@ -1134,6 +1548,10 @@ function parseCli(argv: readonly string[]): ParsedCliOptions {
     runId: values.get("run-id") as string,
     assignedRole: values.get("assigned-role") as string,
     sandbox,
+    ...(confinement === undefined ? {} : { confinement }),
+    ...(editAuthority === undefined ? {} : { editAuthority }),
+    ...(gitMetadataAuthority === undefined ? {} : { gitMetadataAuthority }),
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
     codexBin: values.get("codex-bin"),
     ...(timeoutValue === undefined ? {} : { timeoutMs: parsePositiveIntegerCli(timeoutValue, "--timeout-ms") }),
     ...(captureCapValue === undefined

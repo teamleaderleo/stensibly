@@ -21,6 +21,10 @@ bun run sol-luna:worker -- \
   --run-id sol-luna-2026-08-25-01 \
   --assigned-role "implementation worker" \
   [--sandbox read-only|workspace-write] \
+  [--confinement permission-profile|legacy-sandbox] \
+  [--edit-authority read-only|workspace-write] \
+  [--git-metadata-authority none|write] \
+  [--reasoning-effort low|medium|high|xhigh|max] \
   [--codex-bin codex] \
   [--timeout-ms 600000] \
   [--capture-cap-bytes 8388608]
@@ -106,7 +110,8 @@ delivery error was observed", not proof the child consumed the brief.
 
 ## Git evidence and causality
 
-The receipt records four explicit path lists plus head movement:
+The receipt records content-aware working-tree activity, every descendant
+commit, and head movement:
 
 | Field | Meaning |
 | --- | --- |
@@ -114,16 +119,20 @@ The receipt records four explicit path lists plus head movement:
 | `git.headRelationship` | `unchanged`, `descendant`, `non_descendant`, or `unknown`; commit attribution is admitted only for descendants. |
 | `git.dirtyPathsBefore` | Working-tree changes including untracked files present before the run. |
 | `git.dirtyPathsAfter` | Same snapshot taken after the run. |
-| `git.committedPaths` | Paths committed between the two heads via `git diff --name-only --no-renames`; renames list both old and new names. |
+| `git.workerCreatedDirtyPaths` | Dirty paths whose staged diff, unstaged diff, or worktree object identity differs between the two valid snapshots. This includes changes to paths that were already dirty and paths cleaned during the run. |
+| `git.commitsMade` | Descendant commits created between the two heads, in oldest-first order. Empty unless ancestry is established. |
+| `git.committedPaths` | Union of paths touched by each commit in `commitsMade`; an add followed by a revert remains visible. Renames list both old and new names. |
 | `git.baselineContaminatedCommittedPaths` | Committed paths that were already dirty before the run; their byte authorship is uncertain. |
-| `git.changedPaths` | **Observed path delta:** `committedPaths ∪ (dirtyPathsAfter ∖ dirtyPathsBefore)`. This is activity evidence, not exclusive authorship of bytes. |
+| `git.changedPaths` | **Observed path activity:** `committedPaths ∪ workerCreatedDirtyPaths`. This is activity evidence, not exclusive authorship of bytes. |
 
-Pre-existing worktree dirt stays visible in the before/after lists. A path that
-is committed during the run remains in `committedPaths`, but baseline
-contamination is explicit and no exclusive byte authorship is claimed. If Git
-state cannot be read before the run,
-`changedPaths` is reported empty and the failure appears in `harnessError`;
-causality is never guessed.
+Pre-existing worktree dirt stays visible in the before/after lists. Content
+fingerprints distinguish an unchanged dirty path from one the worker actually
+modified, including staged-plus-unstaged state. Exact restoration to the
+baseline state is intentionally invisible unless commit history records it. A
+path committed during the run remains in `committedPaths`, but baseline
+contamination is explicit and no exclusive byte authorship is claimed. If
+either Git snapshot is unreadable, working-tree attribution is empty and the
+failure appears in `harnessError`; causality is never guessed.
 
 ## Receipt schema example
 
@@ -159,6 +168,8 @@ causality is never guessed.
     "headRelationship": "descendant",
     "dirtyPathsBefore": [],
     "dirtyPathsAfter": ["notes/untracked-scratch.md"],
+    "workerCreatedDirtyPaths": ["notes/untracked-scratch.md"],
+    "commitsMade": ["95748b009896267810c60da95a1fc50492043bb2"],
     "committedPaths": ["src/feature.ts"],
     "baselineContaminatedCommittedPaths": [],
     "changedPaths": ["src/feature.ts", "notes/untracked-scratch.md"]
@@ -235,10 +246,23 @@ reporting success.
 
 ## Authentication and spawning contract
 
-- ChatGPT-only enforcement is unchanged: `codex login status` must report
+- ChatGPT-only enforcement: `codex login status` must report
   ChatGPT authentication, mention no API key, and exit `0`; ambiguous output
   mentioning both fails closed.
 - All spawns use argv arrays. No shell interpolation exists anywhere; hostile
   repository/brief/schema paths reach Codex as data values.
-- `OPENAI_API_KEY` and `CODEX_API_KEY` are stripped from the inherited child
-  environment.
+- The harness constructs child environments from an explicit allowlist; it does
+  not inherit arbitrary parent variables. The worker shell itself uses
+  `inherit="none"` with an isolated single-run `HOME` and `TMPDIR`.
+- `permission-profile` is the default confinement. It mechanically denies
+  network access, sibling repositories, the target repository's writes, Git
+  metadata writes, and the durable evidence directory. It is therefore a
+  read/review/research and patch-as-data profile on the current macOS host, not
+  a direct-edit profile. Durable evidence must live outside both the repository
+  and system temp.
+- `legacy-sandbox` remains explicit for direct workspace edits. The separate
+  edit and Git-metadata authority declarations are preflighted before launch;
+  neither authority is inferred from the sandbox name.
+- A successful worker result is provisional. The receipt's `integration`
+  object remains `not_adjudicated` until Sol settles the promised integration
+  gates at the exact semantic head.
