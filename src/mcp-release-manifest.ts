@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { compareCodeUnits } from "./canonical-json.js";
 
 export const MCP_RELEASE_MANIFEST_SCHEMA_VERSION = 1;
 
@@ -82,7 +83,7 @@ export function createMcpReleaseManifest(
       annotations: canonicalRecord(tool.annotations ?? {}),
       inputSchema: canonicalSchema(tool.inputSchema),
     };
-  }).sort((left, right) => left.name.localeCompare(right.name));
+  }).sort((left, right) => compareCodeUnits(left.name, right.name));
 
   const body: Omit<McpReleaseManifest, "digest"> = {
     schemaVersion: MCP_RELEASE_MANIFEST_SCHEMA_VERSION,
@@ -102,7 +103,7 @@ export function diffMcpReleaseManifests(
   const candidateTools = new Map(candidate.tools.map((tool) => [tool.name, tool]));
   const changes: McpToolContractChange[] = [];
 
-  for (const name of [...previousTools.keys()].sort()) {
+  for (const name of [...previousTools.keys()].sort(compareCodeUnits)) {
     if (!candidateTools.has(name)) {
       changes.push({
         name,
@@ -112,7 +113,7 @@ export function diffMcpReleaseManifests(
     }
   }
 
-  for (const name of [...candidateTools.keys()].sort()) {
+  for (const name of [...candidateTools.keys()].sort(compareCodeUnits)) {
     const next = candidateTools.get(name)!;
     const prior = previousTools.get(name);
     if (!prior) {
@@ -143,7 +144,9 @@ export function diffMcpReleaseManifests(
     });
   }
 
-  changes.sort((left, right) => left.name.localeCompare(right.name) || left.kind.localeCompare(right.kind));
+  changes.sort((left, right) =>
+    compareCodeUnits(left.name, right.name) || compareCodeUnits(left.kind, right.kind)
+  );
   const classification = classifyChanges(changes);
   return {
     classification,
@@ -376,7 +379,7 @@ function canonicalRecord(
   return Object.fromEntries(
     Object.entries(record)
       .filter(([, value]) => value !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => compareCodeUnits(left, right))
       .map(([key, value]) => [key, canonicalValue(value, schemaAware ? key : undefined)]),
   );
 }
@@ -385,7 +388,7 @@ function canonicalValue(value: unknown, schemaKey?: string): unknown {
   if (Array.isArray(value)) {
     const entries = value.map((entry) => canonicalValue(entry));
     if (["required", "type", "enum", "allOf", "anyOf", "oneOf"].includes(schemaKey ?? "")) {
-      return entries.sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
+      return entries.sort((left, right) => compareCodeUnits(canonicalJson(left), canonicalJson(right)));
     }
     return entries;
   }
