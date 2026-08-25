@@ -32,6 +32,11 @@ export function runnerProfileProvenanceV1(
   });
 }
 
+/** Explicit runner profile version or the legacy-unknown null; never infers a concrete version. */
+export function runnerProfileVersionOrUnknownV1(value: unknown): string | null {
+  return nullableVersion(value);
+}
+
 export function admitRunnerProfileProvenanceV1(
   value: unknown,
 ): RunnerProfileProvenanceV1 {

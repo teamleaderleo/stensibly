@@ -207,6 +207,189 @@ describe("hosted runner profile version provenance", () => {
     expect(raw.inherited?.runnerProfileVersion).toBe(exactVersion);
     expect(raw.overridden?.runnerProfileVersion).toBeUndefined();
   });
+
+  test("hosted adapter command reservations fence to and retain the durable profile version", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seedQueuedRun(t, {
+      project: "exact-profile",
+      title: "Hosted reservation fence",
+      runnerProfileVersion: exactVersion,
+    });
+    const claimed = await t.mutation(convexApi.runnerRuns.claim, claimInput({
+      project: "exact-profile",
+      runId: seeded.runId,
+      runnerProfileVersion: exactVersion,
+      idempotencyKey: "claim-hosted-reservation-fence",
+    })) as any;
+
+    const base = {
+      project: "exact-profile",
+      itemId: seeded.itemId,
+      runId: seeded.runId,
+      runGeneration: claimed.generation as number,
+      leaseGeneration: claimed.leaseGeneration as number,
+      actor: runner,
+      adapterId: "generic-mcp",
+      profileId: "codex-default",
+      requestFingerprint: `sha256:${"a".repeat(64)}`,
+      commandId: "hosted-fence-command",
+      commandFingerprint: `sha256:${"b".repeat(64)}`,
+      idempotencyKey: "reserve-hosted-fence",
+    };
+    const reserved = await t.mutation(convexApi.runnerAdapterCommands.reserve, {
+      ...baseArgs,
+      ...base,
+      profileVersion: exactVersion,
+    }) as any;
+    expect(reserved).toMatchObject({ outcome: "reserved", dispatchAuthorized: true });
+    expect(reserved.command.profileVersion).toBe(exactVersion);
+
+    const readBack = await t.query(convexApi.runnerAdapterCommands.get, {
+      ...baseArgs,
+      idempotencyKey: base.idempotencyKey,
+    }) as any;
+    expect(readBack?.command.profileVersion).toBe(exactVersion);
+
+    const replayed = await t.mutation(convexApi.runnerAdapterCommands.reserve, {
+      ...baseArgs,
+      ...base,
+      profileVersion: exactVersion,
+      commandId: "hosted-fence-replay",
+      commandFingerprint: `sha256:${"c".repeat(64)}`,
+    }) as any;
+    expect(replayed).toMatchObject({ outcome: "replayed", dispatchAuthorized: false });
+    expect(replayed.command.profileVersion).toBe(exactVersion);
+
+    await expect(t.mutation(convexApi.runnerAdapterCommands.reserve, {
+      ...baseArgs,
+      ...base,
+      profileVersion: "codex-default/2026-08-26",
+      commandId: "hosted-fence-version-drift",
+      commandFingerprint: `sha256:${"d".repeat(64)}`,
+    })).rejects.toThrow(/different command/);
+  });
+
+  test("hosted reservations keep historical unknown versions explicit without upgrading them", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seedQueuedRun(t, {
+      project: "legacy-profile",
+      title: "Hosted legacy unknown reservation fence",
+    });
+    const claimed = await t.mutation(convexApi.runnerRuns.claim, claimInput({
+      project: "legacy-profile",
+      runId: seeded.runId,
+      runnerProfileVersion: null,
+      idempotencyKey: "claim-hosted-legacy-reservation",
+    })) as any;
+    expect(claimed.runnerProfileVersion).toBeNull();
+
+    const upgradeAttempt = {
+      project: "legacy-profile",
+      itemId: seeded.itemId,
+      runId: seeded.runId,
+      runGeneration: claimed.generation as number,
+      leaseGeneration: claimed.leaseGeneration as number,
+      actor: runner,
+      adapterId: "generic-mcp",
+      profileId: "codex-default",
+      profileVersion: exactVersion,
+      requestFingerprint: `sha256:${"e".repeat(64)}`,
+      commandId: "hosted-upgrade-attempt",
+      commandFingerprint: `sha256:${"f".repeat(64)}`,
+      idempotencyKey: "reserve-hosted-upgrade-attempt",
+    };
+
+    const unknownReserved = await t.mutation(convexApi.runnerAdapterCommands.reserve, {
+      ...baseArgs,
+      ...upgradeAttempt,
+      profileVersion: null,
+      commandId: "hosted-explicit-unknown",
+      commandFingerprint: `sha256:${"1".repeat(64)}`,
+      idempotencyKey: "reserve-hosted-explicit-unknown",
+    }) as any;
+    expect(unknownReserved).toMatchObject({ outcome: "reserved" });
+    expect(unknownReserved.command.profileVersion).toBeNull();
+
+    await t.run(async (ctx) => {
+      const run = (await ctx.db.query("queuedRuns").collect())
+        .find((entry) => entry.externalId === seeded.runId);
+      expect(run?.runnerProfileVersion).toBeUndefined();
+      const stored = (await ctx.db.query("runnerAdapterCommands").collect())
+        .find((entry) => entry.idempotencyKey === "reserve-hosted-explicit-unknown");
+      expect((stored?.request as Record<string, unknown>).profileVersion).toBeNull();
+    });
+
+    await expect(t.mutation(convexApi.runnerAdapterCommands.reserve, {
+      ...baseArgs,
+      ...upgradeAttempt,
+      idempotencyKey: "reserve-hosted-explicit-unknown",
+    })).rejects.toThrow(/different command/);
+  });
+
+  test("fresh hosted reservations fail closed when durable profile provenance differs", async () => {
+    const cases = [
+      {
+        project: "reject-version-drift",
+        durableVersion: exactVersion,
+        reservation: { profileVersion: "codex-default/2026-08-26" },
+      },
+      {
+        project: "reject-exact-to-null",
+        durableVersion: exactVersion,
+        reservation: { profileVersion: null },
+      },
+      {
+        project: "reject-null-to-exact",
+        durableVersion: null,
+        reservation: { profileVersion: exactVersion },
+      },
+      {
+        project: "reject-adapter-profile",
+        durableVersion: exactVersion,
+        reservation: {
+          adapterId: "different-adapter",
+          profileId: "different-profile",
+          profileVersion: exactVersion,
+        },
+      },
+    ] as const;
+
+    for (const [index, scenario] of cases.entries()) {
+      const t = convexTest(schema, modules);
+      const seeded = await seedQueuedRun(t, {
+        project: scenario.project,
+        title: `Reject hosted reservation ${index}`,
+        ...(scenario.durableVersion ? { runnerProfileVersion: scenario.durableVersion } : {}),
+      });
+      const claimed = await t.mutation(convexApi.runnerRuns.claim, claimInput({
+        project: scenario.project,
+        runId: seeded.runId,
+        runnerProfileVersion: scenario.durableVersion,
+        idempotencyKey: `claim-hosted-reject-${index}`,
+      })) as any;
+
+      await expect(t.mutation(convexApi.runnerAdapterCommands.reserve, {
+        ...baseArgs,
+        project: scenario.project,
+        itemId: seeded.itemId,
+        runId: seeded.runId,
+        runGeneration: claimed.generation as number,
+        leaseGeneration: claimed.leaseGeneration as number,
+        actor: runner,
+        adapterId: "generic-mcp",
+        profileId: "codex-default",
+        requestFingerprint: `sha256:${String(index).repeat(64)}`,
+        commandId: `hosted-fresh-reject-${index}`,
+        commandFingerprint: `sha256:${String(index + 4).repeat(64)}`,
+        idempotencyKey: `hosted-fresh-reject-${index}`,
+        ...scenario.reservation,
+      })).rejects.toThrow(/profile provenance does not match the run/);
+
+      await t.run(async (ctx) => {
+        expect(await ctx.db.query("runnerAdapterCommands").collect()).toHaveLength(0);
+      });
+    }
+  });
 });
 
 function claimInput(overrides: Record<string, unknown> = {}) {

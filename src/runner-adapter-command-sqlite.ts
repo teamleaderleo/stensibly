@@ -2,6 +2,7 @@ import { canonicalJsonString } from "./idempotency-request-fingerprint.js";
 import {
   admitRunnerAdapterCommandReservationRecord,
   admitRunnerAdapterCommandSettlementRecord,
+  admitStoredRunnerAdapterCommandStableRequest,
   normalizeRunnerAdapterCommandLookupInput,
   normalizeRunnerAdapterCommandReservation,
   normalizeRunnerAdapterCommandSettlement,
@@ -32,6 +33,9 @@ interface ReservationRow {
 interface AuthorityRow {
   item_id: string;
   project_id: string;
+  runner_type: string;
+  runner_profile: string;
+  runner_profile_version: string | null;
   generation: number;
   lease_generation: number;
   lease_owner_id: string | null;
@@ -109,7 +113,7 @@ export function reserveSqliteRunnerAdapterCommand(
   const reservedAt = now.toISOString();
   const transaction = store.db.transaction(() => {
     const idempotencyReplay = reservationByIdempotencyKey(store, input.idempotencyKey);
-    if (idempotencyReplay) return replay(idempotencyReplay, stableRequestJson);
+    if (idempotencyReplay) return replay(idempotencyReplay, input);
 
     const commandReplay = reservationByCommandId(store, input.commandId);
     if (commandReplay) {
@@ -122,6 +126,9 @@ export function reserveSqliteRunnerAdapterCommand(
       SELECT
         work_runs.item_id,
         items.project_id,
+        work_runs.runner_type,
+        work_runs.runner_profile,
+        work_runs.runner_profile_version,
         work_runs.generation,
         work_runs.lease_generation,
         work_runs.lease_owner_id,
@@ -238,8 +245,15 @@ function parseReservation(row: ReservationRow): RunnerAdapterCommandReservationR
   return admitRunnerAdapterCommandReservationRecord({ ...request, reservedAt: row.reserved_at });
 }
 
-function replay(row: ReservationRow, stableRequestJson: string): RunnerAdapterCommandReservation {
-  if (row.stable_request_json !== stableRequestJson) {
+function replay(
+  row: ReservationRow,
+  input: ReserveRunnerAdapterCommandInput,
+): RunnerAdapterCommandReservation {
+  const storedStableRequest = JSON.parse(row.stable_request_json) as ReserveRunnerAdapterCommandInput;
+  if (
+    admitStoredRunnerAdapterCommandStableRequest(storedStableRequest)
+      !== canonicalJsonString(runnerAdapterCommandStableRequest(input))
+  ) {
     throw new RunnerAdapterCommandConflictError(
       "Runner adapter command idempotency key was already used for a different command",
     );
@@ -263,6 +277,15 @@ function requireAuthority(
   if (current.project_id !== input.project || current.item_id !== input.itemId) {
     throw new RunnerAdapterCommandConflictError(
       "Runner adapter command project or item does not match the run",
+    );
+  }
+  if (
+    current.runner_type !== input.adapterId
+    || current.runner_profile !== input.profileId
+    || current.runner_profile_version !== input.profileVersion
+  ) {
+    throw new RunnerAdapterCommandConflictError(
+      "Runner adapter command profile provenance does not match the run",
     );
   }
   if (current.generation !== input.runGeneration) {

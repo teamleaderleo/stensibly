@@ -47,6 +47,7 @@ describe("Control Room resume inspection assembly", () => {
         actor: runner,
         adapterId: "vercel-ai-sdk",
         profileId: "default",
+        profileVersion: null,
         requestFingerprint: `sha256:${"a".repeat(64)}`,
         commandId: "resume-evidence-command",
         commandFingerprint: `sha256:${"b".repeat(64)}`,
@@ -130,8 +131,8 @@ async function claimedFixture(project: string) {
   });
   const dispatched = dispatchNextWork(store, {
     actor: supervisor,
-    runnerType: "generic-mcp",
-    runnerProfile: "codex-default",
+    runnerType: "vercel-ai-sdk",
+    runnerProfile: "default",
     itemId: item.id,
     leaseSeconds: 900,
     idempotencyKey: `dispatch-${project}`,
@@ -139,8 +140,8 @@ async function claimedFixture(project: string) {
   if (!dispatched) throw new Error("Resume inspection fixture did not dispatch");
   const run = await ledger.claimRunnerWork({
     actor: runner,
-    runnerType: "generic-mcp",
-    runnerProfile: "codex-default",
+    runnerType: "vercel-ai-sdk",
+    runnerProfile: "default",
     project,
     runId: dispatched.run.id,
     leaseSeconds: 900,

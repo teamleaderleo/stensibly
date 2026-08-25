@@ -21,6 +21,10 @@ import {
   type RunnerConcurrencyPolicy,
   type RunnerLedger,
 } from "./runner-contracts.js";
+import {
+  runnerProfileClaimMatchesV1,
+  runnerProfileProvenanceV1,
+} from "./runner-profile-provenance.js";
 import { runStatuses } from "./runs.js";
 import { actorSchema } from "./schemas.js";
 
@@ -211,6 +215,7 @@ function registerRunnerAdapterCommandTools(
         actor: actorSchema,
         adapterId: z.string().trim().min(1).max(80),
         profileId: z.string().trim().min(1).max(79),
+        profileVersion: z.string().trim().min(1).max(160).nullable().optional(),
         requestFingerprint: fingerprintSchema(),
         commandId: z.string().trim().min(1).max(160),
         commandFingerprint: fingerprintSchema(),
@@ -220,8 +225,15 @@ function registerRunnerAdapterCommandTools(
     },
     async (input) => asToolResult(async () => {
       const run = await runs.getRun(input.runId);
-      requireReservationRunnerProfile(run, input.adapterId, input.profileId);
-      return await commands.reserveRunnerAdapterCommand(input);
+      const requestedProfileVersion = runnerProfileProvenanceV1(
+        input.profileId,
+        input.profileVersion ?? null,
+      ).profileVersion;
+      requireReservationRunnerProfile(run, input.adapterId, input.profileId, requestedProfileVersion);
+      return await commands.reserveRunnerAdapterCommand({
+        ...input,
+        profileVersion: requestedProfileVersion,
+      });
     }),
   );
 
@@ -309,12 +321,23 @@ function requireReservationProject(
 }
 
 function requireReservationRunnerProfile(
-  run: { runnerType: string; runnerProfile: string },
+  run: { runnerType: string; runnerProfile: string; runnerProfileVersion?: string | null },
   adapterId: string,
   profileId: string,
+  profileVersion: string | null,
 ): void {
   if (run.runnerType !== adapterId || run.runnerProfile !== profileId) {
     throw new RangeError("Runner adapter command adapter or profile does not match the run");
+  }
+  if (
+    !runnerProfileClaimMatchesV1(
+      runnerProfileProvenanceV1(run.runnerProfile, run.runnerProfileVersion ?? null),
+      runnerProfileProvenanceV1(profileId, profileVersion),
+    )
+  ) {
+    throw new RangeError(
+      "Runner adapter command profile version does not match the durable run; start a successor run",
+    );
   }
 }
 
