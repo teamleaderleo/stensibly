@@ -137,12 +137,7 @@ export function assertRunBoundWorkerBriefCurrentV1(
   const binding = admitRunBinding(run);
   assertWorkerBriefCurrentV1(
     brief as unknown as WorkerBriefV1,
-    {
-      ...current,
-      runId: binding.id as string,
-      runGeneration: binding.generation as number,
-      leaseGeneration: binding.leaseGeneration as number,
-    },
+    withRunFreshness(current, binding),
   );
 
   const briefProfile = workerBriefRunnerProfileProvenanceV1(brief);
@@ -191,13 +186,32 @@ function withDispatch(
   if (Object.prototype.hasOwnProperty.call(descriptors, "dispatch")) {
     throw new TypeError("Run-bound worker brief compile input cannot supply dispatch");
   }
-  Object.defineProperty(descriptors, "dispatch", {
-    enumerable: true,
-    configurable: true,
-    writable: true,
-    value: dispatch,
-  });
+  descriptors.dispatch = dataDescriptor(dispatch);
   return Object.create(Object.getPrototypeOf(input), descriptors) as CompileWorkerBriefInputV1;
+}
+
+function withRunFreshness(
+  current: RunBoundWorkerBriefFreshnessFactsV1,
+  binding: AdmittedRunBindingV1,
+): WorkerBriefFreshnessFactsV1 {
+  if (!current || typeof current !== "object" || Array.isArray(current)) {
+    throw new TypeError("Run-bound worker brief freshness facts must be an object");
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(current);
+  for (const key of ["runId", "runGeneration", "leaseGeneration"] as const) {
+    if (Object.prototype.hasOwnProperty.call(descriptors, key)) {
+      throw new TypeError(
+        `Run-bound worker brief freshness facts cannot supply ${key}`,
+      );
+    }
+  }
+  descriptors.runId = dataDescriptor(binding.id);
+  descriptors.runGeneration = dataDescriptor(binding.generation);
+  descriptors.leaseGeneration = dataDescriptor(binding.leaseGeneration);
+  return Object.create(
+    Object.getPrototypeOf(current),
+    descriptors,
+  ) as WorkerBriefFreshnessFactsV1;
 }
 
 function admitRunBinding(run: WorkerBriefRunBindingV1): AdmittedRunBindingV1 {
@@ -235,6 +249,15 @@ function admitRunBinding(run: WorkerBriefRunBindingV1): AdmittedRunBindingV1 {
     output[key] = descriptor.value;
   }
   return output as unknown as AdmittedRunBindingV1;
+}
+
+function dataDescriptor(value: unknown): PropertyDescriptor {
+  return {
+    enumerable: true,
+    configurable: true,
+    writable: true,
+    value,
+  };
 }
 
 function deepFreeze<T>(value: T): T {
