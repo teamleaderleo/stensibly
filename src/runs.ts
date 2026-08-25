@@ -37,9 +37,13 @@ export type {
 } from "./runs-core.js";
 
 export type WorkRun = Core.WorkRun & {
-  runnerProfileVersion: string | null;
+  runnerProfileVersion?: string | null;
   executionEnvelope?: ExecutionEnvelope | null;
   executionRecords?: RunExecutionRecord[];
+};
+
+export type VersionedWorkRun = WorkRun & {
+  runnerProfileVersion: string | null;
 };
 
 export interface CreateWorkRunInput
@@ -86,7 +90,7 @@ export function createWorkRun(
   store: StensiblyStore,
   rawInput: CreateWorkRunInput,
   now = new Date(),
-): WorkRun {
+): VersionedWorkRun {
   ensureRunSchema(store);
   const {
     executionEnvelope: _executionEnvelope,
@@ -163,7 +167,7 @@ export function getWorkRun(
   store: StensiblyStore,
   id: string,
   now = new Date(),
-): WorkRun {
+): VersionedWorkRun {
   ensureRunSchema(store);
   return hydrateVersionedWorkRun(store, Core.getWorkRun(store, id, now));
 }
@@ -172,7 +176,7 @@ export function listWorkRuns(
   store: StensiblyStore,
   input: Core.ListWorkRunsInput = {},
   now = new Date(),
-): WorkRun[] {
+): VersionedWorkRun[] {
   ensureRunSchema(store);
   return hydrateVersionedWorkRuns(store, Core.listWorkRuns(store, input, now));
 }
@@ -180,7 +184,7 @@ export function listWorkRuns(
 export function listRetryEligibleRuns(
   store: StensiblyStore,
   now = new Date(),
-): WorkRun[] {
+): VersionedWorkRun[] {
   ensureRunSchema(store);
   return hydrateVersionedWorkRuns(store, Core.listRetryEligibleRuns(store, now));
 }
@@ -189,7 +193,7 @@ export function heartbeatWorkRun(
   store: StensiblyStore,
   input: Core.HeartbeatWorkRunInput,
   now = new Date(),
-): WorkRun {
+): VersionedWorkRun {
   ensureRunSchema(store);
   const transaction = store.db.transaction(() => {
     const run = Core.heartbeatWorkRun(store, input, now);
@@ -206,7 +210,7 @@ export function transitionWorkRun(
   store: StensiblyStore,
   rawInput: TransitionWorkRunInput,
   now = new Date(),
-): WorkRun {
+): VersionedWorkRun {
   ensureRunSchema(store);
   const { executionActual, ...coreInput } = rawInput;
   const transaction = store.db.transaction(() => {
@@ -342,13 +346,13 @@ function validateExecutionActualReplay(
 function hydrateVersionedWorkRun(
   store: StensiblyStore,
   run: Core.WorkRun,
-): WorkRun {
+): VersionedWorkRun {
   return withRunnerProfileVersion(store, hydrateWorkRun(store, run));
 }
 
 function hydrateVersionedWorkRuns(
   store: StensiblyStore,
   runs: Core.WorkRun[],
-): WorkRun[] {
+): VersionedWorkRun[] {
   return runs.map((run) => hydrateVersionedWorkRun(store, run));
 }
