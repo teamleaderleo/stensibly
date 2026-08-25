@@ -1,16 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  assessJudgmentIndependence,
+  compareJudgmentProvenance,
   computeDigest,
   validateJudgmentProvenance,
 } from '../src/independence-provenance.js';
 
-describe('Independence Provenance & Correlated Cognition', () => {
+describe('Judgment provenance comparison', () => {
   const authorDigest = computeDigest('system prompt v1 for implementer');
   const reviewDigest = computeDigest('system prompt v2 for independent reviewer');
   const contextDigest = computeDigest('diff and test suite output');
 
-  const geminiAuthor = validateJudgmentProvenance({
+  const geminiAuthorInput = {
     actorId: 'gemini-worker-1',
     runId: 'run_101',
     modelProvider: 'google',
@@ -20,16 +20,17 @@ describe('Independence Provenance & Correlated Cognition', () => {
     instructionDigest: authorDigest,
     contextPacketDigest: contextDigest,
     priorJudgmentExposure: 'none',
+    parentRecommendationId: 'recommendation_101',
+    recordedAt: '2026-08-25T00:00:00.000Z',
+  } as const;
+
+  const geminiAuthor = validateJudgmentProvenance(geminiAuthorInput);
+
+  test('round-trips raw provenance without adding an authority decision', () => {
+    expect(geminiAuthor).toEqual(geminiAuthorInput);
   });
 
-  test('validates valid judgment provenance contract', () => {
-    expect(geminiAuthor.modelProvider).toBe('google');
-    expect(geminiAuthor.modelFamily).toBe('gemini-2.5-pro');
-    expect(geminiAuthor.priorJudgmentExposure).toBe('none');
-    expect(geminiAuthor.instructionDigest).toBe(authorDigest);
-  });
-
-  test('detects high independence between distinct model families (Google Gemini + Anthropic Claude)', () => {
+  test('reports provider equality and difference as descriptive facts', () => {
     const claudeReviewer = validateJudgmentProvenance({
       actorId: 'claude-reviewer-1',
       runId: 'run_102',
@@ -42,14 +43,32 @@ describe('Independence Provenance & Correlated Cognition', () => {
       priorJudgmentExposure: 'sealed',
     });
 
-    const assessment = assessJudgmentIndependence(geminiAuthor, claudeReviewer);
-    expect(assessment.isIndependent).toBe(true);
-    expect(assessment.separationScore).toBeGreaterThanOrEqual(0.85);
-    expect(assessment.riskTier).toBe('low');
-    expect(assessment.sharedFactors).toEqual([]);
+    const differentProvider = compareJudgmentProvenance(geminiAuthor, claudeReviewer);
+    expect(differentProvider).toEqual({
+      modelProvider: 'different',
+      modelFamily: 'different',
+      modelIdentity: 'different',
+      harness: 'different',
+      instructionLineage: 'different',
+      contextPacket: 'same',
+      priorJudgmentExposure: 'sealed',
+    });
+
+    const sameProviderReviewer = validateJudgmentProvenance({
+      actorId: 'google-reviewer-1',
+      modelProvider: 'google',
+      modelFamily: 'gemini-2.0-flash',
+      modelIdentity: 'gemini-2.0-flash-001',
+      harness: 'review-harness',
+      instructionDigest: reviewDigest,
+      contextPacketDigest: contextDigest,
+      priorJudgmentExposure: 'none',
+    });
+
+    expect(compareJudgmentProvenance(geminiAuthor, sameProviderReviewer).modelProvider).toBe('same');
   });
 
-  test('flags correlated cognition risk when same model family reviews with unsealed prior verdict exposure', () => {
+  test('reports shared provenance and prior-judgment exposure without a verdict', () => {
     const geminiClone = validateJudgmentProvenance({
       actorId: 'gemini-worker-2',
       runId: 'run_103',
@@ -62,16 +81,15 @@ describe('Independence Provenance & Correlated Cognition', () => {
       priorJudgmentExposure: 'full',
     });
 
-    const assessment = assessJudgmentIndependence(geminiAuthor, geminiClone);
-    expect(assessment.isIndependent).toBe(false);
-    expect(assessment.separationScore).toBeLessThan(0.35);
-    expect(assessment.riskTier).toBe('high_correlation');
-    expect(assessment.sharedFactors).toContain('same_model_family');
-    expect(assessment.sharedFactors).toContain('same_model_provider');
-    expect(assessment.sharedFactors).toContain('same_harness');
-    expect(assessment.sharedFactors).toContain('identical_instruction_lineage');
-    expect(assessment.sharedFactors).toContain('unsealed_full_prior_exposure');
-    expect(assessment.warning).toContain('High correlated cognition risk');
+    expect(compareJudgmentProvenance(geminiAuthor, geminiClone)).toEqual({
+      modelProvider: 'same',
+      modelFamily: 'same',
+      modelIdentity: 'same',
+      harness: 'same',
+      instructionLineage: 'same',
+      contextPacket: 'same',
+      priorJudgmentExposure: 'full',
+    });
   });
 
   test('rejects malformed digests and invalid inputs', () => {
