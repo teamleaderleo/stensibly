@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { callsignBootstrapCandidates } from "../src/callsign-bootstrap.ts";
 import { createMcpServer } from "../src/mcp.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
@@ -63,6 +64,25 @@ describe("authenticated MCP worker enrolment", () => {
     expect(nextDay.idempotencyKey).not.toBe(first.idempotencyKey);
   });
 
+  test("keeps automatic candidate identity stable across enrolment date buckets", () => {
+    const principal = writePrincipal();
+    const first = buildRemoteMcpWorkerEnrolment({
+      project,
+      workerSessionId: "chat.session-auto-stable",
+      context: { principal },
+      now,
+    });
+    const nextDay = buildRemoteMcpWorkerEnrolment({
+      project,
+      workerSessionId: "chat.session-auto-stable",
+      context: { principal },
+      now: now + 24 * 60 * 60 * 1_000,
+    });
+    expect(first.request.callsign).not.toBeNull();
+    expect(nextDay.request.callsign).toBe(first.request.callsign);
+    expect(nextDay.idempotencyKey).not.toBe(first.idempotencyKey);
+  });
+
   test("mounts only with a durable provider and makes callsign optional", async () => {
     const store = new StensiblyStore(":memory:");
     const bareServer = createMcpServer(new SqliteWorkLedger(store));
@@ -94,7 +114,7 @@ describe("authenticated MCP worker enrolment", () => {
         required: ["project", "workerSessionId"],
       });
       expect(Object.keys((tool?.inputSchema as { properties: object }).properties).sort())
-        .toEqual(["callsign", "project", "workerSessionId"]);
+        .toEqual(["callsign", "callsignCategory", "project", "workerSessionId"]);
       expect(tool?.annotations).toMatchObject({
         readOnlyHint: false,
         destructiveHint: false,
@@ -171,14 +191,56 @@ describe("authenticated MCP worker enrolment", () => {
     });
   });
 
-  test("reports explicit pool exhaustion after every curated name collides", async () => {
+  test("honors a broad category hint without asking the model to choose a name", async () => {
+    const calls: WorkerEnrolmentProviderInput[] = [];
+    const result = await callWithProvider((input) => {
+      calls.push(input);
+      return backendResult(input, "accepted");
+    }, false, {
+      project,
+      workerSessionId: "chat.session-food",
+      callsignCategory: "food",
+    });
+
+    expect(calls).toHaveLength(1);
+    const foodNames = new Set(callsignBootstrapCandidates({
+      seed: "test-food-membership",
+      category: "food",
+      count: 24,
+    }).candidates.map((candidate) => candidate.callsign));
+    expect(foodNames.has(String(calls[0]!.request.callsign))).toBe(true);
+    expect(result).toMatchObject({
+      outcome: "accepted",
+      worker: {
+        callsign: calls[0]!.request.callsign,
+        sigil: expect.any(String),
+      },
+    });
+  });
+
+  test("rejects simultaneous explicit-name and category selection", async () => {
+    const result = await callWithProvider(
+      (input) => backendResult(input, "accepted"),
+      true,
+      {
+        project,
+        workerSessionId: "chat.session-ambiguous-name",
+        callsign: "Keel",
+        callsignCategory: "food",
+      },
+    );
+    expect(result).toContain("either an explicit callsign or a callsign category");
+  });
+
+  test("reports explicit bounded exhaustion after automatic candidates collide", async () => {
     const calls: WorkerEnrolmentProviderInput[] = [];
     const result = await callWithProvider((input) => {
       calls.push(input);
       return backendResult(input, "rejected", "callsign_active_collision");
     }, false, { project, workerSessionId: "chat.session-full-pool" });
 
-    expect(new Set(calls.map((entry) => entry.request.callsign)).size).toBe(96);
+    expect(calls).toHaveLength(12);
+    expect(new Set(calls.map((entry) => entry.request.callsign)).size).toBe(12);
     expect(result).toEqual({
       version: 1,
       outcome: "rejected",
