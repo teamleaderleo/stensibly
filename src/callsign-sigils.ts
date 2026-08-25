@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { callsignCollisionKey } from "./callsign-suggestions.ts";
+import { callsignCollisionKey } from "./callsign-suggestions";
 
 const callsignSigilPool = [
   "🔹",
