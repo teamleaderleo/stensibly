@@ -5,6 +5,7 @@
     { "name": "CONVEX_URL", "type": "secret_text" },
     { "name": "GITHUB_OAUTH_CLIENT_ID", "type": "secret_text" },
     { "name": "GITHUB_OAUTH_CLIENT_SECRET", "type": "secret_text" },
+    { "name": "HOSTED_AUTH_START_RATE_LIMITER", "type": "ratelimit" },
     { "name": "OAUTH_REGISTRATION_RATE_LIMITER", "type": "ratelimit" },
     { "name": "STENSIBLY_SERVICE_SECRET", "type": "secret_text" },
     { "name": "STENSIBLY_ALLOWED_ORIGINS", "type": "plain_text", "text": "https://stensibly.com,https://www.stensibly.com,https://stensibly.app,https://www.stensibly.app,https://stensibly.vercel.app" },

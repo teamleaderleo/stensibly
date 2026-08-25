@@ -1,4 +1,8 @@
 import { createHostedAppFromEnv } from "./hosted-app.js";
+import {
+  enforceHostedAuthStartAdmission,
+  type EdgeRateLimiter,
+} from "./hosted-auth-start-admission.js";
 import { createHostedDeployGovernorOidcHandlerFromEnv } from "./hosted-deploy-governor-oidc.js";
 import { createHostedDeployGovernorRequestConsumerFromEnv } from "./hosted-deploy-governor-request.js";
 import { createHostedGitHubMailConsumerFromEnv } from "./hosted-github-mail-worker.js";
@@ -76,6 +80,7 @@ export interface CloudflareBindings extends GmailUnattendedEnvironment {
   STENSIBLY_OUTLOOK_MAILBOX?: string;
   STENSIBLY_OUTLOOK_MAILBOX_BINDING_ID?: string;
   STENSIBLY_OUTLOOK_NOTIFICATION_URL?: string;
+  HOSTED_AUTH_START_RATE_LIMITER?: EdgeRateLimiter;
   OAUTH_REGISTRATION_RATE_LIMITER?: OAuthRegistrationRateLimiter;
   CF_VERSION_METADATA?: CloudflareWorkerVersionMetadata;
 }
@@ -134,6 +139,15 @@ const worker = {
             });
           }
         }
+
+        const authStartRejection = await enforceHostedAuthStartAdmission(
+          observedRequest,
+          {
+            enabled: hostedAuthConfigurationPresent(env),
+            rateLimiter: env.HOSTED_AUTH_START_RATE_LIMITER,
+          },
+        );
+        if (authStartRejection) return authStartRejection;
 
         const admissionRejection = await enforceOAuthRegistrationAdmission(
           observedRequest,
@@ -210,6 +224,16 @@ function oauthConfigurationPresent(env: CloudflareBindings): boolean {
     || env.STENSIBLY_OAUTH_ACCESS_TOKEN_SECONDS?.trim()
     || env.STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS?.trim()
     || env.STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS?.trim()
+  );
+}
+
+function hostedAuthConfigurationPresent(env: CloudflareBindings): boolean {
+  return Boolean(
+    env.GITHUB_OAUTH_CLIENT_ID?.trim()
+    || env.GITHUB_OAUTH_CLIENT_SECRET?.trim()
+    || env.STENSIBLY_AUTH_ORIGIN?.trim()
+    || env.STENSIBLY_AUTH_RETURN_ORIGINS?.trim()
+    || env.STENSIBLY_AUTH_ALLOWED_GITHUB_SUBJECTS?.trim()
   );
 }
 
