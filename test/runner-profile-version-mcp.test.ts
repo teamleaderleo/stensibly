@@ -43,7 +43,7 @@ describe("runner MCP exact profile version claims", () => {
       itemId: item.id,
       leaseSeconds: 300,
       idempotencyKey: "dispatch-profile-version-mcp",
-    }, new Date("2026-08-25T12:00:00.000Z"))!;
+    }, new Date())!;
     const token = createApiToken(store, {
       name: "Exact profile runner",
       scopes: ["read", "write"],
