@@ -247,7 +247,16 @@ describe("SQLite runner profile version provenance", () => {
         maxAttempts: 3,
         retryBackoffSeconds: 60,
         idempotencyKey: "legacy-profile-version-create",
-      }, baseTime)).toThrow("different runner profile provenance");
+      }, baseTime)).toThrow("historical runs cannot be retrofitted");
+
+      const afterRejectedRetrofit = migratedStore.db
+        .query<{ runner_profile_version: string | null }, [string]>(`
+          SELECT runner_profile_version
+          FROM work_runs
+          WHERE id = ?1
+        `)
+        .get(historical.id);
+      expect(afterRejectedRetrofit?.runner_profile_version).toBeNull();
     } finally {
       migratedStore.close();
     }
