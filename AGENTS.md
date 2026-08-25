@@ -27,8 +27,11 @@ work, evidence, decisions, deployments, and reusable knowledge must survive them
 
 Before substantive repository work:
 
-1. Choose one short stable callsign for the live chat and state it in the first
-   substantive update.
+1. When authenticated `enrol_worker` is available, enrol with the project and one
+   stable per-chat `workerSessionId`, omit `callsign`, and use exactly the callsign
+   and sigil Stensibly returns. Optionally pass one broad `callsignCategory`. Supply
+   an explicit callsign only when the operator deliberately asks for one. If hosted
+   enrolment is unavailable, use the GitHub registry/manual fallback.
 2. Read this file.
 3. Read `STENSIBLY.md`. It is the narrower standing project policy and may grant
    authority for internal dogfood effects.
@@ -138,15 +141,23 @@ not create durable identity or exclusive ownership.
 
 ## Callsign and provenance
 
-Every interactive worker adopts one short, pronounceable, visually distinctive
-callsign near session start and keeps it stable for the chat.
+Every interactive worker uses one short, pronounceable, visually distinctive
+callsign for the live chat.
 
-- Check active and recent history when practical to avoid collisions.
+- Do not invent the name when authenticated `enrol_worker` is available. Call it
+  with the project and stable per-chat `workerSessionId`, omit `callsign`, and use
+  exactly the returned callsign and sigil.
+- A broad `callsignCategory` is optional. It selects a vocabulary bucket only and
+  implies no role, personality, competence, model quality, or authority.
+- An explicit callsign is an override for deliberate operator direction, not the
+  normal path.
+- If hosted enrolment is unavailable, use the GitHub callsign registry/manual
+  fallback and preserve exact run/session provenance.
 - Do not silently inherit a prior worker's callsign.
 - Describe continuation from a handoff explicitly.
 - Use the callsign in substantive comments, reviews, PR descriptions, and handoffs.
-- Do not treat a callsign as authority, competence, continuity, or a private-memory
-  claim.
+- Do not treat a callsign or sigil as authority, competence, continuity, or a
+  private-memory claim.
 
 Routine sign-off:
 

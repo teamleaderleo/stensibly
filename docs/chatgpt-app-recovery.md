@@ -7,7 +7,7 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 The hosted production composition defines **52** public MCP tools with two release fingerprints:
 
 ```text
-full ChatGPT tool contract: sha256:f82210e43b894db93d456595d4bb1d1c7d4731cdf2fca1996cb999c2415455af
+full ChatGPT tool contract: sha256:4107187fc843b6ecc6e621e6223ba7bce8a26df9c189947ab55a569d1e6cc64b
 names-only diagnostic:       sha256:320eac8917e10b5bb8528e48f95a17311ea246940561e7dcccde943ec67d4745
 ```
 
@@ -30,7 +30,7 @@ Before a dogfood run begins:
 Keep a compact set of frequent Stensibly workflow tools and GitHub discovery tools immediately visible. Group the broader GitHub surface by workflow and retrieve it on demand.
 
 - use `get_github_project_context` for the last accepted project-scoped GitHub issue context when direct provider execution is unavailable or continuity evidence is needed;
-- use `enrol_worker` once per participating chat with a stable session ID; the server derives ownership, project scope, replay protection, and short expiry, and the resulting presence record grants no work or provider authority;
+- use `enrol_worker` once per participating chat with a stable session ID; normally omit `callsign` so Stensibly assigns a pool-backed name and sigil, optionally pass one broad `callsignCategory`, and use an explicit callsign only when deliberately requested; the server derives ownership, project scope, replay protection, short expiry, and callsign lease attribution, and the resulting presence record grants no work or provider authority;
 - pass that active `workerRef` plus the current run ID to `github_add_issue_comment` so Stensibly resolves the canonical callsign and lease generation; explicit `signoff` remains the migration and recovery fallback;
 - use `remember_project_repository_setup` to durably save a pre-attachment repository/default-branch proposal after those facts are observed in the conversation; the saved proposal grants zero provider or attachment authority, and replacing a different proposal requires the current observation id;
 - use `github_create_issue`, `github_update_issue`, and `github_add_issue_comment` only with one explicit idempotency key per intended effect;
