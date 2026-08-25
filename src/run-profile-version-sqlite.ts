@@ -106,6 +106,7 @@ export function bindRunnerProfileVersion(
     return;
   }
   if (durable.profileVersion !== null) {
+    if (durable.profileVersion === requested.profileVersion) return;
     throw new ConflictError("Runner profile version is immutable after run creation");
   }
   if (requested.profileVersion === null) return;
