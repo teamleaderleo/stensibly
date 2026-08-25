@@ -9,7 +9,9 @@ import {
 } from "./project-contract.js";
 
 export const WORKER_BRIEF_SCHEMA_V1 = "worker-brief/v1" as const;
-export const WORKER_BRIEF_COMPILER_VERSION = "0.1.0" as const;
+export const WORKER_BRIEF_COMPILER_VERSION = "0.2.0" as const;
+
+export const NEWLINE_TOKEN = "\\n" as const;
 
 export const workerBriefCapabilityClasses = [
   "frontier",
@@ -275,6 +277,9 @@ export interface WorkerBriefV1 {
 }
 
 export interface WorkerBriefFreshnessFactsV1 {
+  expectedSemanticDigest: string;
+  runId: string;
+  itemId: string;
   claimGeneration: number | null;
   runGeneration: number;
   leaseGeneration: number;
@@ -311,6 +316,11 @@ export interface WorkerBriefPresentationModelV1 {
     requiredChecks: readonly string[];
     requiredReceipts: readonly string[];
     handoffFields: readonly string[];
+    nonGoals: readonly string[];
+    requiredValidation: readonly string[];
+    stopEscalation: readonly string[];
+    escalationConditions: string;
+    evidenceExpectations: string;
   };
   sections: readonly WorkerBriefPresentationSectionV1[];
   invariantFingerprint: string;
@@ -337,7 +347,8 @@ const MIN_EVIDENCE_CHARACTERS = 500;
 const MAX_EVIDENCE_CHARACTERS = 50_000;
 
 const CREDENTIAL_PATTERN = /(?:stn\.tok_|sk-(?:proj-)?|gh[pousr]_)[A-Za-z0-9._-]+/i;
-const UNSAFE_TEXT_PATTERN = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+const UNSAFE_TEXT_PATTERN = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+const NEWLINE_RUN_PATTERN = /\r\n|[\r\n]/gu;
 const REVISION_PATTERN = /^[a-f0-9]{7,40}$/u;
 const HASH_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const CHANGE_IDENTITY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._@/-]*$/u;
@@ -383,6 +394,9 @@ export function compileWorkerBriefV1(
     && !recipe.applicability.scopeClasses.includes(envelope.scopeClass)
   ) {
     throw new RangeError("The selected recipe does not apply to the execution scope class");
+  }
+  if (recipe !== null) {
+    assertCanonicalRecipeBody(recipe, policySnapshot);
   }
 
   const policySource: WorkerBriefClaimSourceV1 = Object.freeze({
@@ -499,23 +513,34 @@ export function compileWorkerBriefV1(
 }
 
 export function workerBriefJson(brief: WorkerBriefV1): string {
-  const value = brief as unknown;
-  if (!isPlainObject(value)) throw new TypeError("Worker brief must be an object");
-  if (value.version !== WORKER_BRIEF_SCHEMA_V1) {
-    throw new TypeError("Worker brief version is unsupported");
-  }
-  hashValue(value.semanticDigest, "Worker brief semantic digest");
-  return stableJson(value);
+  const admitted = admitCompiledBrief(brief);
+  return stableJson(admitted);
 }
 
 export function assertWorkerBriefCurrentV1(
   brief: WorkerBriefV1,
   current: WorkerBriefFreshnessFactsV1,
 ): void {
-  const parsed = parseCompiledBrief(brief);
+  const parsed = admitCompiledBrief(brief);
   const facts = exactRecord(current, freshnessKeys, "Worker brief freshness facts");
   hashValue(parsed.semanticDigest, "Worker brief semantic digest");
+  if (typeof facts.runId !== "string" || !facts.runId) {
+    throw new TypeError("Current run id must be text");
+  }
+  if (typeof facts.itemId !== "string" || !facts.itemId) {
+    throw new TypeError("Current item id must be text");
+  }
+  const expectedDigest = hashValue(facts.expectedSemanticDigest, "Current expected semantic digest");
   const mismatches: string[] = [];
+  if (parsed.identity.dispatch.runId !== facts.runId) {
+    mismatches.push(`run id ${parsed.identity.dispatch.runId} != ${facts.runId}`);
+  }
+  if (parsed.identity.itemId !== facts.itemId) {
+    mismatches.push(`item id ${parsed.identity.itemId} != ${facts.itemId}`);
+  }
+  if (parsed.semanticDigest !== expectedDigest) {
+    mismatches.push(`semantic digest ${parsed.semanticDigest} != ${expectedDigest}`);
+  }
   if (parsed.identity.claimGeneration !== nullablePositiveInteger(facts.claimGeneration)) {
     mismatches.push(`claim generation ${String(parsed.identity.claimGeneration)} != ${String(facts.claimGeneration)}`);
   }
@@ -560,7 +585,7 @@ export function presentWorkerBriefV1(
   rawBrief: WorkerBriefV1,
   presentation: WorkerBriefPresentation,
 ): WorkerBriefPresentationModelV1 {
-  const brief = parseCompiledBrief(rawBrief);
+  const brief = admitCompiledBrief(rawBrief);
   if (!workerBriefPresentations.includes(presentation)) {
     throw new RangeError("Worker brief presentation is invalid");
   }
@@ -578,6 +603,11 @@ export function presentWorkerBriefV1(
       requiredChecks: brief.policy.requiredChecks,
       requiredReceipts: brief.completionContract.requiredReceipts,
       handoffFields: brief.completionContract.handoffFields,
+      nonGoals: brief.objective.nonGoals,
+      requiredValidation: brief.recipe === null ? [] : brief.recipe.requiredValidation,
+      stopEscalation: brief.recipe === null ? [] : brief.recipe.stopEscalation,
+      escalationConditions: brief.policy.escalationConditions,
+      evidenceExpectations: brief.policy.evidenceExpectations,
     }),
   };
 
@@ -615,7 +645,7 @@ export function presentWorkerBriefV1(
           ...brief.objective.startingPoints.map((ref) => `start from: ${ref}`),
           ...brief.objective.nonGoals.map((goal) => `non-goal: ${goal}`),
         ]
-        : brief.objective.nonGoals.slice(0, 3).map((goal) => `non-goal: ${goal}`)),
+        : brief.objective.nonGoals.map((goal) => `non-goal: ${goal}`)),
     ]),
   }));
   sections.push(Object.freeze({
@@ -642,12 +672,12 @@ export function presentWorkerBriefV1(
       `allowed local operations: ${listOrNone(brief.policy.allowedLocalOperations)}`,
       `approval gated operations: ${listOrNone(brief.policy.approvalGatedOperations)}`,
       ...brief.policy.requiredChecks.map((check) => `required check: ${check}`),
+      `evidence expectations: ${brief.policy.evidenceExpectations}`,
+      `escalation conditions: ${brief.policy.escalationConditions}`,
       ...(presentation === "explicit"
         ? [
           `contract snapshot: ${brief.policy.contractSnapshotSha256}`,
           `contract source: ${brief.policy.contractSourcePath}@${brief.policy.contractContentSha256}`,
-          `evidence expectations: ${brief.policy.evidenceExpectations}`,
-          `escalation conditions: ${brief.policy.escalationConditions}`,
         ]
         : []),
     ]),
@@ -685,10 +715,12 @@ export function presentWorkerBriefV1(
         ? [
           ...brief.recipe.observations.map((entry) => `observe: ${entry}`),
           ...brief.recipe.checkpoints.map((entry, index) => `checkpoint ${index + 1}: ${entry}`),
+          ...brief.recipe.requiredValidation.map((entry) => `validate: ${entry}`),
           ...brief.recipe.stopEscalation.map((entry) => `stop or escalate: ${entry}`),
         ]
         : [
           ...brief.recipe.requiredValidation.map((entry) => `validate: ${entry}`),
+          ...brief.recipe.stopEscalation.map((entry) => `stop or escalate: ${entry}`),
         ]),
     }));
   }
@@ -766,49 +798,100 @@ function admitPresentationSection(
 }
 
 function renderLine(text: string): string {
-  if (text.length <= MAX_RENDER_LINE_LENGTH) return text;
-  return `${text.slice(0, MAX_RENDER_LINE_LENGTH - 1)}…`;
+  const singleLine = text.replace(NEWLINE_RUN_PATTERN, NEWLINE_TOKEN);
+  if (singleLine.length <= MAX_RENDER_LINE_LENGTH) return singleLine;
+  return `${singleLine.slice(0, MAX_RENDER_LINE_LENGTH - 1)}…`;
+}
+
+const CANONICAL_IMPLEMENT_BOUNDED_ISSUE_APPLICABILITY = {
+  itemStatuses: ["ready"] as const,
+  authorityStates: ["unclaimed"] as const,
+  scopeClasses: ["atomic", "segmented"] as const,
+} as const;
+
+const CANONICAL_IMPLEMENT_BOUNDED_ISSUE_OBSERVATIONS = Object.freeze([
+  "Read every exact evidence reference in the context plan before editing.",
+  "Confirm the repository baseline matches the brief before creating work.",
+  "Re-read current project instructions from the imported contract snapshot.",
+]);
+
+const CANONICAL_IMPLEMENT_BOUNDED_ISSUE_CHECKPOINTS = Object.freeze([
+  "State the bounded change and its fence before the first edit.",
+  "Implement with tests as evidence, then inspect the exact diff.",
+  "Record typed progress and evidence against the durable item.",
+]);
+
+const CANONICAL_IMPLEMENT_BOUNDED_ISSUE_STOP_ESCALATION = Object.freeze([
+  "Stop when a necessary operation is approval-gated by the contract.",
+  "Stop when the situation projection reports supersession or conflict.",
+  "Stop when required validation cannot run or fails for unrelated reasons.",
+]);
+
+const CANONICAL_IMPLEMENT_BOUNDED_ISSUE_HANDOFF_EXPECTATIONS = Object.freeze([
+  "summary",
+  "nextAction",
+  "evidenceRefs",
+  "outcome",
+  "residualRisks",
+]);
+
+function stringListsEqual(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return left.length === right.length && left.every((entry, index) => entry === right[index]);
 }
 
 export function implementBoundedIssueRecipeV1(
   rawSnapshot: ProjectAttachmentSnapshot,
 ): WorkerBriefRecipeV1 {
   const snapshot = parseProjectAttachmentSnapshot(rawSnapshot);
-  const checks = snapshot.contract.checks.length > 0
-    ? [...snapshot.contract.checks]
-    : [];
+  const checks = [...snapshot.contract.checks];
   return deepFreeze({
     id: IMPLEMENT_BOUNDED_ISSUE_RECIPE_ID,
     revision: IMPLEMENT_BOUNDED_ISSUE_RECIPE_REVISION,
-    applicability: Object.freeze({
-      itemStatuses: Object.freeze(["ready"]),
-      authorityStates: Object.freeze(["unclaimed"]),
-      scopeClasses: Object.freeze(["atomic", "segmented"]),
-    }),
-    observations: Object.freeze([
-      "Read every exact evidence reference in the context plan before editing.",
-      "Confirm the repository baseline matches the brief before creating work.",
-      "Re-read current project instructions from the imported contract snapshot.",
-    ]),
-    checkpoints: Object.freeze([
-      "State the bounded change and its fence before the first edit.",
-      "Implement with tests as evidence, then inspect the exact diff.",
-      "Record typed progress and evidence against the durable item.",
-    ]),
+    applicability: CANONICAL_IMPLEMENT_BOUNDED_ISSUE_APPLICABILITY,
+    observations: CANONICAL_IMPLEMENT_BOUNDED_ISSUE_OBSERVATIONS,
+    checkpoints: CANONICAL_IMPLEMENT_BOUNDED_ISSUE_CHECKPOINTS,
     requiredValidation: Object.freeze(checks),
-    stopEscalation: Object.freeze([
-      "Stop when a necessary operation is approval-gated by the contract.",
-      "Stop when the situation projection reports supersession or conflict.",
-      "Stop when required validation cannot run or fails for unrelated reasons.",
-    ]),
-    handoffExpectations: Object.freeze([
-      "summary",
-      "nextAction",
-      "evidenceRefs",
-      "outcome",
-      "residualRisks",
-    ]),
+    stopEscalation: CANONICAL_IMPLEMENT_BOUNDED_ISSUE_STOP_ESCALATION,
+    handoffExpectations: CANONICAL_IMPLEMENT_BOUNDED_ISSUE_HANDOFF_EXPECTATIONS,
   }) as WorkerBriefRecipeV1;
+}
+
+function assertCanonicalRecipeBody(
+  recipe: WorkerBriefRecipeV1,
+  policySnapshot: ProjectAttachmentSnapshot,
+): void {
+  const applicability = recipe.applicability;
+  if (!stringListsEqual(applicability.itemStatuses, CANONICAL_IMPLEMENT_BOUNDED_ISSUE_APPLICABILITY.itemStatuses)
+    || !stringListsEqual(applicability.authorityStates, CANONICAL_IMPLEMENT_BOUNDED_ISSUE_APPLICABILITY.authorityStates)
+    || !stringListsEqual(applicability.scopeClasses, CANONICAL_IMPLEMENT_BOUNDED_ISSUE_APPLICABILITY.scopeClasses)) {
+    throw new RangeError(
+      `Recipe ${recipe.id}@${recipe.revision} applicability diverges from the admitted canonical recipe`,
+    );
+  }
+  const requiredValidation = [...policySnapshot.contract.checks];
+  type RecipeBodyField =
+    | "observations"
+    | "checkpoints"
+    | "requiredValidation"
+    | "stopEscalation"
+    | "handoffExpectations";
+  const boundBodies: readonly (readonly [RecipeBodyField, readonly string[]])[] = [
+    ["observations", CANONICAL_IMPLEMENT_BOUNDED_ISSUE_OBSERVATIONS],
+    ["checkpoints", CANONICAL_IMPLEMENT_BOUNDED_ISSUE_CHECKPOINTS],
+    ["requiredValidation", requiredValidation],
+    ["stopEscalation", CANONICAL_IMPLEMENT_BOUNDED_ISSUE_STOP_ESCALATION],
+    ["handoffExpectations", CANONICAL_IMPLEMENT_BOUNDED_ISSUE_HANDOFF_EXPECTATIONS],
+  ];
+  for (const [field, expected] of boundBodies) {
+    if (!stringListsEqual(recipe[field], expected)) {
+      throw new RangeError(
+        `Recipe ${recipe.id}@${recipe.revision} ${field} diverges from the admitted canonical recipe`,
+      );
+    }
+  }
 }
 
 export function selectImplementBoundedIssueRecipeV1(
@@ -828,13 +911,7 @@ function implementBoundedIssueRecipeV1Template(): Pick<
   WorkerBriefRecipeV1,
   "applicability"
 > {
-  return {
-    applicability: {
-      itemStatuses: ["ready"],
-      authorityStates: ["unclaimed"],
-      scopeClasses: ["atomic", "segmented"],
-    },
-  };
+  return { applicability: CANONICAL_IMPLEMENT_BOUNDED_ISSUE_APPLICABILITY };
 }
 
 const compileInputKeys = [
@@ -857,6 +934,9 @@ const compileInputKeys = [
 ] as const;
 
 const freshnessKeys = [
+  "expectedSemanticDigest",
+  "runId",
+  "itemId",
   "claimGeneration",
   "runGeneration",
   "leaseGeneration",
@@ -1153,13 +1233,91 @@ function admitRecipe(value: unknown): WorkerBriefRecipeV1 {
   }) as WorkerBriefRecipeV1;
 }
 
-function parseCompiledBrief(value: unknown): WorkerBriefV1 {
+export function parseWorkerBriefV1(rawJson: unknown): WorkerBriefV1 {
+  if (typeof rawJson !== "string") throw new TypeError("Worker brief JSON must be text");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson) as unknown;
+  } catch {
+    throw new TypeError("Worker brief JSON is not valid JSON");
+  }
+  return admitCompiledBrief(parsed);
+}
+
+function admitCompiledBrief(value: unknown): WorkerBriefV1 {
   if (!isPlainObject(value)) throw new TypeError("Worker brief must be an object");
-  if (value.version !== WORKER_BRIEF_SCHEMA_V1) {
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Object.getOwnPropertySymbols(value).length > 0) {
+    throw new TypeError("Worker brief contains a symbol field");
+  }
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+      throw new TypeError(`Worker brief field ${key} must be an enumerable data property`);
+    }
+  }
+  if (descriptors.version?.value !== WORKER_BRIEF_SCHEMA_V1) {
     throw new TypeError("Worker brief version is unsupported");
   }
-  hashValue(value.semanticDigest, "Worker brief semantic digest");
+  requirePlainDataTree(value, "Worker brief", new WeakSet());
+  const declaredDigest = hashValue(descriptors.semanticDigest?.value, "Worker brief semantic digest");
+  const withoutDigest = { ...value } as Record<string, unknown>;
+  delete withoutDigest.semanticDigest;
+  const recomputed = sha256(stableJson(withoutDigest));
+  if (recomputed !== declaredDigest) {
+    throw new TypeError(
+      "Worker brief semantic digest does not match its content; failing closed",
+    );
+  }
   return value as unknown as WorkerBriefV1;
+}
+
+function requirePlainDataTree(
+  value: unknown,
+  path: string,
+  pathStack: WeakSet<object>,
+): void {
+  if (
+    value === null
+    || typeof value === "boolean"
+    || typeof value === "number"
+    || typeof value === "string"
+  ) {
+    if (typeof value === "number" && !Number.isFinite(value)) {
+      throw new TypeError(`${path} must be a finite number`);
+    }
+    return;
+  }
+  if (!isPlainObject(value) && !Array.isArray(value)) {
+    throw new TypeError(`${path} must be plain data`);
+  }
+  const objectValue = value as object;
+  if (pathStack.has(objectValue)) throw new TypeError(`${path} contains a cycle`);
+  pathStack.add(objectValue);
+  if (Object.getOwnPropertySymbols(value).length > 0) {
+    throw new TypeError(`${path} contains a symbol field`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (Array.isArray(value) && key === "length") continue;
+    if (Array.isArray(value) && !/^\d+$/u.test(key)) {
+      throw new TypeError(`${path} array contains unknown field ${key}`);
+    }
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+      throw new TypeError(`${path} field ${key} must be an enumerable data property`);
+    }
+  }
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = descriptors[String(index)];
+      if (!descriptor) throw new TypeError(`${path} entry ${index} is missing`);
+      requirePlainDataTree(descriptor.value, `${path}[${index}]`, pathStack);
+    }
+  } else {
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      requirePlainDataTree(descriptor.value, `${path}.${key}`, pathStack);
+    }
+  }
+  pathStack.delete(objectValue);
 }
 
 function claimCoordinate(source: WorkerBriefClaimSourceV1): string {
@@ -1235,7 +1393,8 @@ function dataList(value: unknown, label: string, maximum: number): unknown[] {
 
 function safeText(value: unknown, label: string, maximum: number): string {
   if (typeof value !== "string") throw new TypeError(`${label} must be text`);
-  const normalized = value.trim();
+  const flattened = value.replace(NEWLINE_RUN_PATTERN, NEWLINE_TOKEN);
+  const normalized = flattened.trim();
   if (!normalized) throw new TypeError(`${label} is required`);
   if (normalized.length > maximum) {
     throw new TypeError(`${label} may contain at most ${maximum} characters`);
@@ -1388,8 +1547,9 @@ function boundedInteger(
 }
 
 function clipProse(value: string, maximum: number): string {
-  if (value.length <= maximum) return value;
-  return `${safeText(value.slice(0, maximum), "Clipped policy prose", maximum)}…`;
+  const flattened = value.replace(NEWLINE_RUN_PATTERN, NEWLINE_TOKEN);
+  if (flattened.length <= maximum) return flattened;
+  return `${safeText(flattened.slice(0, maximum), "Clipped policy prose", maximum)}…`;
 }
 
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
