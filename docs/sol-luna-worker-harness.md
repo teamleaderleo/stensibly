@@ -25,6 +25,7 @@ bun run sol-luna:worker -- \
   [--edit-authority read-only|workspace-write] \
   [--git-metadata-authority none|write] \
   [--reasoning-effort low|medium|high|xhigh|max] \
+  [--require-command NAME]... \
   [--codex-bin codex] \
   [--timeout-ms 600000] \
   [--capture-cap-bytes 8388608]
@@ -145,10 +146,13 @@ failure appears in `harnessError`; causality is never guessed.
 
 ## Receipt schema example
 
-`schemaVersion: "sol-luna-worker-receipt/2"`. Field-level notes:
+`schemaVersion: "sol-luna-worker-receipt/3"`. Field-level notes:
 
 - `preflight.exitCode` is the raw `codex login status` exit code; a timed-out
   preflight reports `null` and fails closed through `harnessError`.
+- `preflight.requiredCommands` preserves every declared executable as
+  `not_run`, `available`, or `missing`; an earlier harness failure therefore
+  cannot erase the command contract from the receipt.
 - `child.exitCode` is `null` when the child was killed or never ran;
   `child.signal` carries the terminating signal name (for example `SIGKILL`)
   when one was delivered.
@@ -162,14 +166,17 @@ failure appears in `harnessError`; causality is never guessed.
 
 ```json
 {
-  "schemaVersion": "sol-luna-worker-receipt/2",
+  "schemaVersion": "sol-luna-worker-receipt/3",
   "run": { "id": "sol-luna-2026-08-25-01", "assignedRole": "implementation worker" },
   "repository": "/absolute/path/to/worktree",
   "sandbox": "workspace-write",
   "preflight": {
     "command": ["codex", "login", "status"],
     "exitCode": 0,
-    "chatGptAuthenticated": true
+    "chatGptAuthenticated": true,
+    "requiredCommands": [
+      { "command": "rg", "status": "available", "resolvedPath": "/opt/homebrew/bin/rg" }
+    ]
   },
   "git": {
     "headBefore": "f933a72d8b5f9296d81a5f51b0403bcaeba44795",
@@ -260,6 +267,14 @@ reporting success.
   mentioning both fails closed.
 - All spawns use argv arrays. No shell interpolation exists anywhere; hostile
   repository/brief/schema paths reach Codex as data values.
+- A commander must declare every executable that the brief promises through a
+  repeatable `--require-command NAME`. Before authentication or worker launch,
+  the harness resolves each name using the worker's explicit effective PATH,
+  records the exact result in `preflight.requiredCommands`, and fails closed if
+  any are absent. It never treats availability in the coordinator's broader
+  shell as worker capability. This is command-discovery evidence only: access
+  to files, network, credentials, services, and successful tool behaviour still
+  require their own bounded preflight or coordinator-owned integration gate.
 - The harness constructs child environments from an explicit allowlist; it does
   not inherit arbitrary parent variables. The worker shell itself uses
   `inherit="none"` with an isolated single-run `HOME` and `TMPDIR`.

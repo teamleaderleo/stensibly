@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { mkdir, open, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { access, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -16,7 +17,7 @@ import {
 const CODEX_COMMAND = "codex";
 const CODEX_MODEL = "gpt-5.6-luna";
 const CHATGPT_LOGIN_STATUS = "Logged in using ChatGPT";
-const RECEIPT_SCHEMA_VERSION = "sol-luna-worker-receipt/2" as const;
+const RECEIPT_SCHEMA_VERSION = "sol-luna-worker-receipt/3" as const;
 const DEFAULT_TIMEOUT_MS = 600_000;
 const DEFAULT_CAPTURE_CAP_BYTES = 8 * 1024 * 1024;
 const KILL_ESCALATION_GRACE_MS = 750;
@@ -60,6 +61,8 @@ export interface SolLunaWorkerOptions {
   readonly editAuthority?: SolLunaEditAuthority;
   readonly gitMetadataAuthority?: SolLunaGitMetadataAuthority;
   readonly reasoningEffort?: SolLunaReasoningEffort;
+  /** Executable names the brief promises the worker may invoke. */
+  readonly requiredCommands?: readonly string[];
   readonly codexBin?: string;
   /** Wall-clock bound applied to each spawned Codex invocation. Defaults to 10 minutes. */
   readonly timeoutMs?: number;
@@ -114,6 +117,7 @@ export interface SolLunaWorkerReceipt {
     readonly chatGptAuthenticated: boolean;
     readonly editAuthority: EditAuthorityPreflight;
     readonly gitMetadataAuthority: GitMetadataAuthorityPreflight;
+    readonly requiredCommands: readonly RequiredCommandPreflight[];
   };
   readonly git: {
     readonly headBefore: string | null;
@@ -238,6 +242,12 @@ interface GitMetadataAuthorityPreflight {
   readonly error: string | null;
 }
 
+export interface RequiredCommandPreflight {
+  readonly command: string;
+  readonly status: "not_run" | "available" | "missing";
+  readonly resolvedPath: string | null;
+}
+
 interface GitAttribution {
   readonly headRelationship: "unknown" | "unchanged" | "descendant" | "non_descendant";
   readonly commitsMade: readonly string[];
@@ -311,6 +321,16 @@ function isConfinement(value: string): value is SolLunaConfinement {
   return value === "permission-profile" || value === "legacy-sandbox";
 }
 
+function normalizeRequiredCommands(commands: readonly string[] | undefined): readonly string[] {
+  const normalized = commands ?? [];
+  for (const command of normalized) {
+    if (!/^[0-9A-Za-z][0-9A-Za-z._+-]*$/u.test(command)) {
+      throw new Error(`required command must be an executable name without a path: ${command}`);
+    }
+  }
+  return [...new Set(normalized)].sort();
+}
+
 function normalizeOptions(input: SolLunaWorkerOptions): Required<SolLunaWorkerOptions> {
   const sandbox = input.sandbox ?? "read-only";
   const confinement = input.confinement ?? "permission-profile";
@@ -345,6 +365,7 @@ function normalizeOptions(input: SolLunaWorkerOptions): Required<SolLunaWorkerOp
     editAuthority,
     gitMetadataAuthority,
     reasoningEffort,
+    requiredCommands: normalizeRequiredCommands(input.requiredCommands),
     codexBin: requireText(input.codexBin ?? CODEX_COMMAND, "Codex executable"),
     timeoutMs: requirePositiveInteger(input.timeoutMs, "timeoutMs", DEFAULT_TIMEOUT_MS),
     captureCapBytes: requirePositiveInteger(
@@ -362,6 +383,27 @@ export function codexEnvironment(source: ProcessEnvironment = process.env): Reco
     if (value !== undefined) environment[key] = value;
   }
   return environment;
+}
+
+export async function preflightRequiredCommands(
+  commands: readonly string[],
+  workerPath = SAFE_WORKER_PATH,
+): Promise<readonly RequiredCommandPreflight[]> {
+  const directories = workerPath.split(delimiter).filter((entry) => entry.length > 0);
+  return await Promise.all(commands.map(async (command) => {
+    for (const directory of directories) {
+      const candidate = join(directory, command);
+      try {
+        if (!(await stat(candidate)).isFile()) continue;
+        await access(candidate, fsConstants.X_OK);
+        return { command, status: "available" as const, resolvedPath: candidate };
+      } catch {
+        // Try the next explicit PATH entry. A missing capability is recorded
+        // below rather than inferred from the coordinator's broader PATH.
+      }
+    }
+    return { command, status: "missing" as const, resolvedPath: null };
+  }));
 }
 
 /**
@@ -1181,6 +1223,11 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
   let permissionProfileSupported = false;
   let editAuthorityPreflight = notRequiredEditAuthorityPreflight(options.editAuthority);
   let gitMetadataAuthorityPreflight = notRequiredGitMetadataPreflight(options.gitMetadataAuthority);
+  let requiredCommandPreflights: readonly RequiredCommandPreflight[] = options.requiredCommands.map((command) => ({
+    command,
+    status: "not_run",
+    resolvedPath: null,
+  }));
   let preflightExitCode: number | null = null;
   let chatGptAuthenticated = false;
   let childExitCode: number | null = null;
@@ -1226,6 +1273,19 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
         if (gitMetadataAuthorityPreflight.status !== "passed") {
           harnessError = appendHarnessError(harnessError, `Git metadata authority preflight failed: ${gitMetadataAuthorityPreflight.error ?? "probe failed"}`);
         }
+      }
+    }
+
+    if (harnessError === null) {
+      requiredCommandPreflights = await preflightRequiredCommands(options.requiredCommands);
+      const missingCommands = requiredCommandPreflights
+        .filter((command) => command.status === "missing")
+        .map((command) => command.command);
+      if (missingCommands.length > 0) {
+        harnessError = appendHarnessError(
+          harnessError,
+          `required worker commands unavailable in effective PATH: ${missingCommands.join(", ")}`,
+        );
       }
     }
 
@@ -1405,6 +1465,7 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
       chatGptAuthenticated,
       editAuthority: editAuthorityPreflight,
       gitMetadataAuthority: gitMetadataAuthorityPreflight,
+      requiredCommands: requiredCommandPreflights,
     },
     git: {
       headBefore,
@@ -1477,6 +1538,7 @@ interface ParsedCliOptions {
   readonly editAuthority?: SolLunaEditAuthority;
   readonly gitMetadataAuthority?: SolLunaGitMetadataAuthority;
   readonly reasoningEffort?: SolLunaReasoningEffort;
+  readonly requiredCommands?: readonly string[];
   readonly codexBin?: string;
   readonly timeoutMs?: number;
   readonly captureCapBytes?: number;
@@ -1489,6 +1551,7 @@ function usage(): string {
     "  [--confinement permission-profile|legacy-sandbox]",
     "  [--edit-authority read-only|workspace-write] [--git-metadata-authority none|write]",
     "  [--reasoning-effort low|medium|high|xhigh|max]",
+    "  [--require-command NAME]...",
     "  [--codex-bin PATH] [--timeout-ms MS] [--capture-cap-bytes BYTES]",
   ].join("\n");
 }
@@ -1503,6 +1566,7 @@ function parsePositiveIntegerCli(value: string, flag: string): number {
 
 function parseCli(argv: readonly string[]): ParsedCliOptions {
   const values = new Map<string, string>();
+  const requiredCommands: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const key = argv[index];
     if (key === "--help") throw new Error(usage());
@@ -1510,6 +1574,11 @@ function parseCli(argv: readonly string[]): ParsedCliOptions {
     const value = argv[index + 1];
     if (value === undefined) throw new Error(`missing value for ${key}`);
     const name = key.slice(2);
+    if (name === "require-command") {
+      requiredCommands.push(value);
+      index += 1;
+      continue;
+    }
     if (values.has(name)) throw new Error(`duplicate argument ${key}`);
     values.set(name, value);
     index += 1;
@@ -1567,6 +1636,7 @@ function parseCli(argv: readonly string[]): ParsedCliOptions {
     ...(editAuthority === undefined ? {} : { editAuthority }),
     ...(gitMetadataAuthority === undefined ? {} : { gitMetadataAuthority }),
     ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    requiredCommands,
     codexBin: values.get("codex-bin"),
     ...(timeoutValue === undefined ? {} : { timeoutMs: parsePositiveIntegerCli(timeoutValue, "--timeout-ms") }),
     ...(captureCapValue === undefined
