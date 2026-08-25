@@ -111,6 +111,11 @@ delivery error was observed", not proof the child consumed the brief.
   after that file's write succeeds; a failed retention is represented by
   `null` and a specific `harnessError`, while successfully retained sibling
   artifacts remain available.
+- Child execution and harness evidence remain orthogonal when both fail. A
+  non-zero child stays `child.outcome: "worker_failed"` while the retention
+  defect remains in `harnessError`; `success` is false and the harness exits
+  `1` rather than reusing the child's exit code. The receipt therefore preserves
+  both causes instead of collapsing one into the other.
 
 ## Git evidence and causality
 

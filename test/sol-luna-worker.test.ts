@@ -125,7 +125,7 @@ process.exit(0);
   const blockStderrArtifactBody = `
 require("node:fs").mkdirSync(outputDir + "/stderr.log");
 emitSession();
-process.exit(0);
+process.exit(workerExit);
 `;
 
   const commitBody = `
@@ -555,6 +555,19 @@ describe("disposable Sol/Luna Codex worker harness", () => {
     expect(await Bun.file(join(setup.options.outputDir, "stdout.jsonl")).exists()).toBe(true);
     expect(await readdir(join(setup.options.outputDir, "stderr.log"))).toEqual([]);
     expect(await Bun.file(join(setup.options.outputDir, "worker-result.json")).exists()).toBe(true);
+  });
+
+  test("retains worker and harness failure evidence without collapsing their causes", async () => {
+    const setup = await setupFakeCodex({ mode: "block-stderr-artifact", workerExit: 7 });
+
+    const result = await runSolLunaWorker(setup.options);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.receipt.success).toBe(false);
+    expect(result.receipt.child.exitCode).toBe(7);
+    expect(result.receipt.child.outcome).toBe("worker_failed");
+    expect(result.receipt.harnessError).toContain("unable to retain stderr artifact");
+    expect(result.receipt.artifacts.stderr).toBeNull();
   });
 
   test("a large brief delivered to a child that exits without reading stdin cannot crash the CLI or contradict the receipt", async () => {
