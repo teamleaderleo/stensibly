@@ -171,14 +171,14 @@ describe("GitHub issue provider write composition", () => {
       expect(tools.tools.find((tool) =>
         tool.name === "get_github_provider_receipt"
       )?.annotations?.readOnlyHint).toBe(true);
-      for (const name of [
-        "github_add_issue_comment",
-        "github_create_issue",
-        "github_update_issue",
-      ]) {
+      for (const [name, destructiveHint] of [
+        ["github_add_issue_comment", false],
+        ["github_create_issue", false],
+        ["github_update_issue", true],
+      ] as const) {
         const annotations = tools.tools.find((tool) => tool.name === name)?.annotations;
         expect(annotations?.idempotentHint).toBe(true);
-        expect(annotations?.destructiveHint).toBe(false);
+        expect(annotations?.destructiveHint).toBe(destructiveHint);
       }
 
       const created = await call<GitHubProviderReceipt>(
