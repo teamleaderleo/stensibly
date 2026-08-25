@@ -181,6 +181,67 @@ describe("runner adapter exact profile version fence", () => {
     }
   });
 
+  test("fresh reservations fail closed when durable profile provenance differs", async () => {
+    const cases = [
+      {
+        name: "exact version to another exact version",
+        durableVersion: VERCEL_AI_SDK_PROFILE_VERSION,
+        reservation: { profileVersion: driftedVersion },
+      },
+      {
+        name: "exact version to unknown",
+        durableVersion: VERCEL_AI_SDK_PROFILE_VERSION,
+        reservation: { profileVersion: null },
+      },
+      {
+        name: "legacy unknown to exact version",
+        durableVersion: null,
+        reservation: { profileVersion: VERCEL_AI_SDK_PROFILE_VERSION },
+      },
+      {
+        name: "adapter and profile mismatch",
+        durableVersion: VERCEL_AI_SDK_PROFILE_VERSION,
+        reservation: {
+          adapterId: "different-adapter",
+          profileId: "different-profile",
+          profileVersion: VERCEL_AI_SDK_PROFILE_VERSION,
+        },
+      },
+    ] as const;
+
+    for (const [index, scenario] of cases.entries()) {
+      const store = new StensiblyStore(":memory:");
+      const ledger = new SqliteWorkLedger(store);
+      try {
+        const claimed = await seedClaimedRun(store, ledger, scenario.durableVersion);
+        const input: ReserveRunnerAdapterCommandInput = {
+          project: "profile_fence",
+          itemId: claimed.itemId,
+          runId: claimed.runId,
+          runGeneration: claimed.generation,
+          leaseGeneration: claimed.leaseGeneration,
+          actor: runner,
+          adapterId: VERCEL_AI_SDK_ADAPTER_ID,
+          profileId: VERCEL_AI_SDK_PROFILE_ID,
+          requestFingerprint: fingerprint(`${index}a`),
+          commandId: `fresh-profile-reject-${index}`,
+          commandFingerprint: fingerprint(`${index}b`),
+          idempotencyKey: `fresh-profile-reject-${index}`,
+          ...scenario.reservation,
+        };
+
+        await expect(ledger.reserveRunnerAdapterCommand(input)).rejects.toThrow(
+          /profile provenance does not match the run/,
+        );
+        expect(store.db.query<{ count: number }, []>(
+          "SELECT COUNT(*) AS count FROM runner_adapter_commands",
+        ).get()?.count, scenario.name).toBe(0);
+      } finally {
+        store.close();
+      }
+    }
+  });
+
   test("historical reservations without versions read back as explicitly unknown", async () => {
     const store = new StensiblyStore(":memory:");
     const ledger = new SqliteWorkLedger(store);

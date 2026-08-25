@@ -33,6 +33,9 @@ interface ReservationRow {
 interface AuthorityRow {
   item_id: string;
   project_id: string;
+  runner_type: string;
+  runner_profile: string;
+  runner_profile_version: string | null;
   generation: number;
   lease_generation: number;
   lease_owner_id: string | null;
@@ -123,6 +126,9 @@ export function reserveSqliteRunnerAdapterCommand(
       SELECT
         work_runs.item_id,
         items.project_id,
+        work_runs.runner_type,
+        work_runs.runner_profile,
+        work_runs.runner_profile_version,
         work_runs.generation,
         work_runs.lease_generation,
         work_runs.lease_owner_id,
@@ -271,6 +277,15 @@ function requireAuthority(
   if (current.project_id !== input.project || current.item_id !== input.itemId) {
     throw new RunnerAdapterCommandConflictError(
       "Runner adapter command project or item does not match the run",
+    );
+  }
+  if (
+    current.runner_type !== input.adapterId
+    || current.runner_profile !== input.profileId
+    || current.runner_profile_version !== input.profileVersion
+  ) {
+    throw new RunnerAdapterCommandConflictError(
+      "Runner adapter command profile provenance does not match the run",
     );
   }
   if (current.generation !== input.runGeneration) {

@@ -325,6 +325,71 @@ describe("hosted runner profile version provenance", () => {
       idempotencyKey: "reserve-hosted-explicit-unknown",
     })).rejects.toThrow(/different command/);
   });
+
+  test("fresh hosted reservations fail closed when durable profile provenance differs", async () => {
+    const cases = [
+      {
+        project: "reject-version-drift",
+        durableVersion: exactVersion,
+        reservation: { profileVersion: "codex-default/2026-08-26" },
+      },
+      {
+        project: "reject-exact-to-null",
+        durableVersion: exactVersion,
+        reservation: { profileVersion: null },
+      },
+      {
+        project: "reject-null-to-exact",
+        durableVersion: null,
+        reservation: { profileVersion: exactVersion },
+      },
+      {
+        project: "reject-adapter-profile",
+        durableVersion: exactVersion,
+        reservation: {
+          adapterId: "different-adapter",
+          profileId: "different-profile",
+          profileVersion: exactVersion,
+        },
+      },
+    ] as const;
+
+    for (const [index, scenario] of cases.entries()) {
+      const t = convexTest(schema, modules);
+      const seeded = await seedQueuedRun(t, {
+        project: scenario.project,
+        title: `Reject hosted reservation ${index}`,
+        ...(scenario.durableVersion ? { runnerProfileVersion: scenario.durableVersion } : {}),
+      });
+      const claimed = await t.mutation(convexApi.runnerRuns.claim, claimInput({
+        project: scenario.project,
+        runId: seeded.runId,
+        runnerProfileVersion: scenario.durableVersion,
+        idempotencyKey: `claim-hosted-reject-${index}`,
+      })) as any;
+
+      await expect(t.mutation(convexApi.runnerAdapterCommands.reserve, {
+        ...baseArgs,
+        project: scenario.project,
+        itemId: seeded.itemId,
+        runId: seeded.runId,
+        runGeneration: claimed.generation as number,
+        leaseGeneration: claimed.leaseGeneration as number,
+        actor: runner,
+        adapterId: "generic-mcp",
+        profileId: "codex-default",
+        requestFingerprint: `sha256:${String(index).repeat(64)}`,
+        commandId: `hosted-fresh-reject-${index}`,
+        commandFingerprint: `sha256:${String(index + 4).repeat(64)}`,
+        idempotencyKey: `hosted-fresh-reject-${index}`,
+        ...scenario.reservation,
+      })).rejects.toThrow(/profile provenance does not match the run/);
+
+      await t.run(async (ctx) => {
+        expect(await ctx.db.query("runnerAdapterCommands").collect()).toHaveLength(0);
+      });
+    }
+  });
 });
 
 function claimInput(overrides: Record<string, unknown> = {}) {

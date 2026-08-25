@@ -267,6 +267,9 @@ function requireAuthority(
   run: {
     projectId: unknown;
     itemId: unknown;
+    runnerType: string;
+    runnerProfile: string;
+    runnerProfileVersion?: string;
     generation: number;
     leaseGeneration: number;
     leaseOwnerExternalId?: string;
@@ -278,6 +281,13 @@ function requireAuthority(
 ): void {
   if (run.projectId !== projectId || run.itemId !== itemId) {
     throw new Error("Runner adapter command project or item does not match the run");
+  }
+  if (
+    run.runnerType !== input.adapterId
+    || run.runnerProfile !== input.profileId
+    || (run.runnerProfileVersion ?? null) !== input.profileVersion
+  ) {
+    throw new Error("Runner adapter command profile provenance does not match the run");
   }
   if (run.generation !== input.runGeneration) {
     throw new Error(`Run generation changed from ${input.runGeneration} to ${run.generation}`);
