@@ -150,6 +150,9 @@ describe("Codex cloud placement preflight", () => {
     expect(result.authorizesResultApplication).toBeFalse();
     expect(result.denials).toEqual([]);
     expect(result.dispatchReceipt?.placementEligible).toBeTrue();
+    expect(result.repository).toBe("teamleaderleo/quarry");
+    expect(result.expected).toEqual(facts);
+    expect(result.priorDispatchFingerprint).toBeNull();
   });
 
   test("stale-releases the #1052 shape already settled and frozen before dispatch", async () => {
@@ -189,6 +192,7 @@ describe("Codex cloud placement preflight", () => {
     ));
     expect(result.placementEligible).toBeTrue();
     expect(result.denials).toEqual([]);
+    expect(result.priorDispatchFingerprint).toBe(prior(dispatch).fingerprint);
   });
 
   test("rejects a tampered pre-dispatch receipt even when its evidence link is plausible", async () => {

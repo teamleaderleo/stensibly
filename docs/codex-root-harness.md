@@ -220,6 +220,55 @@ expected canonical facts, decision, denials, and both observation fingerprints; 
 must recompute exactly and describe an admitted dispatch before a fresh result read
 can be eligible. This is an integrity and anti-replay fence, not proof of authority.
 
+### Native Cloud checkout and result profile
+
+The pure result-requirements compiler admits #1702's complete durable command
+reservation and matches its project/item/run generations, lease, profile id, and
+exact profile version to the worker brief. A native Cloud checkout cannot silently
+use a legacy version-unknown run, and `worker-brief/v1` remains unchanged. The
+`codex_cloud_worktree/v1` result requirements keep evidence ownership split:
+
+- coordinator/provider preflight retains the canonical repository, logical source
+  ref, dispatch HEAD/tree, canonical main at dispatch, and the complete admitted
+  #1695 source/main placement receipts;
+- a distinct coordinator-owned provider-dispatch receipt binds the exact provider
+  task and dispatch time to those two placement receipts and the #1702 reservation;
+  the later provider read must name that task and postdate that dispatch;
+- the executor must verify the exact checkout HEAD and tree;
+- a local branch such as `work` is only an observed checkout detail;
+- missing `origin`, `origin/main`, and provider URLs are
+  `not_exposed_by_profile`, not capability blockers and never substitutes for the
+  retained logical source ref;
+- distinct, later #1695 source and canonical-main pre-result reads must consume the
+  exact stored dispatch receipts before application. Replayed, old, retargeted,
+  settled, frozen, or moved facts stale-release the result. No second freshness
+  comparator or application authority is introduced.
+
+The same requirements fingerprint declares whether the dispatch requires a
+nonempty canonical provider diff or explicitly allows an empty read-only result.
+The executor reports only its narrative delta claim. A separate, fingerprinted
+coordinator/provider receipt is bound to the exact task and deterministically
+derives canonical delta from changed-file count, changed-line count, and diff
+availability after dispatch. Only a terminal provider state can derive an empty or
+nonempty canonical delta; pending or other nonterminal state remains status evidence
+and forces review. Narrative READY/test claims cannot override that receipt. A
+claimed implementation paired with canonical empty diff is retained as
+`narrative_delta_contradicted_by_canonical_empty` and rejected. A claimed delta
+without canonical evidence is classified explicitly; unknown or profile-unexposed
+canonical delta remains review-required.
+
+All nested reservation, placement, provider-dispatch, and retained dispatch-receipt
+records are copied through a descriptor-safe plain-data boundary before older
+parsers see them. Accessors, symbols, decorated arrays, exotic prototypes, cycles,
+and unbounded nesting fail closed without invoking caller code.
+
+Every explicit brief non-goal and caller-declared provenance obligation receives one
+`satisfied | violated | unknown` result disposition. Missing dispositions become
+`unknown`; violations reject; unknowns require review. Even a complete
+`acceptance_candidate` is only a bounded evidence classification:
+`authorizesAcceptance` and `authorizesResultApplication` remain false, so
+project-native tests and semantic adjudication keep their existing authority.
+
 ## Publication receipts
 
 The existing Sol/Luna worker receipt owns head lineage and worktree activity and

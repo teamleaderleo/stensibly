@@ -95,6 +95,10 @@ export type CodexCloudPlacementDenialV1 =
 export interface CodexCloudPlacementPreflightV1 {
   readonly version: typeof CODEX_ROOT_CLOUD_PLACEMENT_V1;
   readonly phase: CodexCloudPlacementPhaseV1;
+  readonly repository: string;
+  readonly missionRef: string;
+  readonly expected: CodexCloudCanonicalPlacementFactsV1;
+  readonly priorDispatchFingerprint: string | null;
   readonly placementEligible: boolean;
   readonly disposition: "admit" | "stale_release";
   readonly authorizesDispatch: false;
@@ -291,6 +295,10 @@ export function adjudicateCodexCloudPlacementV1(
   return deepFreeze({
     version: CODEX_ROOT_CLOUD_PLACEMENT_V1,
     phase: parsed.phase,
+    repository: parsed.repository,
+    missionRef: parsed.missionRef,
+    expected: parsed.expected,
+    priorDispatchFingerprint: parsed.priorDispatch?.receipt.fingerprint ?? null,
     placementEligible: uniqueDenials.length === 0,
     disposition: uniqueDenials.length === 0 ? "admit" : "stale_release",
     authorizesDispatch: false,
