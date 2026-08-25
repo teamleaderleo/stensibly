@@ -43,6 +43,7 @@ class FakeCodexBackend {
   nextTurn = 1;
   terminalGoalBeforeTurnSettlement = false;
   completeReactivatedTurnBeforeSteer = false;
+  unrelatedTerminalGoalAfterSteer = false;
   readonly threads = new Map<string, FakeThread>();
   readonly goals = new Map<string, FakeGoal>();
   readonly turns = new Map<string, Array<Record<string, unknown>>>();
@@ -126,6 +127,14 @@ class FakeCodexConnection implements CodexAppServerConnection {
     if (method === "turn/steer") {
       const threadId = String(params.threadId);
       const turnId = String(params.expectedTurnId);
+      if (this.#backend.unrelatedTerminalGoalAfterSteer) {
+        const goal = this.#backend.goals.get(threadId);
+        queueMicrotask(() => this.#emit("thread/goal/updated", {
+          threadId,
+          turnId: "runtime-turn-unrelated",
+          goal: goal ? { ...structuredClone(goal), status: "complete" } : null,
+        }));
+      }
       queueMicrotask(() => this.#completeTurn(threadId, turnId));
       return { turnId } as Result;
     }
@@ -499,6 +508,26 @@ describe("Codex root harness", () => {
     expect(backend.calls.filter((call) =>
       call.connection === "steer-race" && call.method === "turn/steer"
     )).toHaveLength(0);
+  });
+
+  test("settles only the exact turn that accepted a continued brief", async () => {
+    const backend = new FakeCodexBackend();
+    const connection = new FakeCodexConnection(backend, "exact-terminal-turn");
+    const harness = new CodexRootHarness(connection);
+    const durableMission = mission("1695-exact-terminal-turn");
+    const durableProfile = profile("/tmp/codex-root-exact-terminal-turn");
+    const started = await harness.start(durableMission, durableProfile);
+    backend.unrelatedTerminalGoalAfterSteer = true;
+    const currentBrief = "Settle only the exact runtime turn that accepted this brief.";
+
+    const continued = await harness.continue(started.binding, {
+      ...durableMission,
+      launchBrief: currentBrief,
+    }, durableProfile);
+    const steer = backend.calls.filter((call) => call.method === "turn/steer").at(-1)!;
+    expect(continued.observation.turnId).toBe(String(steer.params.expectedTurnId));
+    expect(continued.observation.turnId).not.toBe("runtime-turn-unrelated");
+    expect(continued.observation.briefCharacters).toBe(currentBrief.length);
   });
 
   test("refuses an exhausted cumulative goal budget and resumes only after an explicit increase", async () => {

@@ -326,6 +326,7 @@ export class CodexRootHarness {
   ): Promise<CodexRootRunResultV1> {
     const cursor = this.#connection.notificationCursor();
     let turnId: string;
+    let exactTerminalTurnId: string | null = null;
     if (disposition === "initial_root" || disposition === "fresh_successor_root") {
       const response = record(await this.#connection.request("turn/start", {
         threadId: binding.runtime.threadId,
@@ -385,6 +386,7 @@ export class CodexRootHarness {
         if (identifier(steer.turnId, "steered Codex turn ID") !== turnId) {
           throw new Error("Codex accepted the current brief for a different runtime turn");
         }
+        exactTerminalTurnId = turnId;
       } catch (error) {
         const state = await this.#readTurnState(binding.runtime.threadId, turnId);
         throw new Error(
@@ -395,7 +397,7 @@ export class CodexRootHarness {
     const turnAcceptedAt = this.#clock().getTime();
     const terminalGoal = await this.#connection.waitForNotification(
       "thread/goal/updated",
-      (params) => terminalGoalMatches(params, binding.runtime.threadId),
+      (params) => terminalGoalMatches(params, binding.runtime.threadId, exactTerminalTurnId),
       cursor,
       this.#turnTimeoutMs,
     );
@@ -693,8 +695,13 @@ function startedTurnMatches(params: unknown, threadId: string): boolean {
   return isRecord(params) && params.threadId === threadId && isRecord(params.turn);
 }
 
-function terminalGoalMatches(params: unknown, threadId: string): boolean {
+function terminalGoalMatches(
+  params: unknown,
+  threadId: string,
+  exactTurnId: string | null = null,
+): boolean {
   if (!isRecord(params) || params.threadId !== threadId || !isRecord(params.goal)) return false;
+  if (exactTurnId !== null && params.turnId !== exactTurnId) return false;
   return params.goal.status !== "active";
 }
 

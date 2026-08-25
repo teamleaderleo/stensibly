@@ -97,8 +97,10 @@ was bound, producing an empty useful turn. The adapter now waits for the actual
 `turn/started` identity, rejects an already-terminal matching turn, and requires
 `turn/steer` to accept that exact ID before waiting for goal and turn settlement.
 A completion that wins the remaining protocol interval is a fail-closed
-continuation error, not a successful brief delivery. Tests model that adverse
-ordering and reject duplicate delivery when the goal is already active.
+continuation error, not a successful brief delivery. Terminal settlement after
+steer must also carry that exact accepted turn ID; unrelated delayed terminal
+goals are ignored. Tests model both adverse orderings and reject duplicate
+delivery when the goal is already active.
 
 ## Spark versus Sol dogfood
 
@@ -187,21 +189,25 @@ observation showed 85% free, 1.430 GB swap, and the replacement Codex process at
 so this is operational relief evidence—not causal per-task memory attribution.
 No cloud review created another local app-server root.
 
-Cloud placement is revalidated twice: immediately before dispatch and again
-before any result application. `adjudicateCodexCloudPlacementV1` compares freshly
-resolved canonical issue/PR owner generation, settlement, exact ref/head, and
-experiment freeze against the admitted facts. A settled, superseded, frozen, or
-changed mission is stale-released; the function never authorizes dispatch or
-application. This captures the Quarry #1052 discriminator: task
+Cloud placement uses two owner-supplied canonical-read receipts: one immediately
+before dispatch and a distinct, later receipt before any result application.
+`adjudicateCodexCloudPlacementV1` integrity-checks each receipt, links result
+application to the prior dispatch decision, and rejects replay of either the
+canonical read or inspection evidence. The function does not fetch or interpret
+provider authority itself; the canonical owner remains responsible for the
+provider read. A settled, superseded, frozen, changed, or replayed mission is
+stale-released, and the function never authorizes dispatch or application. This
+captures the Quarry #1052 discriminator: task
 `task_e_6a8da270bac88326936d08075e2e07bc` was dispatched after the frozen
 experiment had already settled through PR #1053/run 32857504041, so its
 4-file/+314 candidate is evidence-only and must not be applied.
 
-Cloud CLI inspection runs from an isolated temporary working directory. If a
-probe creates diagnostics such as `error.log` in any repository worktree, the
-placement preflight stale-releases and publication remains denied;
-account-routing diagnostics are removed precisely, never hidden with a repository
-ignore rule.
+`runCodexCloudInspectionCommandV1` executes Cloud CLI inspection in an owned
+temporary working directory, scans configured repository roots for diagnostics,
+records temporary diagnostics, and removes the owned directory. If a probe
+creates `error.log` in a repository worktree, the resulting evidence
+stale-releases placement and publication remains denied; account-routing
+diagnostics are never hidden with a repository ignore rule.
 
 ## Publication receipts
 
