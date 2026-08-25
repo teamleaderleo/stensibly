@@ -782,6 +782,13 @@ export default defineSchema({
     sourceTimeSource: v.union(v.literal("provider"), v.literal("received")),
     receivedAt: v.number(),
     observationJson: v.string(),
+    mailProjectionState: v.optional(
+      v.union(
+        v.literal("pending"),
+        v.literal("baseline_suppressed"),
+        v.literal("projected"),
+      ),
+    ),
     createdAt: v.number(),
   })
     .index("by_workspace_delivery", ["workspaceId", "deliveryId"])

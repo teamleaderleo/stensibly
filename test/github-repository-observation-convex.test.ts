@@ -35,7 +35,7 @@ describe("Convex GitHub repository observation service", () => {
       payloadDigest: observation.payloadDigest,
       receivedAt: observation.receivedAt,
       observation,
-    })).toEqual({ duplicate: false });
+    })).toEqual({ duplicate: false, mailProjectionState: null });
     const captured = calls[0];
     expect(captured).toMatchObject({
       serviceSecret: "service-secret",
@@ -133,7 +133,7 @@ describe("Convex GitHub repository observation service", () => {
     });
 
     expect(await service.ingestRepositoryObservation(observationInput(observation)))
-      .toEqual({ duplicate: false });
+      .toEqual({ duplicate: false, mailProjectionState: null });
     expect(getCalls).toBe(0);
   });
 
@@ -152,7 +152,7 @@ describe("Convex GitHub repository observation service", () => {
     const service = serviceWithMutationResult(result);
 
     await expect(service.ingestRepositoryObservation(observationInput(observation)))
-      .resolves.toEqual({ duplicate: false });
+      .resolves.toEqual({ duplicate: false, mailProjectionState: null });
     expect(ownKeysCalls).toBe(0);
   });
 
@@ -199,6 +199,179 @@ describe("Convex GitHub repository observation service", () => {
     });
     await expect(service.ingestRepositoryObservation(observationInput(observation)))
       .rejects.toBeInstanceOf(GitHubRepositoryObservationConflictError);
+  });
+
+  test("forwards only admitted initial projection states at ingest", async () => {
+    const observation = issueObservation();
+    const calls: Record<string, unknown>[] = [];
+    const service = new ConvexGitHubRepositoryObservationService({
+      client: {
+        async mutation(_reference, args) {
+          calls.push(args);
+          return {
+            duplicate: false,
+            record: storedRecord(String(args.observationJson)),
+          };
+        },
+        async query() {
+          throw new Error("not used");
+        },
+      },
+      serviceSecret: "service-secret",
+    });
+
+    await service.ingestRepositoryObservation(observationInput(observation), {
+      mailProjectionState: "pending",
+    });
+    expect(calls[0]).toMatchObject({ mailProjectionState: "pending" });
+
+    await service.ingestRepositoryObservation(observationInput(observation), {});
+    expect(calls[1]).not.toHaveProperty("mailProjectionState");
+
+    await expect(service.ingestRepositoryObservation(
+      observationInput(observation),
+      { mailProjectionState: "projected" as unknown as "pending" },
+    )).rejects.toBeInstanceOf(TypeError);
+    expect(calls).toHaveLength(2);
+  });
+
+  test("admits every durable projection state on readback and rejects unknown states", async () => {
+    const observation = issueObservation();
+    for (const mailProjectionState of [
+      "pending",
+      "baseline_suppressed",
+      "projected",
+    ] as const) {
+      const service = serviceReadingRows([{
+        ...storedRecord(canonicalJson(observation)),
+        mailProjectionState,
+      }]);
+      const records = await service.listRecentRepositoryObservations(
+        "teamleaderleo/stensibly",
+        10,
+      );
+      expect(records[0]?.mailProjectionState).toBe(mailProjectionState);
+    }
+
+    const service = serviceReadingRows([{
+      ...storedRecord(canonicalJson(observation)),
+      mailProjectionState: "queued",
+    }]);
+    await expect(service.listRecentRepositoryObservations(
+      "teamleaderleo/stensibly",
+      10,
+    )).rejects.toBeInstanceOf(GitHubRepositoryObservationStorageError);
+  });
+
+  test("surfaces the exact stored projection state on every ingest path", async () => {
+    const observation = issueObservation();
+    const input = observationInput(observation);
+    const serviceReturning = (
+      duplicate: boolean,
+      mailProjectionState?: "pending" | "baseline_suppressed" | "projected",
+    ) =>
+      new ConvexGitHubRepositoryObservationService({
+        client: {
+          async mutation(_reference, args) {
+            const record = storedRecord(String(args.observationJson));
+            return {
+              duplicate,
+              record: mailProjectionState === undefined
+                ? record
+                : { ...record, mailProjectionState },
+            };
+          },
+          async query() {
+            throw new Error("not used");
+          },
+        },
+        serviceSecret: "service-secret",
+      });
+
+    // A new pending insert returns the admitted initial state.
+    expect(await serviceReturning(false, "pending").ingestRepositoryObservation(input))
+      .toEqual({ duplicate: false, mailProjectionState: "pending" });
+    expect(await serviceReturning(false, "baseline_suppressed").ingestRepositoryObservation(input))
+      .toEqual({ duplicate: false, mailProjectionState: "baseline_suppressed" });
+    // A duplicate returns the live durable row state.
+    expect(await serviceReturning(true, "projected").ingestRepositoryObservation(input))
+      .toEqual({ duplicate: true, mailProjectionState: "projected" });
+    expect(await serviceReturning(true, "pending").ingestRepositoryObservation(input))
+      .toEqual({ duplicate: true, mailProjectionState: "pending" });
+    // Legacy rows without a durable state stay null.
+    expect(await serviceReturning(true).ingestRepositoryObservation(input))
+      .toEqual({ duplicate: true, mailProjectionState: null });
+    expect(await serviceReturning(false).ingestRepositoryObservation(input))
+      .toEqual({ duplicate: false, mailProjectionState: null });
+  });
+
+  test("ingest options cannot forge the returned durable projection state", async () => {
+    const observation = issueObservation();
+    const calls: Record<string, unknown>[] = [];
+    const service = new ConvexGitHubRepositoryObservationService({
+      client: {
+        async mutation(_reference, args) {
+          calls.push(args);
+          const record = storedRecord(String(args.observationJson));
+          // The durable row already reached terminal projected through the
+          // guarded transition; no ingest option may rewrite that fact.
+          return {
+            duplicate: true,
+            record: { ...record, mailProjectionState: "projected" },
+          };
+        },
+        async query() {
+          throw new Error("not used");
+        },
+      },
+      serviceSecret: "service-secret",
+    });
+
+    await service.ingestRepositoryObservation(observationInput(observation), {
+      mailProjectionState: "baseline_suppressed",
+    });
+    const replay = await service.ingestRepositoryObservation(
+      observationInput(observation),
+      { mailProjectionState: "pending" },
+    );
+    expect(calls[1]).toMatchObject({ mailProjectionState: "pending" });
+    expect(replay.mailProjectionState).toBe("projected");
+
+    await expect(service.ingestRepositoryObservation(
+      observationInput(observation),
+      { mailProjectionState: "projected" as unknown as "pending" },
+    )).rejects.toBeInstanceOf(TypeError);
+  });
+
+  test("marks one admitted observation projected through the guarded mutation", async () => {
+    const calls: Record<string, unknown>[] = [];
+    const service = new ConvexGitHubRepositoryObservationService({
+      client: {
+        async mutation(_reference, args) {
+          calls.push(args);
+          return {};
+        },
+        async query() {
+          throw new Error("not used");
+        },
+      },
+      serviceSecret: "service-secret",
+      workspace: "default",
+    });
+    await service.markRepositoryObservationMailProjected({
+      observationId: "github-public:pull_request:public-event:20001",
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      serviceSecret: "service-secret",
+      workspace: "default",
+      observationId: "github-public:pull_request:public-event:20001",
+    });
+
+    await expect(service.markRepositoryObservationMailProjected({
+      observationId: "",
+    })).rejects.toBeInstanceOf(TypeError);
+    expect(calls).toHaveLength(1);
   });
 
   test("reads bounded canonical observations", async () => {
@@ -428,6 +601,20 @@ function serviceWithMutationResult(result: unknown) {
       },
       async query() {
         throw new Error("not used");
+      },
+    },
+    serviceSecret: "service-secret",
+  });
+}
+
+function serviceReadingRows(rows: unknown[]) {
+  return new ConvexGitHubRepositoryObservationService({
+    client: {
+      async mutation() {
+        throw new Error("not used");
+      },
+      async query() {
+        return rows;
       },
     },
     serviceSecret: "service-secret",

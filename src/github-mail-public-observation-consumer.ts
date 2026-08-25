@@ -92,19 +92,6 @@ export class GitHubMailPublicObservationConsumer<Result> {
     });
   }
 
-  async hasThread(input: GitHubMailPublicObservationInput): Promise<boolean> {
-    requirePublicProvenance(input.observation);
-    const repository = normalizeGitHubRepository(input.observation.repository);
-    if (repository !== this.#repository) return false;
-    const pullRequestNumber = input.observation.relationships.pullRequestNumber;
-    if (pullRequestNumber === null) return false;
-    return await this.#store.getThreadBySource(
-      this.#workspace,
-      this.#project,
-      `github:${repository}#${pullRequestNumber}`,
-    ) !== null;
-  }
-
   async consume(
     input: GitHubMailPublicObservationInput,
   ): Promise<GitHubMailPublicObservationConsumeResult<Result>> {
