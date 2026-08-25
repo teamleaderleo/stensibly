@@ -1,24 +1,24 @@
-# Workspace surveyor
+# Workspace survey snapshot
 
-Stensibly exposes one read-only `survey_workspace` MCP tool for centralized dispatch and monitoring.
+Stensibly exposes a read-only `survey_workspace` MCP tool that compiles one bounded snapshot from current ledger state.
 
-The tool does not claim work, run models, edit repositories, or decide business transitions. It turns the current ledger into one bounded snapshot that a ChatGPT conversation, scheduled task, script, or inexpensive model can consume.
+Use it when a caller explicitly needs a workspace/project overview, a recovery comparison, or a material-change discriminator. It does not claim work, run models, create notifications, or own an ongoing scheduling loop.
 
 ## What the survey returns
 
-Each response includes:
+Each response includes bounded current facts such as:
 
-- counts across ready, active, blocked, done, and archived work
-- per-project counts and latest activity
-- ready work ordered as dispatch candidates
-- active work ordered by lease urgency
-- invalid, expired, and soon-expiring claim groups
-- blocked work and recent completions
-- a SHA-256 fingerprint over material ledger state
-- `changed` when the caller supplies a previous fingerprint
-- `notifyRecommended` when actionable state is new or changed
+- counts across work statuses;
+- per-project counts and latest activity;
+- ready candidates;
+- active work ordered by lease urgency;
+- invalid, expired, and soon-expiring claim groups;
+- blockers and recent completions;
+- a SHA-256 fingerprint over material ledger state;
+- `changed` when the caller supplies a previous fingerprint;
+- `notifyRecommended` as an advisory projection over that snapshot.
 
-Elapsed seconds are excluded from the fingerprint. A repeated check remains unchanged until ledger data changes or a lease crosses into another urgency class.
+Elapsed seconds are excluded from the fingerprint. Equivalent material ledger state produces the same material fingerprint even when the clock advances inside one urgency class.
 
 ## MCP input
 
@@ -31,81 +31,64 @@ Elapsed seconds are excluded from the fingerprint. A repeated check remains unch
 }
 ```
 
-All fields are optional. An all-project read token may omit `project`. A token with a project allowlist must name one allowed project.
+All fields are optional. An all-project read principal may omit `project`; a principal with a project allowlist must remain inside its authorised project scope.
 
-The hosted endpoint is:
+## Appropriate uses
 
-```text
-https://api.stensibly.com/mcp
-```
+### Fresh explicit overview
 
-It requires an opaque Stensibly Bearer token with read scope. A survey-only token should have no write or admin scope.
+A worker/operator that needs a bounded overview may call `survey_workspace` once, then inspect the specific work/provider records that affect its decision.
 
-## ChatGPT app setup
-
-Create a custom MCP app in ChatGPT developer mode using the hosted MCP endpoint and a read-only survey token. Scan the server tools after connecting so `survey_workspace` appears as a read action.
-
-A scheduled survey prompt can use this policy:
+For ordinary worker bootstrap, direct composition is usually clearer:
 
 ```text
-Use the Stensibly survey_workspace tool to inspect current work. Pass the
-fingerprint from the previous successful survey when available.
-
-Notify me only when notifyRecommended is true. Prefer one highest-value ready
-item that can be assigned to a fresh ChatGPT chat without colliding with active
-work. Include the project, item ID, reason it is ready, relevant blockers or
-active overlap, expected evidence, and a complete prompt I can copy into a new
-chat.
-
-When attention.urgent is true, lead with the exact expired or invalid claim and
-the human decision or recovery action required. Do not claim, modify, or
-complete work.
+enrol_worker
+-> list_work / get_brief
+-> inspect exact item/provider facts
+-> claim_work atomically
+-> get_runner_context
 ```
 
-ChatGPT scheduled tasks can perform recurring app-backed checks. Their cadence and notification delivery remain owned by ChatGPT rather than Stensibly.
+### Compare with a previously observed snapshot
 
-## Sub-hour polling without spending a model call every time
+A caller that already holds a prior survey fingerprint may pass it back to distinguish materially equivalent ledger state from changed state.
 
-A lightweight service can call MCP every few minutes, persist the returned fingerprint, and stop immediately when `changed` is false. Invoke a model only when the survey reports a material change or actionable state.
+The prior fingerprint is a cache/comparison input. It creates no wake subscription, polling obligation, claim, authority, or current-state guarantee.
 
-First request:
+### Recovery/diagnostics
 
-```bash
-curl --fail-with-body --silent --show-error \
-  https://api.stensibly.com/mcp \
-  -H "authorization: Bearer $STENSIBLY_TOKEN" \
-  -H "content-type: application/json" \
-  -H "accept: application/json, text/event-stream" \
-  -H "mcp-protocol-version: 2025-06-18" \
-  --data-binary @- <<'JSON'
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "tools/call",
-  "params": {
-    "name": "survey_workspace",
-    "arguments": {
-      "limit": 10,
-      "expiringWithinSeconds": 900
-    }
-  }
-}
-JSON
-```
+A diagnostic tool may use the survey to answer questions such as:
 
-On later requests, add the exact fingerprint returned by the previous successful call:
+- did the ledger materially change between two explicit observations?;
+- which leases are currently expired or nearing expiry?;
+- which project currently contains ready work or blockers?;
+- is a previously observed summary stale?
 
-```json
-"previousFingerprint": "sha256:0123456789abcdef..."
-```
+The caller then reads the owning work/run/provider records before acting.
 
-A practical loop is:
+## Ongoing coordination
 
-1. poll every 5 to 15 minutes with no model involved
-2. parse the JSON text from the MCP result
-3. persist `fingerprint`
-4. exit when `changed` is false
-5. when state changed, send the bounded survey to a low-cost model for dispatch wording
-6. escalate to a stronger ChatGPT chat only for implementation, review, or a human decision
+Use event/condition owners for ongoing future work:
 
-This keeps scheduling and provider choice outside the ledger while preserving one coordination record for every client.
+- #46 — durable wake conditions;
+- #327 — explicit material event -> cross-item wake intent;
+- run/lease liveness — execution-attempt owner;
+- human decisions — typed decision owner;
+- provider-effect ambiguity — command/receipt reconciliation.
+
+Do not create periodic worker/supervisor polling merely because `survey_workspace` exposes a fingerprint. Scheduled polling remains an explicit fallback for sources that cannot provide a suitable event or for a deliberate external diagnostic task.
+
+A scheduler or external client that chooses to poll owns its own cadence and cost. Stensibly's survey result does not recommend a recurrence.
+
+## Authority boundary
+
+Survey output is read-only evidence. `ready`, `urgent`, `changed`, ranking, or `notifyRecommended` grants zero responsibility, approval, provider authority, or execution capability.
+
+Any mutation must pass through its owning atomic claim/command/approval boundary using current generations/state.
+
+## Deletion rule
+
+If callers can obtain the same bounded overview directly from owner-specific read APIs with equal material-change identity, delete `survey_workspace` instead of keeping a redundant aggregate surface.
+
+— Kestrel
+  Intention: keep one useful snapshot while ongoing work moves through events and exact owners
