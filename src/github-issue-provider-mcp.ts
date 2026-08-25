@@ -439,7 +439,7 @@ export function registerGitHubIssueProviderTools(
           .optional(),
         idempotencyKey: idempotencyKeySchema(),
       },
-      annotations: { destructiveHint: false, idempotentHint: true },
+      annotations: { destructiveHint: true, idempotentHint: true },
     },
     async (input) => asToolResult(() => writeService(ledger).updateIssue({
       ...providerContext(context, input.project, input.repository, "write"),
@@ -683,7 +683,7 @@ export function registerGitHubIssueProviderTools(
     {
       description: "Publish one bounded GitHub change as a durable operation: create an exact branch, create or update one file through an exact-parent fence, then open an exact-head/base pull request. Every provider step is reserved before dispatch; ambiguous outcomes stop for reconciliation. Requires a current Stensibly runner lease owned by this MCP principal.",
       inputSchema: githubPublishChangeInputSchema(),
-      annotations: { destructiveHint: false, idempotentHint: true },
+      annotations: { destructiveHint: true, idempotentHint: true },
     },
     async (input) => asToolResult(async () => {
       const identity = providerContext(

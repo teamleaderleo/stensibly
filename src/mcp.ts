@@ -206,7 +206,7 @@ function configureMcpServer(
     {
       description: "Atomically claim an item for a limited lease. A competing live claim returns an error.",
       inputSchema: claimSchema(),
-      annotations: { destructiveHint: false, idempotentHint: false },
+      annotations: { destructiveHint: true, idempotentHint: false },
     },
     async (input) => asToolResult(() => ledger.claimWork(input)),
   );
@@ -231,7 +231,7 @@ function configureMcpServer(
         nextAction: z.string().trim().min(1).max(2_000),
         toActorId: z.string().trim().min(1).max(120).optional(),
       },
-      annotations: { destructiveHint: false, idempotentHint: false },
+      annotations: { destructiveHint: true, idempotentHint: false },
     },
     async (input) => asToolResult(() => ledger.handoffWork(input)),
   );
@@ -245,7 +245,7 @@ function configureMcpServer(
         reason: z.string().trim().min(1).max(10_000),
         nextAction: z.string().trim().min(1).max(2_000).optional(),
       },
-      annotations: { destructiveHint: false, idempotentHint: false },
+      annotations: { destructiveHint: true, idempotentHint: false },
     },
     async (input) => asToolResult(() => ledger.blockWork(input)),
   );
@@ -258,7 +258,7 @@ function configureMcpServer(
         ...semanticActionSchema(),
         nextAction: z.string().trim().min(1).max(2_000).optional(),
       },
-      annotations: { destructiveHint: false, idempotentHint: false },
+      annotations: { destructiveHint: true, idempotentHint: false },
     },
     async (input) => asToolResult(() => ledger.unblockWork(input)),
   );
@@ -298,7 +298,7 @@ function configureMcpServer(
         summary: z.string().trim().max(10_000).optional(),
         continuations: z.array(continuationDraftSchema).max(20).optional(),
       },
-      annotations: { destructiveHint: false, idempotentHint: false },
+      annotations: { destructiveHint: true, idempotentHint: false },
     },
     async (input) => asToolResult(async () => {
       if (input.continuations?.length) {
