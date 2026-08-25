@@ -138,10 +138,11 @@ describe("dashboard wiring keeps the batch on the rendered visible set", () => {
   });
 
   test("per-item resolution reports its true final state", () => {
-    expect(appJs).toContain("if (completeResponse.ok) return 'completed';");
-    expect(appJs).toContain("if (unblockResponse.ok) return 'unblocked';");
+    expect(appJs).toContain("items.find((i) => i.id === itemId)");
+    expect(appJs).toContain("return await resolveItemActionOutcome({");
+    expect(appJs).toContain("resolveItemActionOutcome } from './item-resolution.js'");
     expect(appJs).toContain('Could not update');
-    expect(appJs).not.toContain('showQuickToast(`Updated'); 
+    expect(appJs).not.toContain('showQuickToast(`Updated');
   });
 
   test("button label and progress copy match the implementation", () => {

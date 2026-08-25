@@ -22,6 +22,7 @@ import {
   reconcileBatchTargets,
   summarizeBatchResults,
 } from './decision-tray-batch.js';
+import { resolveItemActionOutcome } from './item-resolution.js';
 import { createItemDetailController } from './item-detail-controller.js';
 import { createItemCreateController } from './item-create-controller.js';
 import { createSessionContextController } from './session-context-controller.js';
@@ -1082,28 +1083,13 @@ async function resolveItemOutcome(itemId) {
   const item = items.find((i) => i.id === itemId);
   if (!item) return 'failed';
   try {
-    const key = `stn.done-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const actor = sessionContext.getActor() || { id: 'operator', name: 'Operator', kind: 'human' };
-    const requestInit = (rationale) => ({
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${token}`,
-        'content-type': 'application/json',
-        'idempotency-key': key,
-      },
-      body: JSON.stringify({ actor, rationale }),
+    return await resolveItemActionOutcome({
+      endpoint,
+      token,
+      itemId,
+      item,
+      actor: sessionContext.getActor() || { id: 'operator', name: 'Operator', kind: 'human' },
     });
-    const completeResponse = await fetch(
-      `${endpoint}/api/v1/items/${encodeURIComponent(itemId)}/complete`,
-      requestInit('Operator 1-tap Okay, Go confirmation'),
-    );
-    if (completeResponse.ok) return 'completed';
-    const unblockResponse = await fetch(
-      `${endpoint}/api/v1/items/${encodeURIComponent(itemId)}/unblock`,
-      requestInit('Operator 1-tap Okay, Go unblock'),
-    );
-    if (unblockResponse.ok) return 'unblocked';
-    return 'failed';
   } catch {
     return 'failed';
   }
