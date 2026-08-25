@@ -7,6 +7,7 @@ import {
 } from "./runner-profile-provenance.js";
 import type { VersionedWorkRun } from "./runs.js";
 import {
+  WORKER_BRIEF_COMPILER_VERSION,
   assertWorkerBriefCurrentV1,
   compileWorkerBriefV1,
   workerBriefJson,
@@ -16,7 +17,7 @@ import {
   type WorkerBriefV1,
 } from "./worker-brief.js";
 
-export const RUN_BOUND_WORKER_BRIEF_COMPILER_VERSION = "0.3.0" as const;
+export const RUN_BOUND_WORKER_BRIEF_COMPILER_VERSION = WORKER_BRIEF_COMPILER_VERSION;
 
 export type WorkerBriefRunBindingV1 = Pick<
   VersionedWorkRun,
@@ -33,11 +34,7 @@ export type RunBoundWorkerBriefFreshnessFactsV1 = Omit<
   "runId" | "runGeneration" | "leaseGeneration"
 >;
 
-export type RunBoundWorkerBriefV1 = Omit<
-  WorkerBriefV1,
-  "compilerVersion" | "identity"
-> & {
-  compilerVersion: typeof RUN_BOUND_WORKER_BRIEF_COMPILER_VERSION;
+export type RunBoundWorkerBriefV1 = Omit<WorkerBriefV1, "identity"> & {
   identity: Omit<WorkerBriefV1["identity"], "dispatch"> & {
     dispatch: WorkerBriefV1["identity"]["dispatch"] & {
       runnerProfileVersion: string | null;
@@ -83,7 +80,6 @@ export function compileRunBoundWorkerBriefV1(
   const { semanticDigest: _semanticDigest, ...baseWithoutDigest } = base;
   const withoutDigest = deepFreeze({
     ...baseWithoutDigest,
-    compilerVersion: RUN_BOUND_WORKER_BRIEF_COMPILER_VERSION,
     identity: {
       ...base.identity,
       dispatch: {
@@ -106,7 +102,7 @@ export function workerBriefRunnerProfileProvenanceV1(
   brief: CompatibleRunProfileWorkerBriefV1,
 ): RunnerProfileProvenanceV1 {
   const parsed = JSON.parse(
-    workerBriefJson(brief as unknown as WorkerBriefV1),
+    workerBriefJson(brief),
   ) as {
     identity: {
       dispatch: {
@@ -136,7 +132,7 @@ export function assertRunBoundWorkerBriefCurrentV1(
 ): void {
   const binding = admitRunBinding(run);
   assertWorkerBriefCurrentV1(
-    brief as unknown as WorkerBriefV1,
+    brief,
     withRunFreshness(current, binding),
   );
 
@@ -172,7 +168,7 @@ export function runBoundWorkerBriefIsCurrentV1(
 export function runBoundWorkerBriefJsonV1(
   brief: CompatibleRunProfileWorkerBriefV1,
 ): string {
-  return workerBriefJson(brief as unknown as WorkerBriefV1);
+  return workerBriefJson(brief);
 }
 
 function withDispatch(
