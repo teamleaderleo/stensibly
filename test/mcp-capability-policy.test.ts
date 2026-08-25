@@ -61,7 +61,7 @@ describe("MCP capability policy registry", () => {
     expect(getMcpCapabilityPolicy("github_land_pr")).toMatchObject({
       scope: "write",
       riskClass: "consequential",
-      defaultExposure: "searchable",
+      defaultExposure: "core",
       approvalPolicy: "tool_managed",
       receiptPolicy: "tool_managed",
       reconciliationPolicy: "tool_managed",
@@ -69,7 +69,7 @@ describe("MCP capability policy registry", () => {
     expect(getMcpCapabilityPolicy("enrol_worker")).toMatchObject({
       scope: "write",
       riskClass: "bounded_write",
-      defaultExposure: "core",
+      defaultExposure: "hidden",
       projectResolution: { kind: "project_argument", argument: "project" },
       approvalPolicy: "none",
       receiptPolicy: "tool_managed",
