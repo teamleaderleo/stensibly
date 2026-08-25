@@ -160,7 +160,16 @@ describe("tray item resolution protocol (injected transport)", () => {
   });
 
   test("missing or invalid generations fail closed with zero requests", async () => {
-    for (const claimGeneration of [undefined, null, -1, 1.5, Number.NaN, "2", Infinity]) {
+    for (const claimGeneration of [
+      undefined,
+      null,
+      -1,
+      1.5,
+      Number.NaN,
+      "2",
+      Infinity,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
       const { outcome, requests } = await resolution({
         item: { id: "itm_1", status: "blocked", claimGeneration },
       });
@@ -188,12 +197,16 @@ describe("tray item resolution protocol (injected transport)", () => {
     expect(isBlockedTransitionRefusal({ status: 409, code: "conflict", message: "Claim generation changed; refresh the item before retrying" })).toBe(false);
     expect(isBlockedTransitionRefusal({ status: 409, code: "conflict", message: "Work is held by another actor" })).toBe(false);
     expect(isBlockedTransitionRefusal({ status: 409, code: "conflict", message: "Item is already complete or archived" })).toBe(false);
+    expect(isBlockedTransitionRefusal({ status: 409, code: "conflict", message: "Only blocked work can be unblocked while held by another actor" })).toBe(false);
+    expect(isBlockedTransitionRefusal({ status: 409, code: "conflict", message: "only blocked work can be unblocked" })).toBe(false);
   });
 
   test("body builders refuse to guess a generation or emit credential-shaped fields", () => {
     expect(() => buildCompleteRequestBody("itm_1", operator, undefined)).toThrow("claim generation");
     expect(() => buildUnblockRequestBody("itm_1", operator, undefined)).toThrow("claim generation");
     expect(() => buildCompleteRequestBody("itm_1", operator, "3")).toThrow();
+    expect(() => buildCompleteRequestBody("itm_1", operator, Number.MAX_SAFE_INTEGER + 1)).toThrow();
+    expect(() => buildUnblockRequestBody("itm_1", operator, Number.MAX_SAFE_INTEGER + 1)).toThrow();
     expect(() => buildUnblockRequestBody("itm_1", { id: "stn.tok_x", name: "x", kind: "agent" }, 0)).toThrow();
     expect(buildCompleteRequestBody("itm_1", operator, 0)).toEqual({
       id: "itm_1",

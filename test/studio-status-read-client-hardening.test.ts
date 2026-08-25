@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createServerApp } from "../src/server-app.js";
 import {
   createLedgerStatusReader,
   DEFAULT_LEDGER_STATUS_ENDPOINT,
@@ -10,6 +11,7 @@ import {
   normalizeLedgerEndpointBase,
   type LedgerStatusItem,
 } from "../src/studio-status-read-client.js";
+import { StensiblyStore } from "../src/store.js";
 
 const ENDPOINT = "https://ledger.example";
 
@@ -399,5 +401,54 @@ describe("failures and recordings stay content-minimized", () => {
 
   test("the GET-only allowlist boundary is unchanged", () => {
     expect(DEFAULT_LEDGER_STATUS_ENDPOINT).toMatch(/^https:\/\//);
+  });
+});
+
+describe("public next-action contract through the real API v1 router", () => {
+  test("accepts and reads 501- and 2000-character values, while the router rejects 2001", async () => {
+    const store = new StensiblyStore(":memory:");
+    const app = createServerApp(store);
+    try {
+      for (const length of [501, 2_000]) {
+        const nextAction = "n".repeat(length);
+        const response = await app.request("/api/v1/items", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            project: "scrapbook",
+            kind: "task",
+            title: `Next action ${length}`,
+            nextAction,
+            actor: { id: "operator", name: "Operator", kind: "human" },
+          }),
+        });
+        expect(response.status).toBe(201);
+
+        const reader = createLedgerStatusReader({
+          endpoint: ENDPOINT,
+          fetchImpl: asFetch(async (url, init) => {
+            const parsed = new URL(url);
+            return await app.request(`${parsed.pathname}${parsed.search}`, init);
+          }),
+        });
+        const items = await reader.listProjectItems("scrapbook");
+        expect(items.find((item) => item.title === `Next action ${length}`)?.nextAction).toBe(nextAction);
+      }
+
+      const rejected = await app.request("/api/v1/items", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          project: "scrapbook",
+          kind: "task",
+          title: "Next action 2001",
+          nextAction: "n".repeat(2_001),
+          actor: { id: "operator", name: "Operator", kind: "human" },
+        }),
+      });
+      expect(rejected.status).toBe(400);
+    } finally {
+      store.close();
+    }
   });
 });

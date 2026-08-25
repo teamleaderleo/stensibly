@@ -7,7 +7,7 @@
  * fails closed locally with zero requests instead of being guessed.
  *
  * The complete-to-unblock fallback fires only on the canonical blocked-item
- * transition refusal (HTTP 409 `conflict` starting "Only blocked work"),
+ * transition refusal (HTTP 409 `conflict` with a canonical machine reason),
  * which is the sole server answer that means "unblock first". Authentication,
  * authorization, malformed input, stale-generation conflicts, held claims,
  * unknown failures, and network ambiguity never become a second mutation
@@ -18,7 +18,10 @@
 import { validateCompleteInput } from './item-complete.js';
 import { validateUnblockInput } from './item-block.js';
 
-const BLOCKED_TRANSITION_REFUSAL = /^only blocked work\b/i;
+const BLOCKED_TRANSITION_REFUSALS = new Set([
+  'Only blocked work at the current claim generation can be unblocked',
+  'Only blocked work can be unblocked',
+]);
 
 export function buildCompleteRequestBody(itemId, actor, expectedClaimGeneration) {
   return validateCompleteInput(itemId, undefined, actor, expectedClaimGeneration);
@@ -32,7 +35,7 @@ export function isBlockedTransitionRefusal(conflict) {
   if (!conflict || typeof conflict !== 'object') return false;
   return conflict.status === 409
     && conflict.code === 'conflict'
-    && BLOCKED_TRANSITION_REFUSAL.test(typeof conflict.message === 'string' ? conflict.message : '');
+    && BLOCKED_TRANSITION_REFUSALS.has(conflict.message);
 }
 
 export async function readConflictShape(response) {

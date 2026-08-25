@@ -119,7 +119,7 @@ function nullableString(value, maxLength, label) {
 }
 
 function nonNegativeInteger(value) {
-  return Number.isInteger(value) && value >= 0 ? value : null;
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function rejectCredential(value) {

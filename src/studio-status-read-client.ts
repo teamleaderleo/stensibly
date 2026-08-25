@@ -38,7 +38,7 @@ const ITEM_FIELD_LIMITS = {
   title: 1_000,
   status: 40,
   claimedBy: 200,
-  nextAction: 500,
+  nextAction: 2_000,
   updatedAt: 40,
 } as const;
 
