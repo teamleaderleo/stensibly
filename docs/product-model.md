@@ -1,358 +1,335 @@
-# Product model: the board shows the work; the ledger governs who may do it
+# Product model: the board shows the work; the ledger governs action
 
-## Status of this document
+## Purpose
 
-This note records Stensibly's product identity and the design consequences that follow from it. It is a product and architecture decision, not a claim that every described enforcement mechanism is already complete.
+Stensibly is a responsibility and authority ledger for human-agent work, presented through collaborative project views.
 
-For the distributed-systems rules behind claims, leases, fencing, retries, events, and external effects, see [coordination-correctness.md](coordination-correctness.md).
+The board is the clearest human projection of current work. The durable product boundary is the set of exact records and transitions that decide:
 
-## The simplest useful interpretation
+- what work still exists;
+- which responsibility generation is current;
+- which actor/run may perform which bounded action;
+- which condition makes dormant work eligible again;
+- which decision needs human judgement;
+- which external effect was requested, attempted, observed, or remains ambiguous;
+- what a fresh worker needs to continue after every earlier chat disappears.
 
-At its simplest, Stensibly is a collaborative Kanban-style board:
+For distributed-systems details behind claims, leases, generations, idempotency, retries, events, and external effects, see [coordination-correctness.md](coordination-correctness.md).
 
-- work exists as items;
-- items move through states;
-- people and agents can inspect the same project;
-- dependencies, evidence, history, and next actions are visible;
-- multiple clients can coordinate through one real-time system of record.
+## The board is a projection
 
-That interpretation is valid. It is also incomplete.
+At the human-facing level Stensibly still looks like project management:
 
-Kanban is the clearest human-facing projection of the ledger. It is not the full product boundary.
+- projects and work items;
+- statuses, priorities, dependencies, summaries, and next actions;
+- artifacts and event history;
+- current responsibility and blockers;
+- decisions and evidence.
 
-> **The board shows the work. The ledger governs who may do it.**
+Those views remain useful to humans even when no autonomous execution is active.
 
-Stensibly is a responsibility and authority ledger for human-agent work, presented through a collaborative project board.
+The board derives from canonical records. It does not become a second place that business rules, authority, provider state, or queue truth must be maintained.
 
-## Why a task board is not enough
+> **The board shows the work. The ledger governs action.**
 
-A normal task board mainly records descriptive and social facts:
-
-- this card is in progress;
-- this person is assigned;
-- this dependency appears blocked;
-- somebody left a comment;
-- the team expects a particular next step.
-
-Human teams make those facts work through memory, convention, conversation, and judgement. A colleague usually understands that an old assignment may no longer be valid, that a stalled task needs attention, or that a production deployment requires approval.
-
-Machine workers cannot safely depend on those informal assumptions. They restart, retry, duplicate requests, lose conversational context, operate concurrently, and may resume with stale state. A machine-readable task status does not answer whether a worker still has permission to act.
-
-Stensibly therefore treats coordination as more than state display. It must answer and, where possible, enforce:
-
-- Who currently has authority to act on this work?
-- Which exact authority grant are they using?
-- When does that authority expire?
-- Which actions are inside that grant?
-- Which resources may the actor consume?
-- Which dependencies make the work ineligible?
-- What responsibility did the actor accept?
-- What evidence, result, or handoff must the actor leave?
-- What happens when the actor stalls, disappears, retries, or returns late?
-- Which decisions may be made autonomously, and which require escalation?
-
-## Authority and responsibility are different
-
-### Authority
-
-Authority is the server-recognised right to perform a bounded action.
-
-An authority grant should be identifiable and rejectable. Depending on the aggregate, it can include:
-
-- workspace, project, item, run, reservation, or workflow identity;
-- holder identity;
-- allowed operation or capability;
-- generation or fencing token;
-- lease expiry;
-- project and credential scope;
-- concurrency or resource limits;
-- approval state for consequential actions.
-
-Authority is not established merely because an actor name appears on a card. It is established by a current server-owned grant whose conditions still hold.
+## Responsibility and authority are different
 
 ### Responsibility
 
-Responsibility is the durable obligation accepted by an actor when it takes work.
+Responsibility is the durable obligation attached to the current work generation.
 
-A responsibility can include:
+Depending on the work contract, it can include:
 
-- the intended outcome;
-- the next action;
-- heartbeat or check-in expectations;
-- required evidence and artifacts;
-- explicit blockers and dependencies;
-- a handoff obligation when the actor cannot continue;
-- an escalation obligation when a decision exceeds its authority;
-- a terminal outcome or clear explanation of failure.
+- intended outcome and current next action;
+- exact claim/responsibility generation;
+- blockers and dependencies;
+- required evidence/artifacts;
+- a terminal result, decision request, or bounded handoff/continuation.
 
-Authority says what an actor may do. Responsibility says what the actor has undertaken to do and what it must leave behind for the next actor.
+Responsibility survives the current worker. A fresh worker can read current work and accept a new current generation without inheriting the earlier chat or callsign.
 
-The two must be related but not conflated. A worker can remain responsible for reporting a failure after its authority to perform external side effects has expired. Conversely, a service may have technical permission to call an API without having responsibility for deciding whether that call is appropriate.
+### Authority
 
-## Kanban projection versus governed execution
+Authority is the current server/provider-recognised right to perform one bounded action.
 
-| Collaborative board | Governed coordination ledger |
+An authority record may bind:
+
+- project/work/run/provider object;
+- holder/principal;
+- allowed operation/capability;
+- generation/fencing token;
+- expiry/lease;
+- credential/resource scope;
+- approval or budget prerequisites.
+
+Names, issue assignment, callsigns, model identity, branches, and prior activity never substitute for current authority evidence.
+
+A worker may remain responsible for explaining a failure after its effect authority expires. A service may possess a credential while having zero responsibility to decide whether an effect should occur. Keeping those facts separate is central to the product.
+
+## Canonical owner model
+
+Use the smallest record that owns each decision.
+
+### Work and responsibility
+
+Work items, dependencies, blockers, current claims/generations, completion, and handoff own the user-visible obligation.
+
+Atomic claim/responsibility transitions prevent two workers from treating the same exclusive generation as current merely because both saw a ready card.
+
+### Runs and execution
+
+A run is one bounded execution attempt. It owns execution identity and the exact liveness/profile/checkpoint facts consumed by runner logic.
+
+Automated executors may expose reliable lease/heartbeat evidence. Interactive chats do not acquire a generic heartbeat requirement merely by participating.
+
+Execution-affecting profile/version changes create a successor run when the runner compatibility contract requires it.
+
+### Future eligibility
+
+Dormant work becomes eligible through explicit conditions/events rather than worker polling:
+
+- absolute time;
+- dependency/work transition;
+- human decision resolution;
+- admitted provider/repository observation;
+- explicit manual resume.
+
+A satisfied wake makes work eligible. It grants zero responsibility or effect authority by itself.
+
+### Human decisions
+
+A genuine human decision is an exact typed request bound to the current input/generation and explicit consequences.
+
+Ordinary healthy work does not need a human-attention record. The human-facing exception view should concentrate on unresolved judgement, approval, ambiguous effects, and recovery.
+
+### External/provider effects
+
+External systems remain authoritative for their objects. Stensibly owns the bounded command/authority/receipt/reconciliation record around the effect.
+
+A consequential effect follows this family of states:
+
+```text
+exact current inputs + authority
+-> reserve/record command identity
+-> dispatch provider effect at most as allowed
+-> observe provider result
+-> read back/reconcile when the contract requires it
+-> settle or remain explicitly ambiguous
+```
+
+Exact replay returns the stored result where possible. Altered reuse conflicts. Ambiguous outcomes reconcile before another effect attempt.
+
+Some providers require an explicit follow-up trigger after a repository/resource mutation. That trigger is a distinct provider effect and should bind to the exact resulting revision while mechanically preventing recursion. The Bun-lock exact-SHA CI dispatch is one concrete example.
+
+### Context and continuation
+
+A fresh worker should request only the context needed for the current continuation/review/decision/recovery action.
+
+Purpose-bound context can be compiled from canonical work/run/decision/provider records with exact source identities and a fingerprint. Current mutable provider facts are refetched before consequential action.
+
+A handoff preserves facts another worker cannot cheaply reconstruct: non-obvious decisions, exact irreversible/ambiguous effect identity, current candidate/artifact when it is the work product, unresolved blocker/uncertainty, and one next action/clearing condition.
+
+## Board language versus governed coordination
+
+| Collaborative view | Governed coordination |
 | --- | --- |
-| An item is marked in progress. | A specific actor holds a current, expiring authority grant. |
-| Assignment is descriptive. | Holder, generation, expiry, scope, and operation are checked by the server. |
-| A stale card waits for someone to notice. | Expired authority can be detected and invariant state can be reconciled. |
-| Dependencies are informative links. | Dependencies can make work ineligible for dispatch. |
-| Resource contention is handled socially. | Reservations and concurrency policies can prevent conflicting use. |
-| Comments preserve informal context. | Events, artifacts, runs, and handoffs preserve durable continuation context. |
-| Retrying an action is left to the client. | Commands need durable identity, idempotent outcomes, and stale-authority rejection. |
-| Automation invokes external APIs directly. | Consequential effects require explicit policy, approval, observation, and compensation. |
-| Completion is a card movement. | Completion is a semantic transition with actor, authority, evidence, history, and follow-up consequences. |
+| Item is active. | Exact responsibility/claim generation identifies current ownership when exclusivity is required. |
+| Actor/callsign is shown. | Durable worker/run identity provides attribution; callsign remains display metadata. |
+| Dependency is visible. | Dependency state may make the exact target ineligible or satisfy a wake condition. |
+| Runner appears active. | Current run generation/lease/adapter evidence determines executable liveness. |
+| Human input is needed. | Typed decision record binds exact current inputs and consequences. |
+| Automation writes externally. | Exact command + current authority + idempotency + provider receipt/reconciliation own the effect. |
+| Work is done. | Terminal work/run/effect states and required evidence agree under their owning contracts. |
+| Another worker continues. | Fresh worker reads durable continuation/current state and obtains new current generations/authority. |
 
-The visual board remains valuable because humans need a compact representation of project state. The difference is that the board should reflect governed state rather than become a second source of business rules.
+## Event-driven coordination
 
-## A concrete example
+Ongoing coordination should react to exact sources instead of maintaining a permanent manager process that scans every worker/project.
 
-A weak representation says:
+A representative path is:
 
-> Alpha is working on item 42.
+```text
+provider/work/time/decision event
+-> condition/materiality owner admits it
+-> exact target generation becomes eligible
+-> dispatcher revalidates target, claim/run state, capacity/profile/authority
+-> atomically create/replay one current run
+-> runner/provider performs bounded execution/effect
+-> ordinary durable observations/outcomes update current state
+-> next wake, recovery, decision, or completion follows from canonical records
+```
 
-A governed representation can say:
+Broad surveys remain useful as explicit diagnostics/overview snapshots. Their fingerprint can help compare two observations. A survey does not become the scheduler merely because it can say that something changed.
 
-> Alpha holds generation 7 of a fifteen-minute claim on item 42, under a project-scoped principal. The run must heartbeat before expiry, may use one unit of the benchmark reservation, may produce a draft change, and may not merge or deploy without approval. A stale generation cannot renew, release, complete, or cause an external side effect. If Alpha cannot continue, it must record a blocker or handoff with evidence and a next action.
+Idle is a healthy state when no eligible valuable work exists.
 
-The exact fields will vary by operation. The important difference is that responsibility and authority are explicit enough for another process to validate.
+## Human control
 
-## Product layers
+The human-facing product should make consequential exceptions legible:
 
-### 1. Shared work model
+- exact unresolved decision/approval;
+- ambiguous external effect;
+- stalled/expired run requiring recovery;
+- authority/capability mismatch;
+- provider/account/configuration prerequisite;
+- explicit destructive/external/spend consequence outside standing policy.
 
-The base layer is recognisably project management:
+Healthy routine execution can stay quiet.
 
-- projects and goals;
-- work items and statuses;
-- priorities and dependencies;
-- summaries and next actions;
-- artifacts and event history.
+The useful human questions are:
 
-This layer must remain useful to humans even without autonomous execution.
+- What exact choice or recovery action is required?
+- Which current inputs/evidence make it necessary?
+- What consequence follows each option?
+- Which effect already happened or remains uncertain?
+- What clears the exception?
 
-### 2. Responsibility ledger
-
-The responsibility layer preserves continuity across actors and sessions:
-
-- claims and assignments;
-- check-ins and heartbeats;
-- runs and outcomes;
-- handoffs and blockers;
-- promises and continuations;
-- required evidence and decisions;
-- explicit ownership of the next action.
-
-This is what prevents work from depending on one chat transcript or one agent's temporary memory.
-
-### 3. Authority control plane
-
-The authority layer governs execution:
-
-- credential and project scopes;
-- leases and fencing generations;
-- server-owned dispatch and admission;
-- reservation and concurrency enforcement;
-- allowed-operation boundaries;
-- approval requirements;
-- stale-action rejection;
-- cancellation and reassignment policy.
-
-This layer must fail closed. A failed authority check must never fall back to a weaker ownership convention.
-
-### 4. Durable execution and effects
-
-The execution layer coordinates unreliable processes and external systems:
-
-- command inbox and outbox;
-- idempotent replayable outcomes;
-- runner adapters;
-- observed external effects;
-- saga-style progress and compensation;
-- human decision queues;
-- fault recovery and reconciliation.
-
-This is the layer that makes continuous supervision real rather than simulated by agents repeatedly reading a board.
-
-### 5. Human control and explanation
-
-The human-facing layer should make the above legible:
-
-- what is happening;
-- who or what holds authority;
-- what responsibility is outstanding;
-- why work is eligible, blocked, or awaiting approval;
-- what the system did automatically;
-- which facts are observations and which are decisions;
-- how to intervene without corrupting coordination state.
-
-The board is one view of this layer. Item detail, project briefs, decision queues, audit history, and portfolio views are others.
+A permanent worker roster, portfolio queue, throughput leaderboard, or transcript feed is unnecessary for this control function.
 
 ## Product principles
 
-### Server-owned truth
+### One owner per mutable fact
 
-The server owns shared coordination state and semantic transitions. Browser, CLI, MCP, and agent clients render or request those transitions; they do not invent parallel rules.
+Current GitHub state comes from GitHub. Current deployment/resource state comes from the provider. Current work/authority/decision/continuation comes from Stensibly. Repository policy history comes from exact Git revisions/files.
 
-### Explicit grants, not implied permission
+Generated views may combine those facts; they should carry source identity and remain rebuildable.
 
-Being named, assigned, authenticated, or previously active is not sufficient authority. Consequential actions require a current grant whose holder, generation, expiry, scope, and operation match.
+### Explicit grants
 
-### Responsibility must survive the worker
+Consequential actions require current exact authority/capability/approval/budget state where the owning effect demands it. Prior success or identity does not renew authority implicitly.
 
-A useful handoff must survive process exit, conversation loss, model replacement, and human absence. Outcomes, blockers, artifacts, and next actions belong in durable state.
+### Responsibility survives worker loss
 
-### Invariants may be reconciled automatically; meaning requires policy
+Work outcome, evidence, blocker, decision, and continuation live outside the current conversation. Worker replacement does not require persona inheritance or chat transcript recovery.
 
-The system may safely reconcile facts such as an elapsed lease under a reviewed invariant. It must not casually infer that work is complete, wrong, blocked, cancelled, or reassigned. Semantic intervention requires an explicit policy and usually stronger approval.
+### Reconcile objective invariants; keep semantic judgement explicit
 
-### Bounded automation
+Software can deterministically reject stale generations, duplicate commands, mismatched profile versions, expired leases, invalid provider receipts, or broken exact refs.
 
-Every autonomous loop needs explicit scope, limits, credentials, concurrency, retry behaviour, and escalation conditions. "Keep improving everything" is a goal, not an executable authority grant.
+Product/taste/priority choices and genuinely ambiguous semantic consequences remain explicit decisions when automation cannot decide them from a closed contract.
 
-### External systems remain authoritative for their objects
+### Use events before polling
 
-Repositories own code and commits. CI owns build results. Deployment providers own deployments. Communication systems own messages. Stensibly records references, intent, commands, observations, approvals, and outcomes without pretending to be a global transaction manager.
+Provider/work/decision events should target affected work directly. Scheduled evaluation remains appropriate for explicit time conditions and sources without a reliable event mechanism.
 
-### Explainability is part of control
+Avoid generic “check whether every worker progressed” loops.
 
-Humans must be able to tell why an actor received work, why an action was rejected, what authority was used, what evidence exists, and what happens next. An opaque autonomous result is not sufficient coordination.
+### Bounded effects
 
-## Litmus tests
+A runner/provider adapter receives only the authority and inputs its exact effect needs. Browser/message adapters, repository writers, deployment controllers, and model runners remain replaceable effect boundaries rather than alternate project managers.
 
-### Is this merely a collaborative task board?
+### Explainability follows receipts
 
-It is functionally only a task board when agents:
+A human should be able to recover why an action was admitted/rejected, which generation/authority/command identity it used, what provider observation settled it, and what happens next from durable records.
 
-- poll cards;
-- choose work independently;
-- rely on assignment labels as permission;
-- call external systems directly;
-- leave progress in comments;
-- depend on humans to notice stale work;
-- cannot prove which authority grant produced an action.
+## Fresh-session test
 
-No amount of extra card metadata changes that conclusion.
+Imagine every current worker/chat/process disappears.
 
-### Is this governed orchestration?
+From durable records and live provider reads, Stensibly should be able to determine:
 
-It becomes governed orchestration when the system:
-
-- determines eligibility from durable state and policy;
-- atomically grants bounded authority;
-- starts or admits a compatible runner;
-- checks holder, generation, expiry, scope, and operation at side-effect boundaries;
-- records commands, attempts, observations, and outcomes durably;
-- recovers from duplicate delivery and stale workers;
-- escalates decisions outside policy;
-- leaves an understandable audit and handoff trail.
-
-### Fresh-session test
-
-If every worker disappears and later returns in fresh sessions, Stensibly should be able to determine:
-
-- what work still exists;
-- which grants remain live;
-- which grants have expired or been superseded;
-- which commands have already produced effects;
-- which responsibilities remain unmet;
+- which work remains;
+- current responsibility/claim generations;
+- live/expired/superseded authority;
+- current run/profile/checkpoint state;
+- which commands/effects already settled or remain ambiguous;
+- which conditions/decisions make work eligible again;
 - what can be retried safely;
-- what must be escalated to a human.
+- which exact judgement/recovery requires a human;
+- the minimum context a fresh worker needs to continue.
 
-A conventional board cannot answer all of these. This is the standard the product should grow toward.
+This is the practical distinction between a collaborative board and a coordination ledger.
 
-## Current capability versus intended boundary
+## Current implementation direction
 
-Stensibly already has meaningful parts of this model: durable projects and work, server-enforced scopes, claims and expiries, run lifecycle state, dependencies, reservations, append-only events, artifacts, handoffs, idempotency mechanisms, hosted sessions, and early authority fencing.
+Meaningful parts of this model already exist: hosted/local durable work, claims/generations, dependencies, run lifecycles, worker enrolment/callsign attribution, project policy snapshots, runner adapters, command/receipt/reconciliation patterns, continuations/handoffs, exact provider operations, and read-only monitor/diagnostic surfaces.
 
-It does not yet provide unattended end-to-end orchestration. Important remaining work includes complete claim and run fencing, durable command delivery, causal event envelopes, runner adapters, fault-model testing, external-effect workflows and compensation, conservative custodian policy, and a long-lived supervisory loop.
+Current focused gaps live with owner issues rather than one supervisory roadmap, including:
 
-Documentation and interfaces must distinguish these states clearly. The product should not market intended guarantees as completed guarantees.
+- #47 — exact eligibility/wake intent -> generation-fenced run dispatch;
+- #1681 / #305 — hosted exact runner-profile-version provenance parity;
+- #574 — closing versus settled terminal state and late-effect fencing;
+- #676 — read-first checkpoint/resume eligibility;
+- #311 — purpose-bound context packets;
+- #472 — optional outbound ChatGPT delivery adapter, if browser delivery remains needed;
+- provider-specific command/recovery issues for consequential external effects.
 
-## Design consequences
+The product should describe those boundaries truthfully while they finish. Intended guarantees should become public claims only after their exact owner has executable proof.
 
-### For APIs
+## API consequences
 
-- Mutation inputs should carry exact authority evidence where an operation depends on exclusive control.
-- Responses should expose enough redacted authority and responsibility state for clients to explain decisions.
-- Idempotency and authority fencing must remain separate checks.
-- Public projections must be bounded and project-isolated.
-- Semantic transitions should have exact validators and durable events.
+- Mutation inputs carry exact generation/authority/idempotency evidence where needed.
+- Replay identity and authority checks remain separate.
+- Public projections are bounded and project-isolated.
+- Historical evidence remains immutable/readable; current mutable provider state is refreshed when it affects action.
+- A version/fingerprint belongs in durable state only when a named machine consumer branches on it.
+- Repeated machine-decidable rules migrate from prose into validators, typed state, generated projections, or safer APIs.
 
-### For the dashboard
+## Dashboard consequences
 
-The interface should make authority and responsibility visible without turning item detail into an unstructured metadata dump. Useful questions include:
+The board/item/detail/exception views should derive from canonical contracts and answer current user questions without copying another status ledger.
 
-- Who holds this work now?
-- Until when, and under which generation?
-- Is the holder healthy and heartbeating?
-- Which resources are reserved?
-- What is the outstanding responsibility and next action?
-- Which actions are permitted, prohibited, or awaiting approval?
-- What evidence has been produced?
-- What changed automatically, and why?
+Useful views include:
 
-A future authority panel should derive from server contracts rather than reconstructing authority from unrelated fields.
+- current work/responsibility/blocker;
+- run/authority state where it affects action;
+- exact human decision/recovery exception;
+- provider effect/receipt/reconciliation state;
+- relevant evidence/artifacts;
+- generated bounded project overview when requested.
 
-### For supervisors and custodians
+Decorative worker/callsign presentation is welcome; it grants no authority or continuity.
 
-- Selection and intervention policy must be explicit and versioned.
-- Observation, recommendation, dry-run, invariant reconciliation, and semantic action are distinct modes.
-- Supervisors must not silently widen their own scope.
-- Custodians should default to observation and bounded invariant repair.
-- Human approval should remain durable state, not a transient chat acknowledgement.
+## Repository/project integration
 
-### For project integration
+Attaching a project to a repository establishes an explicit control boundary such as:
 
-Attaching Stensibly to a repository should establish a small, explicit control contract:
+- repository/environment identity;
+- accepted project policy/instruction snapshot;
+- runner profiles/capabilities;
+- allowed/approval-gated effect classes;
+- required checks/evidence;
+- scoped provider credentials/installation/account binding.
 
-- project identity and boundaries;
-- allowed repositories and environments;
-- runner profiles and capabilities;
-- concurrency and resource limits;
-- permitted autonomous actions;
-- required approvals;
-- escalation routes;
-- expected artifacts and handoffs;
-- credentials scoped to those decisions.
-
-A repository-local instruction file can describe project-specific policy, but the durable server remains authoritative for live grants and execution state. Static Markdown must not become a bearer token or mutable lock.
+Live grants/runs/provider objects remain with their canonical runtime owners. Static Markdown describes policy; it is never a bearer token or mutable lock.
 
 ## Product language
 
-Preferred concise descriptions:
+Useful concise descriptions:
 
 - **A responsibility and authority ledger for human-agent work.**
 - **A coordination control plane for humans, agents, scripts, and services.**
-- **The board shows the work. The ledger governs who may do it.**
+- **The board shows the work. The ledger governs action.**
 
-Avoid reducing the product to "an AI Kanban board". Also avoid claiming a fully autonomous operating system before the execution and authority guarantees exist end to end.
+Avoid presenting the product as either a generic AI task board or an all-knowing autonomous manager. The differentiator is exact durable coordination across unreliable workers and external systems.
 
 ## Non-goals
 
-Stensibly is not intended to:
+Stensibly does not aim to:
 
 - replace source control, CI, deployment, storage, or communication providers;
 - store private model reasoning or make chat history the system of record;
 - make model calls inside the ledger server;
-- infer unlimited permission from a broad goal;
-- guarantee exactly-once network delivery;
-- treat every external action as one global transaction;
-- automate semantic project decisions without an explicit policy boundary;
-- hide coordination failures behind a polished board.
+- infer broad permission from a broad goal;
+- guarantee exactly-once network delivery where the provider cannot provide it;
+- turn every external system into one global transaction;
+- maintain a permanent portfolio/worker hierarchy merely for coordination;
+- require periodic worker check-ins when exact run/event/condition evidence can own the decision;
+- automate semantic judgement without a closed policy/decision boundary;
+- hide ambiguous/failed effects behind a polished dashboard.
 
-## Near-term product direction
+## Direction of travel
 
-The next work should prove the distinction above in real use rather than adding generic task-management ornamentation.
+Prioritize direct invariants and end-to-end proof:
 
-Priority order:
+1. finish exact event/eligibility -> atomic dispatch without broad scans;
+2. finish run/profile/checkpoint/settlement recovery semantics;
+3. keep provider effects exact, replay-safe, observable, and recoverable;
+4. compile bounded current context/exception views from canonical owners;
+5. delete synthetic estimates, copied status, and process instructions when no current machine consumer needs them;
+6. prove one production-shaped work cycle can survive worker disappearance/reconnect without duplicate effects or stale authority (#214).
 
-1. finish end-to-end authority fencing without weakening actor or payload validation;
-2. make authority and outstanding responsibility legible in the item-detail contract and UI;
-3. run one real project in guarded, single-runner mode and record friction;
-4. add durable command delivery before allowing unattended retried effects;
-5. add one production-quality runner adapter and a bounded supervisor loop;
-6. keep merges, deployments, messages, provider changes, spending, and other consequential effects behind durable approval until workflow and compensation semantics exist;
-7. expand custodian automation only from observation to reviewed invariant reconciliation, not broad semantic control.
+Success is a project where workers can disappear, restart, hand off, retry, and be replaced while responsibility, authority, decisions, effects, and recovery remain exact.
 
-Success is not a busier board. Success is a project where workers can disappear, restart, hand off, retry, and be replaced without losing responsibility, duplicating effects, or acting under stale authority.
+— Kestrel
+  Intention: make coordination emerge from exact owners, events, and receipts
