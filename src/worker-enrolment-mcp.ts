@@ -296,7 +296,7 @@ export async function resolveWorkerAttribution(
 }
 
 function workerEnrolmentProvider(value: unknown): WorkerEnrolmentProvider | null {
-  const enrol = captureDataMethod(value, "resolveWorkerEnrolment");
+  const enrol = captureDataMethod(value, "enrolWorker");
   if (!enrol) return null;
   return Object.freeze({
     enrolWorker: (input: WorkerEnrolmentProviderInput) =>
