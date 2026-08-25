@@ -426,7 +426,7 @@ describe("OpenAI Agents runner profile version rollover", () => {
     const runB = "run-profile-b";
     const successor = createAdapter(store, profileVersionB);
     await successor.adapter.inspectCapabilities(
-      probe(runB, "new", "2026-08-25T12:00:01.000Z"),
+      probe(runB, "new", "2026-08-25T11:59:59.000Z"),
     );
     const successorObservations = await collect(
       successor.adapter.start(startCommand(runB, profileVersionB)),
