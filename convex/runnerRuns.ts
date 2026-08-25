@@ -1,4 +1,8 @@
 import { v } from "convex/values";
+import {
+  runnerProfileClaimMatchesV1,
+  runnerProfileProvenanceV1,
+} from "../src/runner-profile-provenance";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   appendEvent,
@@ -91,6 +95,7 @@ export const claim = mutation({
     actor: actorValidator,
     runnerType: v.string(),
     runnerProfile: v.string(),
+    runnerProfileVersion: v.optional(v.union(v.string(), v.null())),
     project: v.optional(v.string()),
     runId: v.optional(v.string()),
     externalRunId: v.optional(v.string()),
@@ -134,6 +139,7 @@ export const claim = mutation({
       projectId: project?._id,
       runnerType: input.runnerType,
       runnerProfile: input.runnerProfile,
+      runnerProfileVersion: input.runnerProfileVersion,
       runId: input.runId,
       now,
     });
@@ -208,6 +214,7 @@ export const claim = mutation({
         source: "generic_runner_claim",
         runnerType: run.runnerType,
         runnerProfile: run.runnerProfile,
+        runnerProfileVersion: run.runnerProfileVersion ?? null,
         generation,
         leaseGeneration,
         leaseExpiresAt: new Date(leaseExpiresAt).toISOString(),
@@ -568,6 +575,7 @@ async function readClaimCandidates(
     projectId?: Id<"projects">;
     runnerType: string;
     runnerProfile: string;
+    runnerProfileVersion: string | null;
     runId?: string;
     now: number;
   },
@@ -642,6 +650,7 @@ function candidatePool(
     projectId?: Id<"projects">;
     runnerType: string;
     runnerProfile: string;
+    runnerProfileVersion: string | null;
     now: number;
   },
 ) {
@@ -668,12 +677,16 @@ function claimEligible(
     projectId?: Id<"projects">;
     runnerType: string;
     runnerProfile: string;
+    runnerProfileVersion: string | null;
     now: number;
   },
 ): boolean {
   if (
     run.runnerType !== input.runnerType
-    || run.runnerProfile !== input.runnerProfile
+    || !runnerProfileClaimMatchesV1(
+      runnerProfileProvenanceV1(run.runnerProfile, run.runnerProfileVersion),
+      runnerProfileProvenanceV1(input.runnerProfile, input.runnerProfileVersion),
+    )
     || (input.projectId && run.projectId !== input.projectId)
   ) return false;
   if (run.status === "queued") {
@@ -1086,6 +1099,7 @@ function publicQueuedRunProjection(
     actorId: run.actorExternalId,
     runnerType: run.runnerType,
     runnerProfile: run.runnerProfile,
+    runnerProfileVersion: run.runnerProfileVersion ?? null,
     externalRunId: run.externalRunId ?? null,
     status: run.status,
     generation: run.generation,
@@ -1180,7 +1194,7 @@ async function replayCommand(
   if (existing.operation !== operation || !sameCanonical(existing.request, request)) {
     throw new Error("Idempotency key was already used for a different runner command");
   }
-  return { found: true, result: existing.result };
+  return { found: true, result: normalizeRunnerCommandReplay(existing.result) };
 }
 
 async function storeCommand(
@@ -1203,10 +1217,18 @@ async function storeCommand(
   });
 }
 
+function normalizeRunnerCommandReplay(result: unknown): unknown {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+  const record = result as Record<string, unknown>;
+  if (typeof record.runnerProfile !== "string" || "runnerProfileVersion" in record) return result;
+  return { ...record, runnerProfileVersion: null };
+}
+
 function normalizeClaim(args: {
   actor: ActorInput;
   runnerType: string;
   runnerProfile: string;
+  runnerProfileVersion?: string | null;
   project?: string;
   runId?: string;
   externalRunId?: string;
@@ -1215,10 +1237,12 @@ function normalizeClaim(args: {
   concurrency?: { globalLimit: number; projectLimit: number };
 }) {
   if (args.actor.kind === "human") throw new Error("Runner actor must be an agent or service");
+  const provenance = runnerProfileProvenanceV1(args.runnerProfile, args.runnerProfileVersion);
   return {
     actor: args.actor,
     runnerType: requiredText(args.runnerType, "Runner type", 80),
-    runnerProfile: requiredText(args.runnerProfile, "Runner profile", 160),
+    runnerProfile: provenance.profileId,
+    runnerProfileVersion: provenance.profileVersion,
     project: args.project === undefined ? undefined : assertSlug(args.project, "Project"),
     runId: optionalText(args.runId, "Run ID", 240),
     externalRunId: optionalText(args.externalRunId, "External run ID", 240),
@@ -1297,6 +1321,9 @@ function claimRequest(input: ReturnType<typeof normalizeClaim>) {
     actor: input.actor,
     runnerType: input.runnerType,
     runnerProfile: input.runnerProfile,
+    ...(input.runnerProfileVersion === null
+      ? {}
+      : { runnerProfileVersion: input.runnerProfileVersion }),
     project: input.project ?? null,
     runId: input.runId ?? null,
     externalRunId: input.externalRunId ?? null,
