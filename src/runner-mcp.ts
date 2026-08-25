@@ -62,6 +62,7 @@ export function createRunnerMcpServer(
         actor: actorSchema,
         runnerType: z.string().trim().min(1).max(80),
         runnerProfile: z.string().trim().min(1).max(160),
+        runnerProfileVersion: z.string().trim().min(1).max(160).nullable().optional(),
         project: projectSchema().optional(),
         runId: z.string().trim().min(1).max(240).optional(),
         externalRunId: z.string().trim().min(1).max(240).optional(),
