@@ -210,23 +210,24 @@ export function registerWorkerEnrolmentTools(
           now,
         });
         const result = backendResultSchema.parse(await provider.enrolWorker(prepared));
-        const active = automatic
+        const exactActive = activeWorkerForRequest(result.worker, prepared.request);
+        const reusableActive = automatic
           ? activeWorkerForAutomaticRequest(result.worker, prepared.request)
-          : activeWorkerForRequest(result.worker, prepared.request);
+          : exactActive;
         if (result.outcome === "accepted") {
           if (
-            !active
+            !exactActive
             || result.reason !== null
-            || active.requestFingerprint !== prepared.request.fingerprint
-            || active.startedAt !== prepared.request.startedAt
-            || active.expiresAt !== prepared.request.expiresAt
+            || exactActive.requestFingerprint !== prepared.request.fingerprint
+            || exactActive.startedAt !== prepared.request.startedAt
+            || exactActive.expiresAt !== prepared.request.expiresAt
           ) {
             throw new Error("Hosted worker enrolment response does not match the request");
           }
-          return publicResult(active, false);
+          return publicResult(exactActive, false);
         }
-        if (result.reason === "active_session_exists" && active) {
-          return publicResult(active, true);
+        if (result.reason === "active_session_exists" && reusableActive) {
+          return publicResult(reusableActive, true);
         }
         if (automatic && result.reason === "callsign_active_collision") continue;
         return {
