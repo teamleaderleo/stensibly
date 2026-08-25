@@ -6,7 +6,7 @@ on:
     types: [completed]
 
 permissions:
-  actions: write
+  actions: read
   contents: write
   pull-requests: read
 
@@ -129,7 +129,7 @@ jobs:
           echo "committed_sha256=${committed_sha256}" >>"${GITHUB_OUTPUT}"
           echo "candidate_sha256=${candidate_sha256}" >>"${GITHUB_OUTPUT}"
 
-      - name: Commit, publish, and validate only the generated lockfile
+      - name: Commit and publish only the generated lockfile
         if: >-
           steps.eligibility.outputs.eligible == 'true' &&
           steps.generate.outputs.changed == 'true'
@@ -170,10 +170,6 @@ jobs:
             exit 1
           fi
 
-          gh workflow run ci.yml \
-            --ref "${HEAD_BRANCH}" \
-            -f expected_sha="${generated_head}"
-
           {
             echo "Updated Bun lockfile for pull request #${{ steps.eligibility.outputs.pull_number }}."
             echo ""
@@ -182,5 +178,5 @@ jobs:
             echo "- committed lock: \`${{ steps.generate.outputs.committed_sha256 }}\`"
             echo "- generated lock: \`${{ steps.generate.outputs.candidate_sha256 }}\`"
             echo "- changed path: \`bun.lock\`"
-            echo "- validation: explicit CI dispatch bound to the generated commit"
+            echo "- validation: PR synchronize triggers canonical CI for the generated commit"
           } >>"${GITHUB_STEP_SUMMARY}"

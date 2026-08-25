@@ -7,15 +7,6 @@ const workflowPath = new URL(
 const ciWorkflowPath = new URL("../.github/workflows/ci.yml", import.meta.url);
 const workflow = await Bun.file(workflowPath).text();
 const ciWorkflow = await Bun.file(ciWorkflowPath).text();
-const ciTestJob = ciWorkflow.match(
-  /\n  test:\n([\s\S]*?)\n  runtime-parity:\n/u,
-)?.[1];
-const ciRuntimeParityJob = ciWorkflow.match(
-  /\n  runtime-parity:\n([\s\S]*?)\n  serial-full:\n/u,
-)?.[1];
-const ciSerialFullJob = ciWorkflow.match(
-  /\n  serial-full:\n([\s\S]*)$/u,
-)?.[1];
 
 describe("fenced Bun lock writer workflow", () => {
   test("runs only for one exact current same-repository pull request", () => {
@@ -70,10 +61,11 @@ describe("fenced Bun lock writer workflow", () => {
     expect(jobEnvironment).not.toContain("GH_TOKEN");
   });
 
-  test("uses bounded write permissions and an exact branch lease", () => {
-    expect(workflow).toContain("actions: write");
+  test("uses the smallest write permissions and an exact branch lease", () => {
+    expect(workflow).toContain("actions: read");
     expect(workflow).toContain("pull-requests: read");
     expect(workflow).toContain("contents: write");
+    expect(workflow).not.toContain("actions: write");
     expect(workflow).not.toContain("issues: write");
     expect(workflow).not.toContain("deployments: write");
     expect(workflow).not.toContain("secrets.");
@@ -85,34 +77,17 @@ describe("fenced Bun lock writer workflow", () => {
     expect(workflow).not.toContain("--force\n");
   });
 
-  test("dispatches exact generated commits into the canonical CI topology", () => {
-    expect(ciWorkflow).toContain("workflow_dispatch:");
-    expect(ciWorkflow).toContain("workflow_call:");
-    expect(ciWorkflow).toContain("expected_sha:");
-    expect(ciWorkflow).toContain("required: true");
-    expect(ciTestJob?.match(/Verify requested exact revision and profile/g))
-      .toHaveLength(1);
-    expect(ciRuntimeParityJob?.match(/Verify requested exact revision and profile/g))
-      .toHaveLength(1);
-    expect(ciSerialFullJob?.match(/Verify exact serial revision/g))
-      .toHaveLength(1);
-    expect(ciSerialFullJob).toContain("inputs.expected_sha");
-    expect(ciSerialFullJob).toContain("SERIAL_VALIDATION_SHA");
-    expect(ciWorkflow).toContain(
-      '"${GITHUB_SHA}" != "${EXPECTED_SHA}"',
-    );
+  test("publishes once and relies on the PR synchronize event for canonical CI", () => {
     expect(workflow).toContain('generated_head="$(git rev-parse HEAD)"');
     expect(workflow).toContain(
       'if [[ "${remote_head}" != "${generated_head}" ]]',
     );
-    expect(workflow).toContain("gh workflow run ci.yml");
-    expect(workflow).toContain('--ref "${HEAD_BRANCH}"');
-    expect(workflow).toContain('-f expected_sha="${generated_head}"');
+    expect(workflow).not.toContain("gh workflow run");
+    expect(workflow).not.toContain("expected_sha=\"${generated_head}\"");
+    expect(ciWorkflow).toContain("pull_request:");
+    expect(ciWorkflow).toContain("- synchronize");
     expect(workflow).toContain(
-      "validation: explicit CI dispatch bound to the generated commit",
-    );
-    expect(workflow).toContain(
-      "github.event.workflow_run.event == 'pull_request'",
+      "validation: PR synchronize triggers canonical CI for the generated commit",
     );
   });
 

@@ -1,111 +1,70 @@
 # Dependency lockfile workflow
 
-Stensibly commits `bun.lock` and validates dependency declarations against it in
-canonical CI.
+Stensibly commits `bun.lock` and validates dependency declarations against it in canonical CI.
 
 ## Ordinary validation
 
-CI performs two separate steps:
+CI generates a candidate lock with `bun run lockfile:check`. When the candidate matches the committed file, validation installs with `bun install --frozen-lockfile`.
 
-1. `bun install --lockfile-only` generates a candidate lockfile through
-   `bun run lockfile:check`;
-2. when the candidate matches the committed file, every executing validation job installs with
-   `bun install --frozen-lockfile`.
-
-The candidate generator always restores the committed `bun.lock` before returning.
-Tests and builds therefore use only the reviewed repository file.
+The candidate generator restores the committed `bun.lock` before returning. Tests and builds therefore consume only reviewed repository bytes.
 
 ## Adding or changing a dependency
 
 1. Change `package.json` on a same-repository pull-request branch.
-2. Push the branch and allow CI to run.
-3. The `test` job generates the exact replacement lockfile.
-4. CI uploads `bun-lock-candidate-<validated-revision>` and fails before tests because the
-   committed lock is stale.
-5. The permanent `Apply Bun lock candidate` workflow receives the completed CI run.
-6. The writer verifies one open same-repository pull request at the exact triggering
-   head, checks out that branch, and independently runs
-   `bun install --lockfile-only --ignore-scripts` from reviewed default-branch
-   workflow code.
-7. The writer proceeds only when `bun.lock` is the sole changed path, commits that
-   file as `github-actions[bot]`, and pushes with a force-with-lease bound to the
-   triggering head SHA.
-8. The writer verifies the remote branch equals the generated commit and explicitly
-   dispatches canonical CI with that commit SHA as a required input.
-9. Every dispatched CI job compares its exact checkout with the required SHA before
-   installation or tests. Candidate generation should then report no drift, and every
-   validation job should use `--frozen-lockfile`.
-10. Inspect the final package and lock diff, exact CI run, bundle result, and runtime
-    parity before integration.
+2. Push the branch and let canonical CI run.
+3. The CI lock check independently generates the replacement. When the committed lock is stale, it publishes the bounded `bun-lock-candidate-<validated-revision>` evidence packet and fails before ordinary validation.
+4. The permanent `Apply Bun lock candidate` workflow consumes only the completed CI run identity. It never uses artifact bytes as write input.
+5. The writer requires one current open same-repository pull request whose branch and head SHA exactly equal the triggering workflow identity.
+6. It checks out that exact feature head with persisted credentials disabled and independently runs `bun install --lockfile-only --ignore-scripts` from reviewed default-branch workflow code.
+7. It proceeds only when `bun.lock` is the sole changed path, commits that file as `github-actions[bot]`, and pushes with a force-with-lease bound to the triggering head SHA.
+8. It reads the remote branch back and requires the remote head to equal the generated commit.
+9. That feature-branch push updates the open pull request; GitHub emits `pull_request/synchronize`, and canonical CI validates the generated commit once. The new run must see a clean lock candidate and complete the frozen repository gates before integration.
 
-Keep the triggering and successful workflow runs, pull-request head, generated bot
-commit, artifact name, and lockfile digests in the PR handoff when a dependency
-change is consequential.
+There is no second post-publication workflow dispatch. Successful publication already creates the pull-request synchronization event that owns validation. This keeps one mutation followed by one canonical consequence and removes a failure point after the branch changed.
 
 ## Candidate artifact
 
-The read-only CI artifact remains independent evidence and a manual recovery path.
-It contains:
+The read-only CI artifact remains independent evidence and a manual recovery path. It contains:
 
 - `bun.lock` — generated replacement;
 - `bun.lock.committed` — repository input used by the run;
 - `summary.json` — SHA-256 identities for both files and generator identity.
 
-The artifact expires after seven days and contains public package metadata only.
+The writer regenerates independently and never trusts those bytes for publication.
 
 ## Writer authority and fences
 
-The permanent writer uses default-branch workflow code and receives:
+The permanent writer receives only the permissions needed by its one effect:
 
-- `actions: write`, limited to dispatching canonical CI;
+- `actions: read`;
 - `pull-requests: read`;
-- `contents: write`, limited by the workflow to one leased feature-branch push.
+- `contents: write`, constrained by the workflow to one leased feature-branch push.
 
-It accepts only a failed pull-request CI run whose head repository is this repository
-and whose head branch differs from the default branch. Before checkout, it requires
-exactly one open pull request for the source branch and requires that PR's current
-head SHA to equal the triggering workflow head SHA.
+It accepts only a failed pull-request CI run whose head repository is this repository and whose head branch differs from the default branch. Before checkout, it requires exactly one open pull request for that source branch and requires the PR's current head SHA to equal the triggering workflow head SHA.
 
-After checkout it verifies the same SHA and a clean worktree. Checkout credentials and
-the GitHub token are absent during package resolution. It generates the lock directly
-with `bun install --lockfile-only --ignore-scripts`; artifact bytes are never used as
-write input. Any changed path besides `bun.lock` aborts publication. The final push
-targets only the source branch and uses:
+After checkout it verifies the same SHA and a clean worktree. Repository credentials and `GH_TOKEN` stay outside package resolution. Any generated path besides `bun.lock` aborts publication. The final push targets only the source branch and uses:
 
 ```text
 --force-with-lease=refs/heads/<branch>:<triggering-head-sha>
 ```
 
-The generated commit is then passed to `ci.yml` through a manual dispatch input. CI
-fails before dependency installation when the dispatched revision differs from that
-exact commit. The dispatched run cannot invoke the writer again because the writer
-accepts only CI runs whose event was `pull_request`.
+The writer then verifies the remote head. The resulting `pull_request/synchronize` CI event owns subsequent validation.
 
-A closed pull request, fork branch, default branch, advanced head, duplicate matching
-pull request, clean lockfile, unsupported generated path, displaced generated commit,
-or mismatched dispatched revision produces no accepted validation result. Every
-successful update remains an ordinary reviewable commit followed by the full frozen
-CI gate.
+A closed pull request, fork branch, default branch, advanced head, duplicate matching pull request, clean lockfile, unsupported generated path, or displaced generated commit causes no accepted write.
 
 ## Security and recovery
 
-- Neither workflow uses repository or provider secrets.
-- Read-only candidate generation performs no commit, push, pull-request edit, issue
-  edit, or branch mutation.
+- Neither path uses repository/provider secrets for dependency generation.
+- Read-only candidate generation performs zero repository mutation.
 - The writer regenerates from package declarations and never copies artifact bytes.
-- Lock generation resolves metadata without installing dependencies or executing
-  package lifecycle scripts.
+- Package lifecycle scripts are disabled during lock generation.
 - Repository credentials are unavailable during dependency resolution.
-- A failed registry request leaves the branch unchanged.
 - Force-with-lease protects concurrent branch work.
-- Exact-SHA dispatch validation detects a branch advance between publication and CI.
-- Revert or disable the permanent writer workflow to stop automatic updates.
-- A later worker can regenerate from the same `package.json` revision or use the
-  retained CI artifact while it remains available.
-- Dependency review still covers package purpose, source, version range, transitive
-  footprint, runtime compatibility, licensing, maintenance, and removal path.
+- Remote readback proves which generated commit currently owns the branch.
+- Canonical PR-synchronize CI validates the resulting commit through the ordinary repository gate.
+- Revert or disable the writer workflow to stop automatic updates.
 
-## Local use
+## Local/manual recovery
 
 Run:
 
@@ -113,22 +72,13 @@ Run:
 bun run lockfile:check
 ```
 
-When declarations and the lock agree, the command reports `changed: false` and
-retains no artifact directory. When they differ, it writes the candidate packet to:
+When declarations and the lock agree, the command reports `changed: false`. When they differ, it writes the candidate packet under `artifacts/bun-lock-candidate/` and restores the repository lock.
 
-```text
-artifacts/bun-lock-candidate/
-```
+Copy a reviewed candidate into the repository explicitly only when the permanent writer is disabled or unavailable.
 
-The command restores the repository lockfile in either case. Copy the reviewed
-candidate into the repository explicitly only when the permanent writer is disabled
-or unavailable.
+## Relationship to exact-ref validation
 
-## Future exact-ref validation
+#602 delivered the reusable exact-ref validation path. Lock generation and frozen installation remain ordinary canonical CI inputs; exact-ref validation may verify an exact candidate without creating another lock publication mechanism.
 
-This lockfile path is one component of #602. The broader reusable exact-ref workflow
-can call the same generation and frozen-install steps so PR CI, manual validation,
-release, and recovery share one dependency contract and machine-readable receipt.
-
-— Aster  
-Intention: make dependency changes reproducible without self-mutating feature branches.
+— Kestrel
+  Intention: make one fenced lock update cause one canonical validation path
