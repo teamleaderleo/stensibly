@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -272,7 +272,58 @@ test("permission-profile support requires an exact recent Codex CLI version", ()
   expect(parseSupportedCodexCliVersion("Logged in using ChatGPT\n")).toBeNull();
 });
 
+test("permission-profile confinement rejects direct workspace writes", async () => {
+  const setup = await setupFakeCodex();
+  await expect(runSolLunaWorker({
+    ...setup.options,
+    confinement: "permission-profile",
+  })).rejects.toThrow("patch-as-data");
+  expect(await Bun.file(setup.options.outputDir).exists()).toBe(false);
+});
+
+test("permission-profile confinement rejects system-temp evidence before side effects", async () => {
+  const setup = await setupFakeCodex();
+  await expect(runSolLunaWorker({
+    ...setup.options,
+    sandbox: "read-only",
+    confinement: "permission-profile",
+    editAuthority: "read-only",
+  })).rejects.toThrow("system temp");
+  expect(await Bun.file(setup.options.outputDir).exists()).toBe(false);
+  expect(await Bun.file(`${setup.options.outputDir}.runtime`).exists()).toBe(false);
+});
+
+test("permission-profile confinement resolves symlinks before overlap admission", async () => {
+  const setup = await setupFakeCodex();
+  const alias = join(setup.root, "repository-alias");
+  await symlink(setup.options.repository, alias);
+  const aliasedOutput = join(alias, "evidence");
+  await expect(runSolLunaWorker({
+    ...setup.options,
+    outputDir: aliasedOutput,
+    sandbox: "read-only",
+    confinement: "permission-profile",
+    editAuthority: "read-only",
+  })).rejects.toThrow("overlap the repository");
+  expect(await Bun.file(join(setup.options.repository, "evidence")).exists()).toBe(false);
+});
+
 describe("disposable Sol/Luna Codex worker harness", () => {
+  test("preserves a pre-existing runtime sibling and records a harness failure", async () => {
+    const setup = await setupFakeCodex();
+    const runtimeRoot = `${setup.options.outputDir}.runtime`;
+    const sentinel = join(runtimeRoot, "sentinel.txt");
+    await mkdir(runtimeRoot);
+    await writeFile(sentinel, "commander-owned\n");
+
+    const result = await runSolLunaWorker(setup.options);
+
+    expect(result.receipt.child.outcome).toBe("harness_failed");
+    expect(result.receipt.harnessError).toContain("unable to claim worker runtime");
+    expect(await Bun.file(sentinel).text()).toBe("commander-owned\n");
+    expect(await Bun.file(setup.argsPath).exists()).toBe(false);
+  });
+
   test("refuses API-key authentication before launching a worker and writes a receipt", async () => {
     const setup = await setupFakeCodex({ authMode: "api-key" });
     const result = await runSolLunaWorker(setup.options);

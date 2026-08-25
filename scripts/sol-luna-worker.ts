@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, delimiter, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, delimiter, isAbsolute, join, relative, resolve } from "node:path";
 import {
   CODEX_PERMISSION_PROFILE_VERSION,
   compileCodexPermissionProfile,
@@ -225,13 +225,28 @@ function pathIsWithin(path: string, parent: string): boolean {
   return difference === "" || (!difference.startsWith("..") && !isAbsolute(difference));
 }
 
-function permissionProfileOutputError(outputDir: string, repository: string): string | null {
-  const tempRoots = [resolve(tmpdir()), "/tmp", "/private/tmp"];
-  if (tempRoots.some((root) => pathIsWithin(outputDir, root))) {
-    return "permission-profile output directory must not be under system temp";
+async function canonicalizeProspectivePath(target: string): Promise<string> {
+  try {
+    return await realpath(target);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    const parent = dirname(target);
+    if (parent === target) throw error;
+    return join(await canonicalizeProspectivePath(parent), basename(target));
   }
-  if (pathIsWithin(outputDir, repository) || pathIsWithin(repository, outputDir)) {
+}
+
+async function permissionProfileOutputError(outputDir: string, repository: string): Promise<string | null> {
+  const [canonicalOutput, canonicalRepository, ...canonicalTempRoots] = await Promise.all([
+    canonicalizeProspectivePath(outputDir),
+    realpath(repository),
+    ...[resolve(tmpdir()), "/tmp", "/private/tmp"].map(canonicalizeProspectivePath),
+  ]);
+  if (pathIsWithin(canonicalOutput, canonicalRepository) || pathIsWithin(canonicalRepository, canonicalOutput)) {
     return "permission-profile output directory must not overlap the repository";
+  }
+  if (canonicalTempRoots.some((root) => pathIsWithin(canonicalOutput, root))) {
+    return "permission-profile output directory must not be under system temp";
   }
   return null;
 }
@@ -288,6 +303,9 @@ function normalizeOptions(input: SolLunaWorkerOptions): Required<SolLunaWorkerOp
   }
   if (confinement === "permission-profile" && gitMetadataAuthority === "write") {
     throw new Error("permission-profile confinement does not grant Git metadata write in a shared runner worktree");
+  }
+  if (confinement === "permission-profile" && editAuthority === "workspace-write") {
+    throw new Error("permission-profile confinement supports patch-as-data, not direct workspace writes");
   }
   const reasoningEffort = input.reasoningEffort ?? DEFAULT_SOL_LUNA_REASONING_EFFORT;
   if (!isReasoningEffort(reasoningEffort)) {
@@ -803,7 +821,15 @@ function reportsChatGptAuthentication(capture: ProcessCapture): boolean {
 
 export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<SolLunaWorkerRun> {
   const options = normalizeOptions(input);
+  if (options.confinement === "permission-profile") {
+    const outputError = await permissionProfileOutputError(options.outputDir, options.repository);
+    if (outputError !== null) throw new Error(outputError);
+  }
   await mkdir(dirname(options.outputDir), { recursive: true });
+  if (options.confinement === "permission-profile") {
+    const outputError = await permissionProfileOutputError(options.outputDir, options.repository);
+    if (outputError !== null) throw new Error(outputError);
+  }
   await mkdir(options.outputDir, { mode: 0o700 });
 
   const stdoutPath = resolve(options.outputDir, ARTIFACT_NAMES.stdout);
@@ -816,15 +842,31 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
     home: join(workerRuntimeRoot, "home"),
     tmpdir: join(workerRuntimeRoot, "tmp"),
   };
-  await mkdir(workerEnvironment.home, { recursive: true });
-  await mkdir(workerEnvironment.tmpdir, { recursive: true });
+  let workerRuntimeCreated = false;
+  let runtimeInitializationError: string | null = null;
+  try {
+    await mkdir(workerRuntimeRoot, { mode: 0o700 });
+    workerRuntimeCreated = true;
+    await mkdir(workerEnvironment.home, { mode: 0o700 });
+    await mkdir(workerEnvironment.tmpdir, { mode: 0o700 });
+  } catch (error) {
+    runtimeInitializationError = `unable to claim worker runtime: ${errorMessage(error)}`;
+    if (workerRuntimeCreated) {
+      try {
+        await rm(workerRuntimeRoot, { recursive: true });
+        workerRuntimeCreated = false;
+      } catch (cleanupError) {
+        runtimeInitializationError = `${runtimeInitializationError}; owned runtime cleanup failed: ${errorMessage(cleanupError)}`;
+      }
+    }
+  }
 
   const emptyBytes: Uint8Array<ArrayBufferLike> = new Uint8Array();
   let stdoutBytes = emptyBytes;
   let stderrBytes = emptyBytes;
   let workerResultBytes: Uint8Array | null = null;
   let workerResult: JsonObject | null = null;
-  let harnessError: string | null = null;
+  let harnessError: string | null = runtimeInitializationError;
   let headBefore: string | null = null;
   let headAfter: string | null = null;
   let baselineDirtyPaths: readonly string[] = [];
@@ -855,11 +897,6 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
     if (schemaBytes.byteLength === 0) throw new Error("output schema file is empty");
     const schema = JSON.parse(schemaBytes.toString("utf8")) as unknown;
     if (jsonObject(schema) === null) throw new Error("output schema must contain a JSON object");
-
-    if (options.confinement === "permission-profile") {
-      const outputError = permissionProfileOutputError(options.outputDir, options.repository);
-      if (outputError !== null) harnessError = appendHarnessError(harnessError, outputError);
-    }
 
     try {
       const snapshot = await gitSnapshot(options.repository);
@@ -975,7 +1012,7 @@ export async function runSolLunaWorker(input: SolLunaWorkerOptions): Promise<Sol
   }
 
   try {
-    await rm(workerRuntimeRoot, { recursive: true, force: true });
+    if (workerRuntimeCreated) await rm(workerRuntimeRoot, { recursive: true });
   } catch (error) {
     harnessError = appendHarnessError(harnessError, `unable to clean worker runtime: ${errorMessage(error)}`);
   }
