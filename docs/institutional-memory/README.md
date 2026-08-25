@@ -1,127 +1,85 @@
-# Institutional memory
+# Institutional memory archive
 
-**Status:** dogfood  
-**Tracking:** #406  
-**Applies under:** `stensibly-agent-ops/0.2.0`
+This directory preserves historical learning notes, postmortems, and audits that remain useful evidence or explanation.
 
-This directory turns the existing reusable-learning, survey, and external-audit rules into a concrete repository practice. It exists so lessons survive individual chats without making routine work produce ceremonial documents.
+It is **not an active operating protocol, recurring after-action programme, policy source, or current-state database**.
 
-These records are descriptive evidence. They do not grant authority, approve a change, replace an exact issue or pull request, or silently modify product or operating policy.
+Current facts stay with their canonical owners:
 
-## Start here
+- work/responsibility/authority/continuation -> Stensibly;
+- issues, pull requests, checks, branches, reviews -> GitHub;
+- deployments/resources -> their provider;
+- repository policy -> exact Git revision and applicable instruction files;
+- recurring machine-decidable failure prevention -> code/tests/contracts/defaults.
 
-Read `index.md` first. Open only the records relevant to the subsystem, incident class, or operating question you are working on. Do not load the entire directory by default.
+## Reading
 
-Before writing a new record, search this directory and linked issues for an existing lesson, postmortem, or audit that should be amended, superseded, or referenced.
+Open a historical record only when it is relevant to the subsystem, incident class, or decision you are investigating. Do not read the directory as part of ordinary worker startup.
 
-## Record types
+The index is a convenience/search aid. Historical labels, terminology, proposed procedures, and provider facts in archived records describe their own time and may have been superseded.
 
-### After-action note
+Before using an archived claim for current action, refresh the owning current source.
 
-Use the smallest record for one non-obvious, reusable lesson supported by evidence.
+## Writing new durable learning
 
-Good triggers include:
-
-- a failure mode or recovery technique likely to recur;
-- a review finding that applies beyond one exact diff;
-- a command, verification recipe, or decomposition pattern that saved substantial work;
-- a repeated source of operator correction or integration churn;
-- a surprising no-op, compatibility boundary, or observability gap.
-
-Do not create a note for routine successful work, an isolated typo, an untested opinion, or information already stated clearly in canonical documentation.
-
-### Postmortem
-
-Use a postmortem for a material incident, outage, rollback, security or authority near miss, data-loss risk, repeated coordination failure, or failure that required substantial human intervention.
-
-Postmortems are blameless. Analyse system conditions, assumptions, interfaces, incentives, missing evidence, and recovery behaviour. Do not use them to assign personal blame or infer private intent.
-
-A postmortem may begin while recovery is ongoing, but mark uncertain facts and update them after the state is stable.
-
-### Independent audit
-
-Use an audit when another worker should examine a subsystem, deployment, evidence trail, operating practice, or cross-cutting risk without owning the implementation being assessed.
-
-Independence is required when the audit is the sole acceptance signal for consequential implementation, authorization, privacy, durable-state, retention, deletion, or production-control boundaries. For lower-risk exploratory audits, disclose any overlap and limit the conclusion accordingly.
-
-An audit records findings and recommendations. It does not itself approve production action, grant authority, or replace exact-head pull-request review.
-
-## File layout and naming
-
-Store one record per file to preserve provenance and reduce merge conflicts:
+Prefer the smallest owner that prevents recurrence:
 
 ```text
-docs/institutional-memory/
-  notes/YYYY-MM-DD-short-slug.md
-  postmortems/YYYY-MM-DD-short-slug.md
-  audits/YYYY-MM-DD-short-slug.md
-  templates/
+exact bug/finding -> owning issue or PR
+mechanical recurrence -> regression test / invariant / safer API
+operational recipe -> current runbook/reference
+consequential durable choice -> issue-backed decision record
+incident whose causal analysis remains useful -> postmortem
+cross-cutting research/audit whose source coverage remains useful -> bounded audit record
 ```
 
-Use the date the record was opened. Keep the slug stable when updating the same record. Do not overwrite an old record to describe a different event.
+A separate learning note is optional. Create one only when the reusable explanation would otherwise be lost and does not belong more naturally in the owning issue, decision, test, or current documentation.
 
-Every record must state:
+Routine successful work, ordinary handoffs, review summaries, status updates, and speculative process ideas do not need archive records.
 
-- status: `active`, `superseded`, or `retired`;
-- opened and last-updated dates in UTC;
-- author or auditor callsign and source surface when useful;
-- exact scope and affected version classes;
-- linked evidence and source coverage;
-- facts separately from interpretation;
-- confidence and material uncertainty;
-- sensitivity and omitted data;
-- follow-up owner or eligibility, if action remains;
-- review-by date or a concrete freshness condition.
+## Historical integrity
 
-## Writing and review flow
+Archived records are descriptive evidence. They grant zero authority, approval, responsibility, or provider capability.
 
-1. Search `index.md`, this directory, relevant issues, and recent pull requests.
-2. Choose the smallest record type that captures the reusable value.
-3. Copy the matching template and remove unused prompts.
-4. Bind claims to exact issues, comments, commits, deployments, workflow runs, or reproduction evidence.
-5. Keep secrets, credentials, raw tokens, unrestricted personal data, raw provider payloads, and unbounded transcripts out of the record.
-6. Update `index.md` in the same pull request.
-7. Select review depth from the underlying claim, not from the fact that the diff is Markdown.
+Preserve the original evidence and dates. When a current document or contract supersedes an archived lesson, link the newer owner where useful; avoid rewriting the old event to look consistent with present policy.
 
-A note about a harmless local command may be Tier 0. A postmortem or audit that changes shared operating instructions, security assumptions, retention policy, or production gates requires the corresponding higher review tier.
+Secrets, credentials, raw tokens, unrestricted personal data, unbounded transcripts, and unnecessary raw provider payloads remain outside retained records.
 
-## Cadence without busywork
+## Postmortems
 
-Consider a record:
+Use a postmortem when a material incident or near miss needs durable causal analysis beyond the repair issue itself, for example:
 
-- after a wave completes or materially stalls;
-- after an incident, rollback, or consequential near miss;
-- after repeated human correction or duplicated integration work;
-- after an external audit or material review theme;
-- when three or more related findings suggest a shared pattern;
-- before a major protocol or architecture change when prior evidence should guide it.
+- outage/data-loss risk;
+- security/authority boundary failure;
+- ambiguous consequential effect with substantial recovery work;
+- repeated failure whose causes span several owner contracts.
 
-Remain quiet when there is no durable lesson. A handoff, issue comment, test, or code fix may be sufficient.
+The repair and current controls still belong to their current owners. The postmortem explains what happened and why.
 
-## Promotion and retirement
+## Audits
 
-Institutional-memory records do not become policy merely by existing.
+A durable audit record is useful when bounded source coverage and cross-cutting conclusions should survive the immediate review. Exact actionable findings should also live on the issue/PR that can repair them.
 
-Promote a lesson through the smallest durable mechanism that prevents recurrence:
+Review independence is consequence-based under current repository policy. Merely placing a Markdown file in this directory does not create independent acceptance evidence.
 
-- a regression test or invariant;
-- a runbook or verification command;
-- a product or protocol contract;
-- an issue with an explicit owner and acceptance criteria;
-- a reviewed change to `AGENTS.md`, the Project bootstrap, a wave, or a pod practice.
+## Index maintenance
 
-When a later change invalidates a record, mark it `superseded` or `retired`, link the replacement, update `index.md`, and preserve the original evidence. Do not silently edit history into appearing correct.
+Updating `index.md` is optional convenience work. A stale index must never make a historical record current or hide a canonical current issue/provider fact.
 
-## Audit route
+If archive indexing becomes useful enough to require reliable freshness, generate the index from record metadata instead of maintaining another manual workflow.
 
-A worker or operator can open an audit using `.github/ISSUE_TEMPLATE/independent-audit.md` or copy `templates/audit.md` directly.
+## Promotion rule
 
-The audit request should name:
+When an archived lesson recurs, move the repeatable part into the smallest executable/current owner:
 
-- the question and risk boundary;
-- the exact versions or deployed revisions in scope;
-- required independence or specialist knowledge;
-- source access and known blind spots;
-- expected output and re-audit condition.
+```text
+historical lesson
+-> current issue/decision if judgement is required
+-> deterministic check / typed state / safer API / runbook when repeatable
+-> archive remains evidence
+```
 
-The auditor should first reconcile current state, then record positive controls as well as defects. Findings belong on the relevant issue or pull request when an exact repair is actionable; the durable audit record should capture the cross-cutting conclusion, source coverage, and lessons that remain useful after the repair merges.
+Do not revive protocol versions, wave/pod practices, recurring surveys, review-by calendars, or worker scorecards merely because older records mention them.
+
+— Kestrel
+  Intention: keep useful history without making history another process
