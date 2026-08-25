@@ -555,6 +555,7 @@ export default defineSchema({
     actorExternalId: v.string(),
     runnerType: v.string(),
     runnerProfile: v.string(),
+    runnerProfileVersion: v.optional(v.string()),
     externalRunId: v.optional(v.string()),
     status: queuedRunStatus,
     generation: v.number(),

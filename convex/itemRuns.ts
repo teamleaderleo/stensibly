@@ -69,6 +69,7 @@ const queuedItemRunValidator = v.object({
   actorId: v.string(),
   runnerType: v.string(),
   runnerProfile: v.string(),
+  runnerProfileVersion: nullableString,
   externalRunId: nullableString,
   status: queuedRunStatusValidator,
   generation: v.number(),

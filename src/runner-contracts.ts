@@ -15,6 +15,7 @@ export interface ClaimRunnerWorkInput {
   actor: ActorInput;
   runnerType: string;
   runnerProfile: string;
+  runnerProfileVersion?: string | null;
   project?: string;
   runId?: string;
   externalRunId?: string;

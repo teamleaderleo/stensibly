@@ -5,6 +5,7 @@ import {
   ensureRunExecutionSchema,
   hydrateWorkRun,
 } from "./run-execution-store.js";
+import { withRunnerProfileVersion } from "./run-profile-version-sqlite.js";
 import { ensureRunSchema, type WorkRun } from "./runs.js";
 import type { StensiblyStore } from "./store.js";
 
@@ -22,7 +23,7 @@ export function claimRunnerWork(
       run,
       lifecycleEventType: "run.starting",
     });
-    return hydrateWorkRun(store, run);
+    return withRunnerProfileVersion(store, hydrateWorkRun(store, run));
   });
   return transaction();
 }
