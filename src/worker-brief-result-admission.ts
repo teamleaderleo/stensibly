@@ -6,6 +6,7 @@ export * from "./worker-brief-result-admission-core.js";
 export type WorkerResultEffectExpectationDispositionV1 = "allowed" | "forbidden";
 export type WorkerResultEffectCoverageDispositionV1 = "complete" | "incomplete";
 
+/** One declared effect ID denotes at most one provider-observed instance. */
 export interface WorkerResultEffectExpectationInputV1 {
   readonly id: string;
   readonly provider: string;
@@ -163,6 +164,7 @@ export function compileWorkerEffectEvidenceV1(raw: CompileWorkerEffectEvidenceIn
     return freeze({ effectId: id(entry.effectId, 160, "Observed effect ID"), provider: provider(entry.provider), instanceId: id(entry.instanceId, 240, "Observed effect instance ID"), evidenceRefs: refs(entry.evidenceRefs, "Observed effect evidence") });
   });
   unique(observedEffects.map((entry) => `${entry.provider}\u0000${entry.instanceId}`), "Observed provider effect instances");
+  unique(observedEffects.map((entry) => entry.effectId), "Observed worker effect IDs");
   const body = {
     version: core.WORKER_BRIEF_RESULT_ADMISSION_V1,
     requirementsFingerprint: digest(input.requirementsFingerprint, "Worker effect requirements fingerprint"),
