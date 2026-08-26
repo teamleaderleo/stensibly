@@ -130,6 +130,10 @@ describe("hosted exact-generation dispatch", () => {
     const t = convexTest(schema, modules);
     const fixture = await seed(t, "Roll back hosted exact dispatch");
     const before = await itemState(t, fixture.item._id);
+    const beforeRuns = await runCount(t, fixture.item._id);
+    const beforeEvents = await itemEvents(t, fixture.item._id);
+    const beforeClaimEvents = beforeEvents.filter((event) => event.type === "claim.created").length;
+    const beforeQueuedEvents = beforeEvents.filter((event) => event.type === "run.queued").length;
 
     await expect(t.run(async (ctx) => {
       const outcome = await dispatchHostedExactGeneration(ctx, {
@@ -145,7 +149,6 @@ describe("hosted exact-generation dispatch", () => {
         retryBackoffSeconds: 60,
         executionEnvelope,
         eventSource: "hosted_exact_dispatch_test",
-        sourceEvidence: { receiptWillFail: true },
         now: Date.now(),
       });
       expect(outcome.status).toBe("dispatched");
@@ -162,12 +165,10 @@ describe("hosted exact-generation dispatch", () => {
       version: before!.version,
       updatedAt: before!.updatedAt,
     });
-    expect(await runCount(t, fixture.item._id)).toBe(0);
-    const events = await t.run(async (ctx) =>
-      (await ctx.db.query("events").collect()).filter((event) => event.itemId === fixture.item._id)
-    );
-    expect(events.filter((event) => event.type === "claim.created")).toHaveLength(0);
-    expect(events.filter((event) => event.type === "run.queued")).toHaveLength(0);
+    expect(await runCount(t, fixture.item._id)).toBe(beforeRuns);
+    const afterEvents = await itemEvents(t, fixture.item._id);
+    expect(afterEvents.filter((event) => event.type === "claim.created")).toHaveLength(beforeClaimEvents);
+    expect(afterEvents.filter((event) => event.type === "run.queued")).toHaveLength(beforeQueuedEvents);
   });
 });
 
@@ -234,5 +235,11 @@ async function itemState(t: ReturnType<typeof convexTest>, itemId: Doc<"items">[
 async function runCount(t: ReturnType<typeof convexTest>, itemId: Doc<"items">["_id"]) {
   return await t.run(async (ctx) =>
     (await ctx.db.query("queuedRuns").collect()).filter((run) => run.itemId === itemId).length
+  );
+}
+
+async function itemEvents(t: ReturnType<typeof convexTest>, itemId: Doc<"items">["_id"]) {
+  return await t.run(async (ctx) =>
+    (await ctx.db.query("events").collect()).filter((event) => event.itemId === itemId)
   );
 }
