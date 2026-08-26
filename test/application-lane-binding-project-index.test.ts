@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { buildApplicationWorkBindingV1 } from "../src/application-lane-binding.ts";
 import {
   compileProjectApplicationLaneBindingSnapshotV1,
   exactApplicationLaneBindingProjectReadLimit,
@@ -43,9 +44,9 @@ function binding(
 
 describe("bounded project application binding index", () => {
   test("compiler canonicalizes ordering and reports completeness explicitly", () => {
-    const first = binding("item:z", "binding:z");
-    const second = binding("item:a", "binding:b");
-    const third = binding("item:a", "binding:a");
+    const first = buildApplicationWorkBindingV1(binding("item:z", "binding:z"));
+    const second = buildApplicationWorkBindingV1(binding("item:a", "binding:b"));
+    const third = buildApplicationWorkBindingV1(binding("item:a", "binding:a"));
 
     const forward = compileProjectApplicationLaneBindingSnapshotV1(
       "stensibly",
