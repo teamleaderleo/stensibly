@@ -33,6 +33,25 @@ interface ResolvedProject {
   projectSlug: string;
 }
 
+type StoredBindingRow = {
+  workspaceId: unknown;
+  projectId: unknown;
+  itemId: ItemId;
+  itemExternalId: string;
+  externalId: string;
+  generation: number;
+  provider: string;
+  laneRef: string;
+  laneGeneration: number;
+  status: string;
+  bindingJson: string;
+  bindingFingerprint: string;
+  isCurrent: boolean;
+  idempotencyKey: string;
+  requestJson: string;
+  recordedAt: number;
+};
+
 export const bind = mutation({
   args: {
     ...serviceArgs,
@@ -59,7 +78,7 @@ export const bind = mutation({
         throw new Error("APPLICATION_LANE_BINDING_IDEMPOTENCY_CONFLICT");
       }
       return canonicalApplicationWorkBindingInputJson(
-        admitStoredBinding(replay, scope, replay.itemId),
+        await admitStoredBinding(ctx, replay, scope),
       );
     }
 
@@ -106,7 +125,7 @@ export const bind = mutation({
     );
     if (!stored) throw new Error("APPLICATION_LANE_BINDING_MISSING");
     return canonicalApplicationWorkBindingInputJson(
-      admitStoredBinding(stored, scope, item._id),
+      await admitStoredBinding(ctx, stored, scope),
     );
   },
 });
@@ -126,7 +145,7 @@ export const get = query({
     const row = await currentBindingRow(ctx, scope.projectId, bindingId);
     if (!row) return null;
     return canonicalApplicationWorkBindingInputJson(
-      admitStoredBinding(row, scope, row.itemId),
+      await admitStoredBinding(ctx, row, scope),
     );
   },
 });
@@ -143,13 +162,13 @@ export const listCurrent = query({
     const scope = await resolveProject(ctx, args.workspace, args.project, false);
     if (!scope) return [];
     const itemExternalId = exactApplicationLaneBindingItemId(args.itemId);
-    let item;
-    try {
-      item = await getItemByExternalId(ctx, scope.workspaceId, itemExternalId);
-    } catch {
-      return [];
-    }
-    if (item.projectId !== scope.projectId) return [];
+    const item = await ctx.db
+      .query("items")
+      .withIndex("by_workspace_external", (q) =>
+        q.eq("workspaceId", scope.workspaceId).eq("externalId", itemExternalId)
+      )
+      .unique();
+    if (!item || item.projectId !== scope.projectId) return [];
     const rows = await ctx.db
       .query("applicationLaneBindings")
       .withIndex("by_item_id_and_status_and_is_current_and_generation", (q) =>
@@ -159,8 +178,10 @@ export const listCurrent = query({
       )
       .order("asc")
       .collect();
-    return rows.map((row) => canonicalApplicationWorkBindingInputJson(
-      admitStoredBinding(row, scope, item._id),
+    return await Promise.all(rows.map(async (row) =>
+      canonicalApplicationWorkBindingInputJson(
+        await admitStoredBinding(ctx, row, scope),
+      )
     ));
   },
 });
@@ -184,8 +205,10 @@ export const history = query({
       )
       .order("asc")
       .collect();
-    return rows.map((row) => canonicalApplicationWorkBindingInputJson(
-      admitStoredBinding(row, scope, row.itemId),
+    return await Promise.all(rows.map(async (row) =>
+      canonicalApplicationWorkBindingInputJson(
+        await admitStoredBinding(ctx, row, scope),
+      )
     ));
   },
 });
@@ -220,7 +243,7 @@ export const retire = mutation({
         throw new Error("APPLICATION_LANE_BINDING_IDEMPOTENCY_CONFLICT");
       }
       return canonicalApplicationWorkBindingInputJson(
-        admitStoredBinding(replay, scope, replay.itemId),
+        await admitStoredBinding(ctx, replay, scope),
       );
     }
 
@@ -232,7 +255,7 @@ export const retire = mutation({
     if (!currentRow) {
       throw new Error("APPLICATION_LANE_BINDING_NOT_FOUND");
     }
-    const current = admitStoredBinding(currentRow, scope, currentRow.itemId);
+    const current = await admitStoredBinding(ctx, currentRow, scope);
     let retired: ApplicationWorkBindingV1;
     try {
       retired = retireApplicationWorkBinding(current, command);
@@ -273,7 +296,7 @@ export const retire = mutation({
     );
     if (!stored) throw new Error("APPLICATION_LANE_BINDING_MISSING");
     return canonicalApplicationWorkBindingInputJson(
-      admitStoredBinding(stored, scope, stored.itemId),
+      await admitStoredBinding(ctx, stored, scope),
     );
   },
 });
@@ -354,40 +377,27 @@ async function currentBindingRow(
     .unique();
 }
 
-function admitStoredBinding(
-  row: {
-    workspaceId: unknown;
-    projectId: unknown;
-    itemId: ItemId;
-    itemExternalId: string;
-    externalId: string;
-    generation: number;
-    provider: string;
-    laneRef: string;
-    laneGeneration: number;
-    status: string;
-    bindingJson: string;
-    bindingFingerprint: string;
-    isCurrent: boolean;
-    idempotencyKey: string;
-    requestJson: string;
-    recordedAt: number;
-  },
+async function admitStoredBinding(
+  ctx: QueryContext,
+  row: StoredBindingRow,
   scope: ResolvedProject,
-  expectedItemId: ItemId,
-): ApplicationWorkBindingV1 {
+): Promise<ApplicationWorkBindingV1> {
   let binding: ApplicationWorkBindingV1;
   try {
     binding = parseApplicationWorkBindingInputJson(row.bindingJson);
   } catch {
     throw new ApplicationLaneBindingStorageError();
   }
+  const item = await ctx.db.get(row.itemId);
   const recordedAt = binding.retiredAt === null
     ? Date.parse(binding.createdAt)
     : Date.parse(binding.retiredAt);
   const valid = row.workspaceId === scope.workspaceId
     && row.projectId === scope.projectId
-    && row.itemId === expectedItemId
+    && item !== null
+    && item.workspaceId === scope.workspaceId
+    && item.projectId === scope.projectId
+    && item.externalId === binding.itemId
     && row.itemExternalId === binding.itemId
     && row.externalId === binding.id
     && row.generation === binding.generation
