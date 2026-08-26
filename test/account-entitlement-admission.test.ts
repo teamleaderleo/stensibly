@@ -148,8 +148,9 @@ describe("account entitlement admission", () => {
     });
   });
 
-  test("treats a reset window as unknown until current usage is supplied", () => {
-    const result = compileAccountEntitlementAdmission(input({
+  test("treats reset or future-dated usage evidence as unknown", () => {
+    const staleWindow = compileAccountEntitlementAdmission(input({
+      requestIdentity: "request:write:stale-window",
       entitlement: entitlement({
         allowance: {
           kind: "window",
@@ -165,11 +166,34 @@ describe("account entitlement admission", () => {
         },
       }),
     }));
-
-    expect(result).toMatchObject({
+    expect(staleWindow).toMatchObject({
       outcome: "deny",
       reason: "usage_unknown",
       windowId: "window:stale",
+      remaining: null,
+    });
+
+    const futureUsage = compileAccountEntitlementAdmission(input({
+      requestIdentity: "request:write:future-usage",
+      entitlement: entitlement({
+        allowance: {
+          kind: "window",
+          windowId: "window:future",
+          limit: 10,
+          resetAt: "2026-08-27T00:00:00.000Z",
+          usage: {
+            state: "known",
+            consumed: 1,
+            reserved: 0,
+            observedAt: "2026-08-26T08:01:00.000Z",
+          },
+        },
+      }),
+    }));
+    expect(futureUsage).toMatchObject({
+      outcome: "deny",
+      reason: "usage_unknown",
+      windowId: "window:future",
       remaining: null,
     });
   });
@@ -200,6 +224,40 @@ describe("account entitlement admission", () => {
       expect(JSON.stringify(result)).not.toContain("entitlement:beta:v1");
       expect(JSON.stringify(result)).not.toContain("stensibly#1694");
     }
+  });
+
+  test("rejects a foreign entitlement before inspecting its allowance details", () => {
+    const foreign = entitlement({
+      subject: { kind: "account", id: "acct_foreign", workspace: "default" },
+      revision: "entitlement:foreign:secret",
+      sourceReference: "github:private/foreign#1",
+      allowance: {
+        kind: "window",
+        windowId: "foreign:window",
+        limit: -1,
+        resetAt: "definitely-not-a-time",
+        usage: {
+          state: "known",
+          consumed: -100,
+          reserved: -100,
+          observedAt: "also-not-a-time",
+        },
+      },
+    } as AccountEntitlement);
+
+    const result = compileAccountEntitlementAdmission(input({
+      entitlement: foreign,
+    }));
+
+    expect(result).toMatchObject({
+      outcome: "deny",
+      reason: "no_entitlement",
+      entitlementRevision: null,
+      entitlementSourceReference: null,
+      windowId: null,
+      remaining: null,
+    });
+    expect(JSON.stringify(result)).not.toContain("foreign");
   });
 
   test("binds the decision fingerprint to the stable subject, request identity, and current usage", () => {
