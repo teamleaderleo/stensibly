@@ -11,7 +11,6 @@ const binding = {
   generation: 3,
   project: "stensibly",
   itemId: "item:work-a",
-  itemGeneration: 11,
   provider: "elatura",
   laneRef: "elatura:lane:chat-a",
   laneGeneration: 7,
@@ -35,18 +34,19 @@ const event = {
 } as const;
 
 describe("Elatura application work binding", () => {
-  test("binds one exact work generation to one opaque lane generation", () => {
+  test("binds one durable work item to one opaque lane generation", () => {
     const parsed = buildApplicationWorkBindingV1(binding);
 
     expect(parsed).toMatchObject({
       itemId: "item:work-a",
-      itemGeneration: 11,
       provider: "elatura",
       laneRef: "elatura:lane:chat-a",
       laneGeneration: 7,
       grantsWorkAuthority: false,
       grantsApplicationAuthority: false,
     });
+    expect(parsed).not.toHaveProperty("itemGeneration");
+    expect(parsed).not.toHaveProperty("claimGeneration");
     expect(parsed.capabilities).toEqual(["activate", "events", "observe", "screenshot"]);
     expect(parsed.fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
     expect(Object.isFrozen(parsed)).toBe(true);
@@ -61,6 +61,15 @@ describe("Elatura application work binding", () => {
     });
 
     expect(second).toEqual(first);
+  });
+
+  test("keeps claim/responsibility generations with their owning wake and dispatch contracts", () => {
+    expect(() => buildApplicationWorkBindingV1({ ...binding, itemGeneration: 11 })).toThrow(
+      "unsupported field itemGeneration",
+    );
+    expect(() => buildApplicationWorkBindingV1({ ...binding, claimGeneration: 11 })).toThrow(
+      "unsupported field claimGeneration",
+    );
   });
 
   test("rejects browser implementation identity at the binding boundary", () => {
@@ -89,13 +98,14 @@ describe("Elatura application work binding", () => {
         sourceObjectRef: binding.laneRef,
         sourceObjectGeneration: binding.laneGeneration,
         itemId: binding.itemId,
-        itemGeneration: binding.itemGeneration,
         confidence: "exact",
         freshness: "fresh",
         grantsWorkAuthority: false,
         authorizesDispatch: false,
       },
     });
+    expect(decision.observation).not.toHaveProperty("itemGeneration");
+    expect(decision.observation).not.toHaveProperty("claimGeneration");
     expect(decision.observation?.fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
     expect(decision.observation?.idempotencyKey).toMatch(/^application-lane-observation:[a-f0-9]{64}$/u);
     expect(decision.decisionFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
