@@ -1,8 +1,12 @@
-import { stableJson } from "./canonical-json.js";
+import { compareCodeUnits, stableJson } from "./canonical-json.js";
 import {
   buildApplicationWorkBindingV1,
   type ApplicationWorkBindingV1,
 } from "./application-lane-binding.js";
+
+export const PROJECT_APPLICATION_LANE_BINDING_SNAPSHOT_VERSION = 1 as const;
+export const DEFAULT_PROJECT_APPLICATION_LANE_BINDING_LIMIT = 100;
+export const MAX_PROJECT_APPLICATION_LANE_BINDING_LIMIT = 500;
 
 export interface BindApplicationLaneInput {
   binding: unknown;
@@ -17,6 +21,13 @@ export interface RetireApplicationLaneBindingInput {
   idempotencyKey: string;
 }
 
+export interface ProjectApplicationLaneBindingSnapshotV1 {
+  readonly version: 1;
+  readonly project: string;
+  readonly bindings: readonly ApplicationWorkBindingV1[];
+  readonly truncated: boolean;
+}
+
 export interface ApplicationLaneBindingStore {
   bindApplicationLane(input: BindApplicationLaneInput): Promise<ApplicationWorkBindingV1>;
   getApplicationLaneBinding(
@@ -27,6 +38,10 @@ export interface ApplicationLaneBindingStore {
     project: string,
     itemId: string,
   ): Promise<readonly ApplicationWorkBindingV1[]>;
+  listProjectCurrentApplicationLaneBindings(
+    project: string,
+    limit?: number,
+  ): Promise<ProjectApplicationLaneBindingSnapshotV1>;
   listApplicationLaneBindingHistory(
     project: string,
     bindingId: string,
@@ -174,6 +189,62 @@ export function retireApplicationWorkBinding(
     createdAt: current.createdAt,
     retiredAt: command.retiredAt,
   });
+}
+
+export function compileProjectApplicationLaneBindingSnapshotV1(
+  projectInput: string,
+  bindingsInput: readonly unknown[],
+  limitInput?: number,
+): ProjectApplicationLaneBindingSnapshotV1 {
+  const project = exactProject(projectInput);
+  const limit = exactApplicationLaneBindingProjectReadLimit(limitInput);
+  if (!Array.isArray(bindingsInput) || bindingsInput.length > limit + 1) {
+    throw new ApplicationLaneBindingStorageError();
+  }
+  const bindings = bindingsInput.map((value) => {
+    let binding: ApplicationWorkBindingV1;
+    try {
+      binding = buildApplicationWorkBindingV1(value);
+    } catch {
+      throw new ApplicationLaneBindingStorageError();
+    }
+    if (binding.project !== project || binding.retiredAt !== null) {
+      throw new ApplicationLaneBindingStorageError();
+    }
+    return binding;
+  });
+  const seen = new Set<string>();
+  for (const binding of bindings) {
+    if (seen.has(binding.id)) throw new ApplicationLaneBindingStorageError();
+    seen.add(binding.id);
+  }
+  bindings.sort((left, right) =>
+    compareCodeUnits(left.itemId, right.itemId)
+    || compareCodeUnits(left.id, right.id)
+    || left.generation - right.generation
+  );
+  const truncated = bindings.length > limit;
+  return Object.freeze({
+    version: PROJECT_APPLICATION_LANE_BINDING_SNAPSHOT_VERSION,
+    project,
+    bindings: Object.freeze(bindings.slice(0, limit)),
+    truncated,
+  });
+}
+
+export function exactApplicationLaneBindingProjectReadLimit(value?: number): number {
+  if (value === undefined) return DEFAULT_PROJECT_APPLICATION_LANE_BINDING_LIMIT;
+  if (
+    typeof value !== "number"
+    || !Number.isSafeInteger(value)
+    || value < 1
+    || value > MAX_PROJECT_APPLICATION_LANE_BINDING_LIMIT
+  ) {
+    throw new RangeError(
+      `Application lane binding project read limit must be a positive safe integer up to ${MAX_PROJECT_APPLICATION_LANE_BINDING_LIMIT}`,
+    );
+  }
+  return value;
 }
 
 export function canonicalApplicationWorkBindingInputJson(
