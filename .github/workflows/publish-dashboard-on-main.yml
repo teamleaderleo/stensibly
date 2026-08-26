@@ -35,6 +35,10 @@ jobs:
             echo "::error title=Invalid dashboard revision::expected_revision must be a lowercase full commit SHA."
             exit 1
           fi
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error title=Dashboard ref rejected::Production dashboard publication requires refs/heads/main, received ${GITHUB_REF}."
+            exit 1
+          fi
           if [ "${GITHUB_SHA}" != "${EXPECTED_REVISION}" ]; then
             echo "::error title=Dashboard revision moved::Expected ${EXPECTED_REVISION}, received ${GITHUB_SHA}."
             exit 1
@@ -55,6 +59,7 @@ jobs:
   publish:
     name: Attach domain, verify, and publish dashboard
     needs: validate
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: production
