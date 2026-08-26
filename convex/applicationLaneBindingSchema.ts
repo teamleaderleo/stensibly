@@ -6,6 +6,7 @@ export const applicationLaneBindingTables = {
     workspaceId: v.id("workspaces"),
     projectId: v.id("projects"),
     itemId: v.id("items"),
+    itemExternalId: v.string(),
     externalId: v.string(),
     generation: v.number(),
     provider: v.literal("elatura"),
