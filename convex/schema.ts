@@ -548,7 +548,7 @@ export default defineSchema({
     .index("by_external_id", ["externalId"])
     .index("by_item_status", ["itemId", "status", "startedAt"])
     .index("by_project_status", ["projectId", "status", "lastHeartbeatAt"])
-    .index("by_actor_status", ["actorId", "status", "updatedAt"]),
+    .index("by_actor_status", ["actorId", "status", "lastHeartbeatAt"]),
 
   queuedRuns: defineTable({
     workspaceId: v.id("workspaces"),
