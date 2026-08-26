@@ -143,7 +143,7 @@ describe("hosted application-lane wake admission and trigger consumption", () =>
     const fixture = await setup(t, "missing-source");
     const decision = compileApplicationLaneWakeIntentV1(
       fixture.registration,
-      fixture.binding,
+      JSON.parse(canonicalApplicationWorkBindingInputJson(fixture.binding)),
       { project, itemId: fixture.itemId, claimGeneration: 0 },
       fixture.event,
     );
