@@ -21,13 +21,21 @@ export const elaturaLaneEventTypes = [
 ] as const;
 export type ElaturaLaneEventType = typeof elaturaLaneEventTypes[number];
 
+/**
+ * Durable relation between one Stensibly work item and one exact Elatura lane
+ * generation.
+ *
+ * This binding deliberately omits a claim/responsibility generation. Worker
+ * claims and responsibility generations may change while the same application
+ * locus continues to back the work item. Exact current-generation fencing stays
+ * with the wake/dispatch owner that consumes a bound observation.
+ */
 export interface ApplicationWorkBindingV1 {
   version: 1;
   id: string;
   generation: number;
   project: string;
   itemId: string;
-  itemGeneration: number;
   provider: "elatura";
   laneRef: string;
   laneGeneration: number;
@@ -39,6 +47,7 @@ export interface ApplicationWorkBindingV1 {
   fingerprint: string;
 }
 
+/** Exact mirror of Elatura application-lane/v1 event fields consumed here. */
 export interface ElaturaApplicationLaneEventV1 {
   version: 1;
   eventId: string;
@@ -63,7 +72,6 @@ export interface ApplicationLaneBoundObservationV1 {
   sourceObjectGeneration: number;
   eventType: `lane.${ElaturaLaneEventType}`;
   itemId: string;
-  itemGeneration: number;
   observedAt: string;
   confidence: "exact" | "probable" | "unknown";
   freshness: "fresh" | "stale" | "unknown";
@@ -108,7 +116,6 @@ export function buildApplicationWorkBindingV1(value: unknown): ApplicationWorkBi
     "generation",
     "project",
     "itemId",
-    "itemGeneration",
     "provider",
     "laneRef",
     "laneGeneration",
@@ -131,7 +138,6 @@ export function buildApplicationWorkBindingV1(value: unknown): ApplicationWorkBi
     generation: positiveInteger(input.generation, "Binding generation"),
     project: project(input.project),
     itemId: identifier(input.itemId, "Item ID"),
-    itemGeneration: positiveInteger(input.itemGeneration, "Item generation"),
     provider: "elatura" as const,
     laneRef: identifier(input.laneRef, "Elatura lane reference"),
     laneGeneration: positiveInteger(input.laneGeneration, "Elatura lane generation"),
@@ -184,8 +190,12 @@ export function parseElaturaApplicationLaneEventV1(value: unknown): ElaturaAppli
 }
 
 /**
- * Admits one Elatura event against one exact work/lane binding and projects it
- * into a provider observation for Stensibly's existing wake/materiality owners.
+ * Admit one Elatura event against one exact durable work/lane relation and
+ * project it into a provider observation for Stensibly's existing wake owners.
+ *
+ * The result identifies the affected work item but carries no responsibility
+ * generation. A later #46/#47-style consumer must re-read and fence the exact
+ * current responsibility generation before eligibility becomes a run/dispatch.
  * This function performs no work mutation, materiality classification,
  * continuation creation, dispatch, application command, or authority grant.
  */
@@ -242,7 +252,6 @@ function buildBoundObservation(
     sourceObjectGeneration: binding.laneGeneration,
     eventType: `lane.${event.eventType}` as const,
     itemId: binding.itemId,
-    itemGeneration: binding.itemGeneration,
     observedAt: event.observedAt,
     confidence: event.confidence,
     freshness: event.freshness,
