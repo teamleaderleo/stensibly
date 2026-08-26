@@ -193,7 +193,7 @@ export function retireApplicationWorkBinding(
 
 export function compileProjectApplicationLaneBindingSnapshotV1(
   projectInput: string,
-  bindingsInput: readonly unknown[],
+  bindingsInput: readonly ApplicationWorkBindingV1[],
   limitInput?: number,
 ): ProjectApplicationLaneBindingSnapshotV1 {
   const project = exactProject(projectInput);
@@ -201,17 +201,25 @@ export function compileProjectApplicationLaneBindingSnapshotV1(
   if (!Array.isArray(bindingsInput) || bindingsInput.length > limit + 1) {
     throw new ApplicationLaneBindingStorageError();
   }
-  const bindings = bindingsInput.map((value) => {
-    let binding: ApplicationWorkBindingV1;
+  const bindings = bindingsInput.map((binding) => {
+    let canonical: ApplicationWorkBindingV1;
     try {
-      binding = buildApplicationWorkBindingV1(value);
+      canonical = parseApplicationWorkBindingInputJson(
+        canonicalApplicationWorkBindingInputJson(binding),
+      );
     } catch {
       throw new ApplicationLaneBindingStorageError();
     }
-    if (binding.project !== project || binding.retiredAt !== null) {
+    if (
+      canonical.fingerprint !== binding.fingerprint
+      || binding.grantsWorkAuthority !== false
+      || binding.grantsApplicationAuthority !== false
+      || canonical.project !== project
+      || canonical.retiredAt !== null
+    ) {
       throw new ApplicationLaneBindingStorageError();
     }
-    return binding;
+    return canonical;
   });
   const seen = new Set<string>();
   for (const binding of bindings) {
