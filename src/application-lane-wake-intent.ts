@@ -152,6 +152,88 @@ export function parseApplicationLaneWakeCurrentAuthorityV1(
   });
 }
 
+export function parseApplicationLaneWakeIntentV1(value: unknown): ApplicationLaneWakeIntentV1 {
+  const input = strictRecord(value, "Application lane wake intent", [
+    "version",
+    "kind",
+    "project",
+    "registrationId",
+    "registrationGeneration",
+    "itemId",
+    "claimGeneration",
+    "bindingId",
+    "bindingGeneration",
+    "laneRef",
+    "laneGeneration",
+    "sourceEventId",
+    "eventType",
+    "confidence",
+    "freshness",
+    "observedAt",
+    "sourceRefs",
+    "grantsAuthority",
+    "authorizesDispatch",
+    "fingerprint",
+    "idempotencyKey",
+  ]);
+  if (input.version !== APPLICATION_LANE_WAKE_INTENT_V1) {
+    throw new TypeError("Application lane wake intent version must be 1");
+  }
+  if (input.kind !== "application_lane_item_wakeup") {
+    throw new TypeError("Application lane wake intent kind is invalid");
+  }
+  if (input.grantsAuthority !== false) {
+    throw new TypeError("Application lane wake intent must grant zero authority");
+  }
+  if (input.authorizesDispatch !== false) {
+    throw new TypeError("Application lane wake intent must authorize zero dispatch");
+  }
+
+  const event = parseElaturaApplicationLaneEventV1({
+    version: 1,
+    eventId: input.sourceEventId,
+    laneRef: input.laneRef,
+    laneGeneration: input.laneGeneration,
+    eventType: input.eventType,
+    observedAt: input.observedAt,
+    confidence: input.confidence,
+    freshness: input.freshness,
+    sourceRefs: input.sourceRefs,
+    grantsWorkAuthority: false,
+    authorizesWorkDispatch: false,
+  });
+  const core = {
+    version: 1 as const,
+    kind: "application_lane_item_wakeup" as const,
+    project: project(input.project),
+    registrationId: identifier(input.registrationId, "Wake registration ID"),
+    registrationGeneration: positiveInteger(input.registrationGeneration, "Wake registration generation"),
+    itemId: identifier(input.itemId, "Wake item ID"),
+    claimGeneration: nonNegativeInteger(input.claimGeneration, "Wake claim generation"),
+    bindingId: identifier(input.bindingId, "Wake binding ID"),
+    bindingGeneration: positiveInteger(input.bindingGeneration, "Wake binding generation"),
+    laneRef: event.laneRef,
+    laneGeneration: event.laneGeneration,
+    sourceEventId: event.eventId,
+    eventType: event.eventType,
+    confidence: event.confidence,
+    freshness: event.freshness,
+    observedAt: event.observedAt,
+    sourceRefs: event.sourceRefs,
+    grantsAuthority: false as const,
+    authorizesDispatch: false as const,
+  };
+  const fingerprint = sha256(stableJson(core));
+  const idempotencyKey = `application-lane-wake:${fingerprint.slice("sha256:".length)}`;
+  if (input.fingerprint !== fingerprint) {
+    throw new TypeError("Application lane wake intent fingerprint is invalid");
+  }
+  if (input.idempotencyKey !== idempotencyKey) {
+    throw new TypeError("Application lane wake intent idempotency key is invalid");
+  }
+  return freeze({ ...core, fingerprint, idempotencyKey });
+}
+
 /**
  * Compile one exact same-item application-lane wake decision.
  *
