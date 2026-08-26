@@ -84,6 +84,7 @@ describe("hosted application lane bindings", () => {
 
   test("isolates work item and project identity", async () => {
     const t = convexTest(schema, modules);
+    await seedProjectItem(t, "stensibly", "item_stensibly_anchor");
     const otherItem = await seedProjectItem(t, "other-project", "item_other");
     const input = binding(otherItem);
 
