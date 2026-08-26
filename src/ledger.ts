@@ -131,6 +131,7 @@ export interface ItemDetail {
 export interface WorkLedger {
   getBrief(project: string, limit: number): Promise<unknown>;
   listWork(input?: ListWorkInput): Promise<Item[]>;
+  getItemProject?(id: string): Promise<string>;
   getItem(id: string): Promise<ItemDetail>;
   listArtifacts(id: string): Promise<Artifact[]>;
   attachArtifact(input: AttachWorkArtifactInput): Promise<Artifact>;
