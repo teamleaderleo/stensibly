@@ -65,6 +65,7 @@ export interface AccountEntitlementAdmissionInput {
   subject: EntitlementSubject;
   serviceClass: HostedServiceClass;
   requestIdentity: string;
+  units: number;
   currentTime: string;
   entitlement: AccountEntitlement | null;
 }
@@ -78,6 +79,7 @@ export interface AccountEntitlementAdmission {
   workspace: string;
   serviceClass: HostedServiceClass;
   requestIdentity: string;
+  units: number;
   evaluatedAt: string;
   entitlementRevision: string | null;
   entitlementSourceReference: string | null;
@@ -110,6 +112,8 @@ export function compileAccountEntitlementAdmission(
     "request identity",
     240,
   );
+  assertPositiveSafeInteger(input.units, "usage units");
+  const units = input.units;
   const evaluatedAt = normalizeTimestamp(input.currentTime, "current time");
   const evaluatedAtMs = Date.parse(evaluatedAt);
 
@@ -118,6 +122,7 @@ export function compileAccountEntitlementAdmission(
       subject,
       serviceClass,
       requestIdentity,
+      units,
       evaluatedAt,
       outcome: "deny",
       reason: "no_entitlement",
@@ -141,6 +146,7 @@ export function compileAccountEntitlementAdmission(
       subject,
       serviceClass,
       requestIdentity,
+      units,
       evaluatedAt,
       outcome: "deny",
       reason: "no_entitlement",
@@ -169,6 +175,7 @@ export function compileAccountEntitlementAdmission(
       subject,
       serviceClass,
       requestIdentity,
+      units,
       evaluatedAt,
       outcome: "deny",
       reason: "no_entitlement",
@@ -183,6 +190,7 @@ export function compileAccountEntitlementAdmission(
       subject,
       serviceClass,
       requestIdentity,
+      units,
       evaluatedAt,
       outcome: "deny",
       reason: "entitlement_expired",
@@ -197,6 +205,7 @@ export function compileAccountEntitlementAdmission(
       subject,
       serviceClass,
       requestIdentity,
+      units,
       evaluatedAt,
       outcome: "deny",
       reason: "suspended",
@@ -212,6 +221,7 @@ export function compileAccountEntitlementAdmission(
       subject,
       serviceClass,
       requestIdentity,
+      units,
       evaluatedAt,
       outcome: "admit",
       reason: "allowed",
@@ -235,6 +245,7 @@ export function compileAccountEntitlementAdmission(
       subject,
       serviceClass,
       requestIdentity,
+      units,
       evaluatedAt,
       outcome: "deny",
       reason: "usage_unknown",
@@ -247,18 +258,19 @@ export function compileAccountEntitlementAdmission(
 
   const used = allowance.usage.consumed + allowance.usage.reserved;
   const remaining = Math.max(0, allowance.limit - used);
-  if (remaining === 0) {
+  if (remaining < units) {
     return decision({
       subject,
       serviceClass,
       requestIdentity,
+      units,
       evaluatedAt,
       outcome: "deny",
       reason: "allowance_exhausted",
       ...source,
       windowId: allowance.windowId,
       resetAt: allowance.resetAt,
-      remaining: 0,
+      remaining,
     });
   }
 
@@ -266,6 +278,7 @@ export function compileAccountEntitlementAdmission(
     subject,
     serviceClass,
     requestIdentity,
+    units,
     evaluatedAt,
     outcome: "admit",
     reason: "allowed",
@@ -393,6 +406,7 @@ function decision(input: {
   subject: EntitlementSubject;
   serviceClass: HostedServiceClass;
   requestIdentity: string;
+  units: number;
   evaluatedAt: string;
   outcome: "admit" | "deny";
   reason: AccountEntitlementAdmissionReason;
@@ -412,6 +426,7 @@ function decision(input: {
     workspace: input.subject.workspace,
     serviceClass: input.serviceClass,
     requestIdentity: input.requestIdentity,
+    units: input.units,
     evaluatedAt: input.evaluatedAt,
     entitlementRevision: input.entitlementRevision,
     entitlementSourceReference: input.entitlementSourceReference,
