@@ -1,5 +1,5 @@
-import { compareCodeUnits, sha256, stableJson } from "./canonical-json.js";
-import { elaturaLaneEventTypes, type ElaturaLaneEventType } from "./application-lane-binding.js";
+import { sha256, stableJson } from "./canonical-json.js";
+import { parseApplicationLaneWakeIntentV1 } from "./application-lane-wake-intent.js";
 
 export const DISPATCH_TRIGGER_V1 = 1 as const;
 export const dispatchTriggerClasses = ["explicit_current", "wake_intent"] as const;
@@ -29,41 +29,15 @@ export interface DispatchTriggerV1 {
   readonly idempotencyKey: string;
 }
 
-interface ApplicationLaneWakeIntentForDispatchV1 {
-  readonly version: 1;
-  readonly kind: "application_lane_item_wakeup";
-  readonly project: string;
-  readonly registrationId: string;
-  readonly registrationGeneration: number;
-  readonly itemId: string;
-  readonly claimGeneration: number;
-  readonly bindingId: string;
-  readonly bindingGeneration: number;
-  readonly laneRef: string;
-  readonly laneGeneration: number;
-  readonly sourceEventId: string;
-  readonly eventType: ElaturaLaneEventType;
-  readonly confidence: "exact" | "probable" | "unknown";
-  readonly freshness: "fresh" | "stale" | "unknown";
-  readonly observedAt: string;
-  readonly sourceRefs: readonly string[];
-  readonly grantsAuthority: false;
-  readonly authorizesDispatch: false;
-  readonly fingerprint: string;
-  readonly idempotencyKey: string;
-}
-
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/#@-]*$/u;
 const PROJECT = /^[a-z0-9][a-z0-9_-]*$/u;
 const FINGERPRINT = /^sha256:[a-f0-9]{64}$/u;
 const MAX_ID = 240;
 const MAX_PROJECT = 80;
-const MAX_SOURCE_REFS = 32;
-const MAX_SOURCE_REF = 2_048;
 
 /**
  * Normalize one exact eligibility fact into the provider-neutral input consumed
- * by #47. The trigger is still evidence only: current source state, target
+ * by #47. The trigger remains evidence only: current source state, target
  * generation, capacity, runner policy, and authority must be re-read before any
  * claim or queued-run mutation.
  */
@@ -134,12 +108,11 @@ export function parseDispatchTriggerV1(value: unknown): DispatchTriggerV1 {
 
 /**
  * Adapt #1736 same-item application wake eligibility into the generic #47
- * trigger contract. Application/lane details stay behind the opaque source
- * reference and exact source fingerprint; the dispatcher receives no browser
- * or Elatura-specific routing semantics.
+ * trigger contract. The wake owner re-admits its own complete source first;
+ * lane/binding/event detail then stays behind the opaque source identity.
  */
 export function applicationLaneWakeToDispatchTriggerV1(value: unknown): DispatchTriggerV1 {
-  const wake = parseApplicationLaneWakeIntentForDispatchV1(value);
+  const wake = parseApplicationLaneWakeIntentV1(value);
   return buildDispatchTriggerV1({
     triggerClass: "wake_intent",
     project: wake.project,
@@ -150,99 +123,23 @@ export function applicationLaneWakeToDispatchTriggerV1(value: unknown): Dispatch
   });
 }
 
-function parseApplicationLaneWakeIntentForDispatchV1(
-  value: unknown,
-): ApplicationLaneWakeIntentForDispatchV1 {
-  const input = strictRecord(value, "Application lane wake intent", [
-    "version",
-    "kind",
-    "project",
-    "registrationId",
-    "registrationGeneration",
-    "itemId",
-    "claimGeneration",
-    "bindingId",
-    "bindingGeneration",
-    "laneRef",
-    "laneGeneration",
-    "sourceEventId",
-    "eventType",
-    "confidence",
-    "freshness",
-    "observedAt",
-    "sourceRefs",
-    "grantsAuthority",
-    "authorizesDispatch",
-    "fingerprint",
-    "idempotencyKey",
-  ]);
-  if (input.version !== 1) throw new TypeError("Application lane wake intent version must be 1");
-  if (input.kind !== "application_lane_item_wakeup") {
-    throw new TypeError("Application lane wake intent kind is invalid");
-  }
-  if (input.grantsAuthority !== false) {
-    throw new TypeError("Application lane wake intent must grant zero authority");
-  }
-  if (input.authorizesDispatch !== false) {
-    throw new TypeError("Application lane wake intent must authorize zero dispatch");
-  }
-
-  const core = {
-    version: 1 as const,
-    kind: "application_lane_item_wakeup" as const,
-    project: project(input.project),
-    registrationId: identifier(input.registrationId, "Wake registration ID"),
-    registrationGeneration: positiveInteger(input.registrationGeneration, "Wake registration generation"),
-    itemId: identifier(input.itemId, "Wake item ID"),
-    claimGeneration: nonNegativeInteger(input.claimGeneration, "Wake claim generation"),
-    bindingId: identifier(input.bindingId, "Wake binding ID"),
-    bindingGeneration: positiveInteger(input.bindingGeneration, "Wake binding generation"),
-    laneRef: identifier(input.laneRef, "Wake lane reference"),
-    laneGeneration: positiveInteger(input.laneGeneration, "Wake lane generation"),
-    sourceEventId: identifier(input.sourceEventId, "Wake source event ID"),
-    eventType: exactEnum(input.eventType, elaturaLaneEventTypes, "Wake event type"),
-    confidence: exactEnum(input.confidence, ["exact", "probable", "unknown"] as const, "Wake confidence"),
-    freshness: exactEnum(input.freshness, ["fresh", "stale", "unknown"] as const, "Wake freshness"),
-    observedAt: timestamp(input.observedAt, "Wake observation time"),
-    sourceRefs: stringList(input.sourceRefs, "Wake source references", MAX_SOURCE_REFS, MAX_SOURCE_REF),
-    grantsAuthority: false as const,
-    authorizesDispatch: false as const,
-  };
-  const expectedFingerprint = sha256(stableJson(core));
-  const expectedIdempotencyKey = `application-lane-wake:${expectedFingerprint.slice("sha256:".length)}`;
-  if (input.fingerprint !== expectedFingerprint) {
-    throw new TypeError("Application lane wake intent fingerprint is invalid");
-  }
-  if (input.idempotencyKey !== expectedIdempotencyKey) {
-    throw new TypeError("Application lane wake intent idempotency key is invalid");
-  }
-  return freeze({
-    ...core,
-    fingerprint: expectedFingerprint,
-    idempotencyKey: expectedIdempotencyKey,
-  });
-}
-
 function strictRecord(value: unknown, label: string, keys: readonly string[]): Record<string, unknown> {
-  if (value === null || typeof value !== "object") throw new TypeError(`${label} must be an object`);
-  let isArray: boolean;
-  let prototype: object | null;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${label} must be a plain object`);
+  }
+  if (Object.getOwnPropertySymbols(value).length > 0) {
+    throw new TypeError(`${label} contains symbol decoration`);
+  }
   let descriptors: PropertyDescriptorMap;
   try {
-    isArray = Array.isArray(value);
-    prototype = Object.getPrototypeOf(value);
     descriptors = Object.getOwnPropertyDescriptors(value);
   } catch {
     throw new TypeError(`${label} inspection failed`);
   }
-  if (isArray) throw new TypeError(`${label} must be an object`);
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new TypeError(`${label} must be a plain object`);
-  }
-  if (Reflect.ownKeys(descriptors).some((key) => typeof key === "symbol")) {
-    throw new TypeError(`${label} contains symbol decoration`);
-  }
-
   const output: Record<string, unknown> = {};
   for (const [key, descriptor] of Object.entries(descriptors)) {
     if (!descriptor.enumerable || !("value" in descriptor)) {
@@ -257,52 +154,6 @@ function strictRecord(value: unknown, label: string, keys: readonly string[]): R
     }
   }
   return output;
-}
-
-function stringList(value: unknown, label: string, maxItems: number, maxLength: number): readonly string[] {
-  let isArray: boolean;
-  let prototype: object | null;
-  let descriptors: PropertyDescriptorMap;
-  try {
-    isArray = Array.isArray(value);
-    prototype = Object.getPrototypeOf(value);
-    descriptors = Object.getOwnPropertyDescriptors(value);
-  } catch {
-    throw new TypeError(`${label} inspection failed`);
-  }
-  if (!isArray) throw new TypeError(`${label} must be an array`);
-  if (prototype !== Array.prototype) throw new TypeError(`${label} must be an ordinary array`);
-  const descriptorKeys = Reflect.ownKeys(descriptors);
-  if (descriptorKeys.some((key) => typeof key === "symbol")) {
-    throw new TypeError(`${label} contains symbol decoration`);
-  }
-  const lengthDescriptor = descriptors.length;
-  if (!lengthDescriptor || !("value" in lengthDescriptor) || !Number.isSafeInteger(lengthDescriptor.value)) {
-    throw new TypeError(`${label} length is invalid`);
-  }
-  const length = lengthDescriptor.value as number;
-  if (length < 0 || length > maxItems) throw new RangeError(`${label} has invalid cardinality`);
-  const allowedKeys = new Set<string>(["length"]);
-  for (let index = 0; index < length; index += 1) allowedKeys.add(String(index));
-  for (const key of descriptorKeys) {
-    if (typeof key === "string" && !allowedKeys.has(key)) {
-      throw new TypeError(`${label} contains unsupported field ${key}`);
-    }
-  }
-  const output: string[] = [];
-  for (let index = 0; index < length; index += 1) {
-    const descriptor = descriptors[String(index)];
-    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
-      throw new TypeError(`${label} must be dense data`);
-    }
-    output.push(identifier(descriptor.value, `${label} ${index + 1}`, maxLength));
-  }
-  if (new Set(output).size !== output.length) throw new RangeError(`${label} must not contain duplicates`);
-  const sorted = [...output].sort(compareCodeUnits);
-  if (sorted.some((entry, index) => entry !== output[index])) {
-    throw new TypeError(`${label} must use canonical code-unit order`);
-  }
-  return Object.freeze(output);
 }
 
 function exactEnum<const Values extends readonly string[]>(
@@ -322,8 +173,8 @@ function project(value: unknown): string {
   return text;
 }
 
-function identifier(value: unknown, label: string, maximum = MAX_ID): string {
-  const text = boundedText(value, label, maximum);
+function identifier(value: unknown, label: string): string {
+  const text = boundedText(value, label, MAX_ID);
   if (!IDENTIFIER.test(text)) throw new TypeError(`${label} is invalid`);
   return text;
 }
@@ -335,24 +186,9 @@ function fingerprint(value: unknown, label: string): string {
 
 function boundedText(value: unknown, label: string, maximum: number): string {
   if (typeof value !== "string") throw new TypeError(`${label} must be text`);
-  if (!value || value.length > maximum || value.trim() !== value) throw new RangeError(`${label} is invalid`);
-  return value;
-}
-
-function timestamp(value: unknown, label: string): string {
-  const text = boundedText(value, label, 80);
-  const millis = Date.parse(text);
-  if (!Number.isFinite(millis)) throw new TypeError(`${label} must be a valid timestamp`);
-  const canonical = new Date(millis).toISOString();
-  if (canonical !== text) throw new TypeError(`${label} must use canonical millisecond UTC`);
-  return canonical;
-}
-
-function positiveInteger(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
-    throw new TypeError(`${label} must be a positive safe integer`);
-  }
-  return value;
+  const text = value.trim();
+  if (!text || text.length > maximum) throw new RangeError(`${label} is invalid`);
+  return text;
 }
 
 function nonNegativeInteger(value: unknown, label: string): number {
