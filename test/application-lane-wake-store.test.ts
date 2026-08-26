@@ -9,6 +9,7 @@ import {
   ApplicationLaneWakeStorageError,
   getApplicationLaneWakeIntent,
   recordApplicationLaneWakeIntent,
+  type RecordApplicationLaneWakeIntentInput,
 } from "../src/application-lane-wake-store.ts";
 import { StensiblyStore } from "../src/store.ts";
 
@@ -17,17 +18,18 @@ const observedAt = "2026-08-27T01:00:00.000Z";
 const recordedAt = new Date("2026-08-27T01:00:01.000Z");
 
 describe("durable same-item application lane wake intents", () => {
-  test("records one current admitted wake and replays its exact durable source", async () => {
+  test("compiles, records, and exactly replays one current admitted wake", async () => {
     const store = new StensiblyStore(":memory:");
     try {
       const fixture = await setup(store, "replay");
-      const stored = recordApplicationLaneWakeIntent(store, fixture.wake, recordedAt);
+      const stored = recordApplicationLaneWakeIntent(store, fixture.recordInput, recordedAt);
       const replay = recordApplicationLaneWakeIntent(
         store,
-        fixture.wake,
+        fixture.recordInput,
         new Date("2026-08-27T02:00:00.000Z"),
       );
 
+      expect(stored).toEqual(fixture.expectedWake);
       expect(replay).toEqual(stored);
       expect(getApplicationLaneWakeIntent(store, stored.idempotencyKey)).toEqual(stored);
       const count = store.db
@@ -49,9 +51,9 @@ describe("durable same-item application lane wake intents", () => {
       store.releaseItem(fixture.itemId, actor, claimed.claimGeneration);
       expect(store.getItem(fixture.itemId).claimGeneration).toBe(2);
 
-      expect(() => recordApplicationLaneWakeIntent(store, fixture.wake, recordedAt))
+      expect(() => recordApplicationLaneWakeIntent(store, fixture.recordInput, recordedAt))
         .toThrow(ApplicationLaneWakeConflictError);
-      expect(getApplicationLaneWakeIntent(store, fixture.wake.idempotencyKey)).toBeNull();
+      expect(getApplicationLaneWakeIntent(store, fixture.expectedWake.idempotencyKey)).toBeNull();
     } finally {
       store.close();
     }
@@ -69,7 +71,7 @@ describe("durable same-item application lane wake intents", () => {
         idempotencyKey: "retire-wake-store-binding",
       });
 
-      expect(() => recordApplicationLaneWakeIntent(store, fixture.wake, recordedAt))
+      expect(() => recordApplicationLaneWakeIntent(store, fixture.recordInput, recordedAt))
         .toThrow(ApplicationLaneWakeConflictError);
     } finally {
       store.close();
@@ -80,7 +82,7 @@ describe("durable same-item application lane wake intents", () => {
     const store = new StensiblyStore(":memory:");
     try {
       const fixture = await setup(store, "historical-replay");
-      const stored = recordApplicationLaneWakeIntent(store, fixture.wake, recordedAt);
+      const stored = recordApplicationLaneWakeIntent(store, fixture.recordInput, recordedAt);
 
       const claimed = store.claimItem(fixture.itemId, actor, 900);
       store.releaseItem(fixture.itemId, actor, claimed.claimGeneration);
@@ -94,7 +96,7 @@ describe("durable same-item application lane wake intents", () => {
 
       const replay = recordApplicationLaneWakeIntent(
         store,
-        fixture.wake,
+        fixture.recordInput,
         new Date("2026-08-27T03:00:00.000Z"),
       );
       expect(replay).toEqual(stored);
@@ -103,25 +105,18 @@ describe("durable same-item application lane wake intents", () => {
     }
   });
 
-  test("direct lookup survives store restart without depending on item history", async () => {
+  test("direct lookup survives store restart without depending on bounded item history", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stensibly-wake-store-"));
     const databasePath = join(directory, "stensibly.db");
     let sourceRef = "";
+    let itemId = "";
     try {
       const first = new StensiblyStore(databasePath);
       try {
         const fixture = await setup(first, "restart");
-        const stored = recordApplicationLaneWakeIntent(first, fixture.wake, recordedAt);
+        const stored = recordApplicationLaneWakeIntent(first, fixture.recordInput, recordedAt);
         sourceRef = stored.idempotencyKey;
-        for (let index = 0; index < 300; index += 1) {
-          first.appendEvent(
-            fixture.itemId,
-            "progress",
-            actor,
-            { summary: `noise-${index}` },
-            `wake-store-noise-${index}`,
-          );
-        }
+        itemId = fixture.itemId;
       } finally {
         first.close();
       }
@@ -129,7 +124,7 @@ describe("durable same-item application lane wake intents", () => {
       const second = new StensiblyStore(databasePath);
       try {
         expect(getApplicationLaneWakeIntent(second, sourceRef)).toMatchObject({
-          itemId: expect.stringContaining("item_"),
+          itemId,
           idempotencyKey: sourceRef,
           claimGeneration: 0,
         });
@@ -145,10 +140,28 @@ describe("durable same-item application lane wake intents", () => {
     const store = new StensiblyStore(":memory:");
     try {
       const fixture = await setup(store, "corruption");
-      const stored = recordApplicationLaneWakeIntent(store, fixture.wake, recordedAt);
+      const stored = recordApplicationLaneWakeIntent(store, fixture.recordInput, recordedAt);
       store.db.query(`
         UPDATE application_lane_wake_intents
         SET lane_generation = lane_generation + 1
+        WHERE source_ref = ?1
+      `).run(stored.idempotencyKey);
+
+      expect(() => getApplicationLaneWakeIntent(store, stored.idempotencyKey))
+        .toThrow(ApplicationLaneWakeStorageError);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("contains corrupted durable timestamps behind the typed storage error", async () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const fixture = await setup(store, "corrupt-time");
+      const stored = recordApplicationLaneWakeIntent(store, fixture.recordInput, recordedAt);
+      store.db.query(`
+        UPDATE application_lane_wake_intents
+        SET recorded_at = 'not-a-time'
         WHERE source_ref = ?1
       `).run(stored.idempotencyKey);
 
@@ -165,9 +178,24 @@ describe("durable same-item application lane wake intents", () => {
       const fixture = await setup(store, "time");
       expect(() => recordApplicationLaneWakeIntent(
         store,
-        fixture.wake,
+        fixture.recordInput,
         new Date("2026-08-27T00:59:59.999Z"),
       )).toThrow("Application lane wake cannot be recorded before its observation");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("does not accept an already-compiled wake object as the admission request", async () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const fixture = await setup(store, "compiled-input");
+      expect(() => recordApplicationLaneWakeIntent(
+        store,
+        fixture.expectedWake as unknown as RecordApplicationLaneWakeIntentInput,
+        recordedAt,
+      )).toThrow();
+      expect(getApplicationLaneWakeIntent(store, fixture.expectedWake.idempotencyKey)).toBeNull();
     } finally {
       store.close();
     }
@@ -185,77 +213,76 @@ async function setup(store: StensiblyStore, suffix: string) {
   });
   const bindingId = `binding:wake-store-${suffix}`;
   const laneRef = `elatura:wake-store-${suffix}`;
+  const currentBinding = {
+    version: 1,
+    id: bindingId,
+    generation: 1,
+    project: "stensibly",
+    itemId: item.id,
+    provider: "elatura",
+    laneRef,
+    laneGeneration: 1,
+    capabilities: ["events", "observe", "activate"],
+    createdAt: "2026-08-27T00:00:00.000Z",
+    retiredAt: null,
+  };
+  const registration = {
+    version: 1,
+    id: `wake-registration:${suffix}`,
+    generation: 1,
+    project: "stensibly",
+    itemId: item.id,
+    claimGeneration: item.claimGeneration,
+    bindingId,
+    bindingGeneration: 1,
+    laneRef,
+    laneGeneration: 1,
+    eventTypes: ["changed", "possible_completion"],
+    createdAt: "2026-08-27T00:30:00.000Z",
+    expiresAt: null,
+  };
+  const currentAuthority = {
+    project: "stensibly",
+    itemId: item.id,
+    claimGeneration: item.claimGeneration,
+  };
+  const event = {
+    version: 1,
+    eventId: `lane-event:wake-store-${suffix}`,
+    laneRef,
+    laneGeneration: 1,
+    eventType: "changed",
+    observedAt,
+    confidence: "exact",
+    freshness: "fresh",
+    sourceRefs: [`source:wake-store-${suffix}`],
+    grantsWorkAuthority: false,
+    authorizesWorkDispatch: false,
+  };
   const bindings = new SqliteApplicationLaneBindingStore(store);
   await bindings.bindApplicationLane({
-    binding: {
-      version: 1,
-      id: bindingId,
-      generation: 1,
-      project: "stensibly",
-      itemId: item.id,
-      provider: "elatura",
-      laneRef,
-      laneGeneration: 1,
-      capabilities: ["events", "observe", "activate"],
-      createdAt: "2026-08-27T00:00:00.000Z",
-      retiredAt: null,
-    },
+    binding: currentBinding,
     idempotencyKey: `bind-wake-store-${suffix}`,
   });
 
   const decision = compileApplicationLaneWakeIntentV1(
-    {
-      version: 1,
-      id: `wake-registration:${suffix}`,
-      generation: 1,
-      project: "stensibly",
-      itemId: item.id,
-      claimGeneration: item.claimGeneration,
-      bindingId,
-      bindingGeneration: 1,
-      laneRef,
-      laneGeneration: 1,
-      eventTypes: ["changed", "possible_completion"],
-      createdAt: "2026-08-27T00:30:00.000Z",
-      expiresAt: null,
-    },
-    {
-      version: 1,
-      id: bindingId,
-      generation: 1,
-      project: "stensibly",
-      itemId: item.id,
-      provider: "elatura",
-      laneRef,
-      laneGeneration: 1,
-      capabilities: ["events", "observe", "activate"],
-      createdAt: "2026-08-27T00:00:00.000Z",
-      retiredAt: null,
-    },
-    {
-      project: "stensibly",
-      itemId: item.id,
-      claimGeneration: item.claimGeneration,
-    },
-    {
-      version: 1,
-      eventId: `lane-event:wake-store-${suffix}`,
-      laneRef,
-      laneGeneration: 1,
-      eventType: "changed",
-      observedAt,
-      confidence: "exact",
-      freshness: "fresh",
-      sourceRefs: [`source:wake-store-${suffix}`],
-      grantsWorkAuthority: false,
-      authorizesWorkDispatch: false,
-    },
+    registration,
+    currentBinding,
+    currentAuthority,
+    event,
   );
   if (!decision.wakeIntent) throw new Error("wake fixture did not match");
+  const recordInput: RecordApplicationLaneWakeIntentInput = {
+    registration,
+    currentBinding,
+    currentAuthority,
+    event,
+  };
   return {
     itemId: item.id,
     bindingId,
     bindings,
-    wake: decision.wakeIntent,
+    recordInput,
+    expectedWake: decision.wakeIntent,
   };
 }
