@@ -7,12 +7,15 @@ import {
 import {
   ApplicationLaneBindingStorageError,
   canonicalApplicationWorkBindingInputJson,
+  compileProjectApplicationLaneBindingSnapshotV1,
   exactApplicationLaneBindingId,
   exactApplicationLaneBindingItemId,
   exactApplicationLaneBindingProject,
+  exactApplicationLaneBindingProjectReadLimit,
   parseApplicationWorkBindingInputJson,
   type ApplicationLaneBindingStore,
   type BindApplicationLaneInput,
+  type ProjectApplicationLaneBindingSnapshotV1,
   type RetireApplicationLaneBindingInput,
 } from "./application-lane-binding-store.js";
 
@@ -20,6 +23,9 @@ const bindRef = makeFunctionReference<"mutation">("applicationLaneBindings:bind"
 const getRef = makeFunctionReference<"query">("applicationLaneBindings:get");
 const listCurrentRef = makeFunctionReference<"query">(
   "applicationLaneBindings:listCurrent",
+);
+const listProjectCurrentRef = makeFunctionReference<"query">(
+  "applicationLaneBindings:listProjectCurrent",
 );
 const historyRef = makeFunctionReference<"query">("applicationLaneBindings:history");
 const retireRef = makeFunctionReference<"mutation">("applicationLaneBindings:retire");
@@ -113,6 +119,26 @@ export class ConvexApplicationLaneBindingStore
     return Object.freeze(bindings);
   }
 
+  async listProjectCurrentApplicationLaneBindings(
+    project: string,
+    limit?: number,
+  ): Promise<ProjectApplicationLaneBindingSnapshotV1> {
+    const exactProject = exactApplicationLaneBindingProject(project);
+    const exactLimit = exactApplicationLaneBindingProjectReadLimit(limit);
+    const raw = await this.client.query(listProjectCurrentRef, this.args({
+      project: exactProject,
+      limit: exactLimit,
+    }));
+    if (!Array.isArray(raw) || raw.length > exactLimit + 1) {
+      throw new ApplicationLaneBindingStorageError();
+    }
+    return compileProjectApplicationLaneBindingSnapshotV1(
+      exactProject,
+      raw.map(parseStoredBinding),
+      exactLimit,
+    );
+  }
+
   async listApplicationLaneBindingHistory(
     project: string,
     bindingId: string,
@@ -185,6 +211,8 @@ export function withConvexApplicationLaneBindingStore<T extends object>(
     getApplicationLaneBinding: service.getApplicationLaneBinding.bind(service),
     listCurrentApplicationLaneBindings:
       service.listCurrentApplicationLaneBindings.bind(service),
+    listProjectCurrentApplicationLaneBindings:
+      service.listProjectCurrentApplicationLaneBindings.bind(service),
     listApplicationLaneBindingHistory:
       service.listApplicationLaneBindingHistory.bind(service),
     retireApplicationLaneBinding: service.retireApplicationLaneBinding.bind(service),
