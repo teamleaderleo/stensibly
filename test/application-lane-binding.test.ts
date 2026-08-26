@@ -27,6 +27,8 @@ const event = {
   laneGeneration: binding.laneGeneration,
   eventType: "changed",
   observedAt: "2026-08-26T17:05:00.000Z",
+  confidence: "exact",
+  freshness: "fresh",
   sourceRefs: ["elatura:signal:42", "elatura:observation:42"],
   grantsWorkAuthority: false,
   authorizesWorkDispatch: false,
@@ -62,14 +64,12 @@ describe("Elatura application work binding", () => {
   });
 
   test("rejects browser implementation identity at the binding boundary", () => {
-    expect(() => buildApplicationWorkBindingV1({
-      ...binding,
-      tabId: 123,
-    })).toThrow("unsupported field tabId");
-    expect(() => buildApplicationWorkBindingV1({
-      ...binding,
-      browserProfile: "profile-a",
-    })).toThrow("unsupported field browserProfile");
+    expect(() => buildApplicationWorkBindingV1({ ...binding, tabId: 123 })).toThrow(
+      "unsupported field tabId",
+    );
+    expect(() => buildApplicationWorkBindingV1({ ...binding, browserProfile: "profile-a" })).toThrow(
+      "unsupported field browserProfile",
+    );
   });
 
   test("projects a matching lane event into an authority-free provider observation", () => {
@@ -90,6 +90,8 @@ describe("Elatura application work binding", () => {
         sourceObjectGeneration: binding.laneGeneration,
         itemId: binding.itemId,
         itemGeneration: binding.itemGeneration,
+        confidence: "exact",
+        freshness: "fresh",
         grantsWorkAuthority: false,
         authorizesDispatch: false,
       },
@@ -97,6 +99,33 @@ describe("Elatura application work binding", () => {
     expect(decision.observation?.fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
     expect(decision.observation?.idempotencyKey).toMatch(/^application-lane-observation:[a-f0-9]{64}$/u);
     expect(decision.decisionFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
+  });
+
+  test("preserves the Elatura signal vocabulary without assigning work semantics", () => {
+    const possibleCompletion = matchApplicationLaneEventV1(binding, {
+      ...event,
+      eventId: "elatura:event:chat-a:43",
+      eventType: "possible_completion",
+      confidence: "probable",
+    });
+    const unavailable = matchApplicationLaneEventV1(binding, {
+      ...event,
+      eventId: "elatura:event:chat-a:44",
+      eventType: "discarded_or_unavailable",
+      freshness: "stale",
+    });
+
+    expect(possibleCompletion.observation).toMatchObject({
+      eventType: "lane.possible_completion",
+      confidence: "probable",
+    });
+    expect(unavailable.observation).toMatchObject({
+      eventType: "lane.discarded_or_unavailable",
+      freshness: "stale",
+    });
+    expect(possibleCompletion.observation).not.toHaveProperty("routingLevel");
+    expect(possibleCompletion.observation).not.toHaveProperty("priority");
+    expect(possibleCompletion.observation).not.toHaveProperty("nextWork");
   });
 
   test("keeps exact replay deterministic without classifying work materiality", () => {
@@ -107,16 +136,10 @@ describe("Elatura application work binding", () => {
     });
 
     expect(second).toEqual(first);
-    expect(first.observation).not.toHaveProperty("routingLevel");
-    expect(first.observation).not.toHaveProperty("priority");
-    expect(first.observation).not.toHaveProperty("nextWork");
   });
 
   test("fences semantic lane retargeting by generation", () => {
-    expect(matchApplicationLaneEventV1(binding, {
-      ...event,
-      laneGeneration: 8,
-    })).toMatchObject({
+    expect(matchApplicationLaneEventV1(binding, { ...event, laneGeneration: 8 })).toMatchObject({
       matched: false,
       reason: "lane_generation_mismatch",
       observation: null,
@@ -141,10 +164,7 @@ describe("Elatura application work binding", () => {
     expect(matchApplicationLaneEventV1(retired, {
       ...event,
       observedAt: "2026-08-26T16:59:59.999Z",
-    })).toMatchObject({
-      matched: false,
-      reason: "event_before_binding",
-    });
+    })).toMatchObject({ matched: false, reason: "event_before_binding" });
     expect(matchApplicationLaneEventV1(retired, {
       ...event,
       observedAt: retired.createdAt,
@@ -152,32 +172,25 @@ describe("Elatura application work binding", () => {
     expect(matchApplicationLaneEventV1(retired, {
       ...event,
       observedAt: retired.retiredAt,
-    })).toMatchObject({
-      matched: false,
-      reason: "binding_retired",
-    });
+    })).toMatchObject({ matched: false, reason: "binding_retired" });
   });
 
   test("requires browser events to remain authority-free", () => {
-    expect(() => parseElaturaApplicationLaneEventV1({
-      ...event,
-      grantsWorkAuthority: true,
-    })).toThrow("zero work authority");
-    expect(() => parseElaturaApplicationLaneEventV1({
-      ...event,
-      authorizesWorkDispatch: true,
-    })).toThrow("zero work dispatch");
+    expect(() => parseElaturaApplicationLaneEventV1({ ...event, grantsWorkAuthority: true })).toThrow(
+      "zero work authority",
+    );
+    expect(() => parseElaturaApplicationLaneEventV1({ ...event, authorizesWorkDispatch: true })).toThrow(
+      "zero work dispatch",
+    );
   });
 
   test("rejects routing or browser fields in admitted lane events", () => {
-    expect(() => parseElaturaApplicationLaneEventV1({
-      ...event,
-      routingLevel: "interrupt",
-    })).toThrow("unsupported field routingLevel");
-    expect(() => parseElaturaApplicationLaneEventV1({
-      ...event,
-      selector: "[data-message-id]",
-    })).toThrow("unsupported field selector");
+    expect(() => parseElaturaApplicationLaneEventV1({ ...event, routingLevel: "interrupt" })).toThrow(
+      "unsupported field routingLevel",
+    );
+    expect(() => parseElaturaApplicationLaneEventV1({ ...event, selector: "[data-message-id]" })).toThrow(
+      "unsupported field selector",
+    );
   });
 
   test("never executes caller accessors", () => {
