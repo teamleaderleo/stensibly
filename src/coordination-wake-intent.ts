@@ -154,7 +154,7 @@ export function parseCoordinationEventSubscriptionV1(
       eventTypePattern,
     ),
     targetItemId,
-    targetGeneration: positiveInteger(input.targetGeneration, "Target generation"),
+    targetGeneration: nonNegativeInteger(input.targetGeneration, "Target generation"),
     minimumRoutingLevel: exactEnum(
       input.minimumRoutingLevel,
       coordinationRoutingLevels,
@@ -393,6 +393,13 @@ function timestamp(value: unknown, label: string): string {
 function positiveInteger(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
     throw new TypeError(`${label} must be a positive safe integer`);
+  }
+  return value;
+}
+
+function nonNegativeInteger(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`${label} must be a non-negative safe integer`);
   }
   return value;
 }
