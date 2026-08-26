@@ -4,8 +4,9 @@ import {
   type DispatchInput,
   type DispatchResult,
 } from "./dispatcher.js";
+import { reconcileWorkPromises } from "./promises.js";
 import { ensureRunExecutionSchema } from "./run-execution-store.js";
-import { ensureRunSchema } from "./runs.js";
+import { ensureRunSchema, reconcileStaleRuns } from "./runs.js";
 import {
   NotFoundError,
   type StensiblyStore,
@@ -67,6 +68,13 @@ export function dispatchExactWorkAtClaimGeneration(
   ensureRunExecutionSchema(store);
 
   const transaction = store.db.transaction((): ExactGenerationDispatchOutcome => {
+    // Keep the existing dispatcher's reconciliation semantics inside the same
+    // write fence. The nested dispatch repeats these idempotently before its
+    // savepoint, so recovery cannot move the target between our generation read
+    // and the exact claim.
+    reconcileWorkPromises(store, now);
+    reconcileStaleRuns(store, now);
+
     let current;
     try {
       current = store.getItem(itemId);
