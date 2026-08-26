@@ -1,6 +1,9 @@
 import { makeFunctionReference } from "convex/server";
 import type { ConvexCaller } from "./convex-ledger.js";
-import type { ApplicationWorkBindingV1 } from "./application-lane-binding.js";
+import {
+  buildApplicationWorkBindingV1,
+  type ApplicationWorkBindingV1,
+} from "./application-lane-binding.js";
 import {
   ApplicationLaneBindingStorageError,
   canonicalApplicationWorkBindingInputJson,
@@ -42,7 +45,12 @@ export class ConvexApplicationLaneBindingStore
   async bindApplicationLane(
     input: BindApplicationLaneInput,
   ): Promise<ApplicationWorkBindingV1> {
-    const binding = parseBindingArgument(input.binding);
+    let binding: ApplicationWorkBindingV1;
+    try {
+      binding = buildApplicationWorkBindingV1(input.binding);
+    } catch {
+      throw new ApplicationLaneBindingStorageError();
+    }
     const project = exactApplicationLaneBindingProject(binding.project);
     const raw = await this.client.mutation(bindRef, this.args({
       project,
@@ -183,63 +191,13 @@ export function withConvexApplicationLaneBindingStore<T extends object>(
   });
 }
 
-function parseBindingArgument(value: unknown): ApplicationWorkBindingV1 {
-  try {
-    if (typeof value === "string") return parseApplicationWorkBindingInputJson(value);
-    return parseApplicationWorkBindingInputJson(
-      canonicalApplicationWorkBindingInputJson(
-        // The pure builder is intentionally reached through canonical JSON so
-        // callers cannot smuggle prototype/accessor state into the hosted adapter.
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-        requireBuilder(value),
-      ),
-    );
-  } catch {
-    throw new ApplicationLaneBindingStorageError();
-  }
-}
-
-function requireBuilder(value: unknown): ApplicationWorkBindingV1 {
-  // Import lazily avoided here so adapter dependencies stay explicit.
-  // The parse helper below accepts only canonical builder-input JSON.
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new ApplicationLaneBindingStorageError();
-  }
-  const json = JSON.stringify(value);
-  if (typeof json !== "string") throw new ApplicationLaneBindingStorageError();
-  return parseApplicationWorkBindingInputJson(stableInputJson(json));
-}
-
-function stableInputJson(value: string): string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new ApplicationLaneBindingStorageError();
-  }
-  // Use the shared parser's canonical equality requirement by first admitting
-  // through the pure contract in the dynamic import-free JSON path.
-  const object = parsed as Record<string, unknown>;
-  const keys = [
-    "version",
-    "id",
-    "generation",
-    "project",
-    "itemId",
-    "provider",
-    "laneRef",
-    "laneGeneration",
-    "capabilities",
-    "createdAt",
-    "retiredAt",
-  ];
-  const normalized = Object.fromEntries(keys.map((key) => [key, object[key]]));
-  return JSON.stringify(normalized);
-}
-
 function parseStoredBinding(value: unknown): ApplicationWorkBindingV1 {
   if (typeof value !== "string") throw new ApplicationLaneBindingStorageError();
-  return parseApplicationWorkBindingInputJson(value);
+  try {
+    return parseApplicationWorkBindingInputJson(value);
+  } catch {
+    throw new ApplicationLaneBindingStorageError();
+  }
 }
 
 function exactSlug(value: string, label: string): string {
