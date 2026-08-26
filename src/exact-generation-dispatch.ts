@@ -4,6 +4,8 @@ import {
   type DispatchInput,
   type DispatchResult,
 } from "./dispatcher.js";
+import { ensureRunExecutionSchema } from "./run-execution-store.js";
+import { ensureRunSchema } from "./runs.js";
 import {
   NotFoundError,
   type StensiblyStore,
@@ -57,10 +59,12 @@ export function dispatchExactWorkAtClaimGeneration(
     ? undefined
     : exactProject(rawInput.project);
 
-  // Initialize every schema before acquiring the outer write transaction. The
-  // nested dispatch path then reuses the already-initialized schema and its own
-  // transaction becomes a savepoint.
+  // Match dispatchNextWork's schema owners before acquiring the outer write
+  // transaction. Its nested transactions can then remain savepoints around the
+  // already-initialized tables.
+  ensureRunSchema(store);
   ensureDispatchSchema(store);
+  ensureRunExecutionSchema(store);
 
   const transaction = store.db.transaction((): ExactGenerationDispatchOutcome => {
     let current;
