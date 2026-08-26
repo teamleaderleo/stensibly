@@ -358,6 +358,11 @@ describe("GitHub provider event intake", () => {
         scopes: ["admin"],
         projects: null,
       });
+      const scopedAdminToken = createApiToken(store, {
+        name: "Scoped administrator",
+        scopes: ["admin"],
+        projects: ["allowed-project"],
+      });
       const app = createServerApp(store, {
         httpAuth: { required: false },
         githubWebhook: { secret, now: () => fixedNow },
@@ -379,6 +384,11 @@ describe("GitHub provider event intake", () => {
       });
       expect(reader.status).toBe(403);
 
+      const scopedAdministrator = await app.request("/api/v1/provider-events", {
+        headers: bearer(scopedAdminToken.token),
+      });
+      expect(scopedAdministrator.status).toBe(403);
+
       const administrator = await app.request("/api/v1/provider-events", {
         headers: bearer(adminToken.token),
       });
@@ -387,6 +397,19 @@ describe("GitHub provider event intake", () => {
         events: Array<{ id: string }>;
       };
       const eventId = administratorJson.events[0]!.id;
+
+      const scopedAcknowledgement = await app.request(
+        `/api/v1/provider-events/${encodeURIComponent(eventId)}/acknowledge`,
+        {
+          method: "POST",
+          headers: {
+            ...bearer(scopedAdminToken.token),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({}),
+        },
+      );
+      expect(scopedAcknowledgement.status).toBe(403);
 
       const forgedActor = await app.request(
         `/api/v1/provider-events/${encodeURIComponent(eventId)}/acknowledge`,
