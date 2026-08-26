@@ -27,6 +27,7 @@ import {
   MCP_FAILURE_STAGE_HEADER,
   mcpToolManifestForLedger,
   type McpFailureStage,
+  type McpToolManifestIdentity,
   withMcpDiagnostics,
 } from "./mcp-diagnostics.js";
 import {
@@ -43,6 +44,7 @@ export interface McpHttpOptions {
   waitUntil?: (promise: Promise<unknown>) => void;
   createServer?: typeof createMcpServer;
   createModernServer?: typeof createModernMcpServer;
+  diagnosticManifest?: McpToolManifestIdentity;
 }
 
 interface AccessRule {
@@ -61,7 +63,7 @@ export async function handleMcpHttpRequest(
   return await withMcpDiagnostics(
     diagnosticRequest,
     response,
-    mcpToolManifestForLedger(options.ledger),
+    options.diagnosticManifest ?? mcpToolManifestForLedger(options.ledger),
   );
 }
 

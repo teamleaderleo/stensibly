@@ -2,13 +2,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createChatGptMcpServer } from "../src/chatgpt-mcp.ts";
 import {
   MCP_TOOL_COUNT_HEADER,
-  MCP_TOOL_MANIFEST_FINGERPRINT,
   MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
-  MCP_TOOL_NAMES,
 } from "../src/mcp-diagnostics.ts";
-import { createMcpServer } from "../src/mcp.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
 import { verifyHostedToolContract } from "../src/verify-hosted-tool-contract.ts";
@@ -18,7 +16,12 @@ import { withHostedMcpProviders } from "./support/hosted-mcp-ledger.ts";
 const token = `stn.tok_${"a".repeat(32)}.${"B".repeat(43)}`;
 const snapshot = JSON.parse(
   readFileSync(new URL("../docs/chatgpt-app-actions.json", import.meta.url), "utf8"),
-) as { snapshotVersion: number; toolContractFingerprint: string };
+) as {
+  snapshotVersion: number;
+  toolCount: number;
+  toolManifestFingerprint: string;
+  toolContractFingerprint: string;
+};
 
 function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -29,7 +32,7 @@ function jsonResponse(body: unknown, status = 200, headers: Record<string, strin
 
 async function currentTools(): Promise<unknown[]> {
   const store = new StensiblyStore(":memory:");
-  const server = createMcpServer(withHostedMcpProviders(
+  const server = createChatGptMcpServer(withHostedMcpProviders(
     new SqliteWorkLedger(store),
   ));
   const client = new Client(
@@ -52,13 +55,13 @@ async function currentTools(): Promise<unknown[]> {
 function contractHeaders(requestId: string): Record<string, string> {
   return {
     "x-request-id": requestId,
-    [MCP_TOOL_MANIFEST_FINGERPRINT_HEADER]: MCP_TOOL_MANIFEST_FINGERPRINT,
-    [MCP_TOOL_COUNT_HEADER]: String(MCP_TOOL_NAMES.length),
+    [MCP_TOOL_MANIFEST_FINGERPRINT_HEADER]: snapshot.toolManifestFingerprint,
+    [MCP_TOOL_COUNT_HEADER]: String(snapshot.toolCount),
   };
 }
 
-describe("hosted MCP full-contract verification", () => {
-  test("verifies live tools/list against the checked-in ChatGPT snapshot", async () => {
+describe("hosted MCP published-contract verification", () => {
+  test("verifies live tools/list against the checked-in curated ChatGPT snapshot", async () => {
     const tools = await currentTools();
     let calls = 0;
     const fetchImpl: FetchLike = async (input, init = {}) => {
@@ -89,11 +92,11 @@ describe("hosted MCP full-contract verification", () => {
     expect(result).toEqual({
       name: "remote MCP tool contract",
       ok: true,
-      detail: `200 tools=${MCP_TOOL_NAMES.length} snapshot=v${snapshot.snapshotVersion} contract=${snapshot.toolContractFingerprint}`,
+      detail: `200 tools=${snapshot.toolCount} snapshot=v${snapshot.snapshotVersion} contract=${snapshot.toolContractFingerprint}`,
     });
   });
 
-  test("fails when schema or metadata drift changes the full contract only", async () => {
+  test("fails when schema or metadata drift changes the published contract only", async () => {
     const tools = await currentTools() as Array<Record<string, unknown>>;
     const changedTools = tools.map((tool, index) =>
       index === 0

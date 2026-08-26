@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { TokenPrincipal } from "../src/auth.ts";
 import { createHostedApp } from "../src/hosted-app.ts";
 import type { WorkLedger } from "../src/ledger.ts";
+import {
+  MCP_TOOL_COUNT_HEADER,
+  MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
+} from "../src/mcp-diagnostics.ts";
+import { compileMcpExposureRegistrationPlan } from "../src/mcp-exposure-registration.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
 import type { ApiTokenAuthenticator } from "../src/token-provider.ts";
@@ -73,7 +78,13 @@ describe("hosted gateway", () => {
     ]);
   });
 
-  test("serves remote MCP from the same ledger and authenticator", async () => {
+  test("serves the curated published MCP profile from the same ledger and authenticator", async () => {
+    const published = compileMcpExposureRegistrationPlan(
+      new SqliteWorkLedger(store),
+      "published_default",
+    );
+    expect(published.manifest.tools).toHaveLength(19);
+
     const initialized = await app.request("/mcp", {
       method: "POST",
       headers: mcpHeaders(),
@@ -90,12 +101,40 @@ describe("hosted gateway", () => {
     });
     expect(initialized.status).toBe(200);
 
-    const listed = await app.request("/mcp", {
+    const discovered = await app.request("/mcp", {
       method: "POST",
       headers: mcpHeaders(),
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 2,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+    expect(discovered.status).toBe(200);
+    const discovery = await discovered.json() as {
+      result?: { tools?: Array<{ name?: string }> };
+    };
+    const names = discovery.result?.tools?.map((tool) => tool.name) ?? [];
+    expect([...names].sort()).toEqual([...published.manifest.tools].sort());
+    expect(names).toHaveLength(19);
+    expect(names).toContain("get_brief");
+    expect(names).toContain("github_create_issue");
+    expect(names).toContain("github_publish_change");
+    expect(names).not.toContain("get_operation_receipt");
+    expect(names).not.toContain("github_call_tool");
+    expect(names).not.toContain("enrol_worker");
+    expect(discovered.headers.get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)).toBe(
+      published.manifest.fingerprint,
+    );
+    expect(discovered.headers.get(MCP_TOOL_COUNT_HEADER)).toBe("19");
+
+    const listed = await app.request("/mcp", {
+      method: "POST",
+      headers: mcpHeaders(),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
         method: "tools/call",
         params: {
           name: "list_work",
@@ -133,7 +172,7 @@ describe("hosted gateway", () => {
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
-        id: 3,
+        id: 4,
         method: "initialize",
         params: {
           protocolVersion,
@@ -167,7 +206,7 @@ describe("hosted gateway", () => {
       headers: mcpHeaders(),
       body: JSON.stringify({
         jsonrpc: "2.0",
-        id: 4,
+        id: 5,
         method: "initialize",
         params: {
           protocolVersion,

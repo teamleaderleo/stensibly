@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
+  compileMcpCapabilitySubmissionAnnotations,
   mcpCapabilityPolicyRegistry,
   requireMcpCapabilityPolicy,
 } from "./mcp-capability-policy.js";
@@ -59,9 +60,10 @@ export function createMcpExposureRegistrationFilter(
   if (expected.size === 0 || expected.size !== expectedToolNames.length) {
     throw new RangeError("MCP exposure registration requires unique selected tools");
   }
-  for (const toolName of expectedToolNames) {
-    requireMcpCapabilityPolicy(toolName);
-  }
+  const policies = expectedToolNames.map((toolName) => requireMcpCapabilityPolicy(toolName));
+  const canonicalizeSubmissionAnnotations = policies.every(
+    (policy) => policy.defaultExposure === "core",
+  );
 
   const encountered = new Set<string>();
   const filtered = new Proxy(server, {
@@ -70,7 +72,7 @@ export function createMcpExposureRegistrationFilter(
         return Reflect.get(target, property, receiver);
       }
       return (toolName: string, ...args: unknown[]) => {
-        requireMcpCapabilityPolicy(toolName);
+        const policy = requireMcpCapabilityPolicy(toolName);
         if (encountered.has(toolName)) {
           throw new RangeError(`Duplicate MCP tool registration: ${toolName}`);
         }
@@ -81,7 +83,10 @@ export function createMcpExposureRegistrationFilter(
           name: string,
           ...registrationArgs: unknown[]
         ) => unknown;
-        return Reflect.apply(registerTool, target, [toolName, ...args]);
+        const registrationArgs = canonicalizeSubmissionAnnotations
+          ? withCanonicalSubmissionAnnotations(toolName, policy, args)
+          : args;
+        return Reflect.apply(registerTool, target, [toolName, ...registrationArgs]);
       };
     },
   }) as McpServer;
@@ -104,6 +109,43 @@ export function createMcpExposureRegistrationFilter(
   };
 }
 
+function withCanonicalSubmissionAnnotations(
+  toolName: string,
+  policy: ReturnType<typeof requireMcpCapabilityPolicy>,
+  args: readonly unknown[],
+): unknown[] {
+  const config = args[0];
+  if (!isRecord(config)) {
+    throw new RangeError(`MCP tool registration config is invalid: ${toolName}`);
+  }
+  const existing = config.annotations === undefined
+    ? {}
+    : isRecord(config.annotations)
+    ? config.annotations
+    : null;
+  if (!existing) {
+    throw new RangeError(`MCP tool registration annotations are invalid: ${toolName}`);
+  }
+  const canonical = compileMcpCapabilitySubmissionAnnotations(policy);
+  for (const [key, value] of Object.entries(canonical)) {
+    if (Object.hasOwn(existing, key) && existing[key] !== value) {
+      throw new RangeError(
+        `MCP publication annotation ${key} contradicts canonical policy for ${toolName}`,
+      );
+    }
+  }
+  return [
+    {
+      ...config,
+      annotations: {
+        ...existing,
+        ...canonical,
+      },
+    },
+    ...args.slice(1),
+  ];
+}
+
 function toolManifestIdentity(tools: readonly string[]): McpToolManifestIdentity {
   const canonicalTools = Object.freeze([...tools]);
   const manifestJson = JSON.stringify({
@@ -120,6 +162,10 @@ function toolManifestIdentity(tools: readonly string[]): McpToolManifestIdentity
     serverVersion: `0.0.1+manifest.${revision}`,
     tools: canonicalTools,
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function deepFreeze<T>(value: T): T {

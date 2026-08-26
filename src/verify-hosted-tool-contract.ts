@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import {
   MCP_TOOL_COUNT_HEADER,
-  MCP_TOOL_MANIFEST_FINGERPRINT,
   MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
 } from "./mcp-diagnostics.js";
 import {
@@ -37,6 +36,7 @@ const headersGet = Headers.prototype.get;
 interface ChatGptAppContractSnapshot {
   snapshotVersion: number;
   toolCount: number;
+  toolManifestFingerprint: string;
   toolContractFingerprint: string;
 }
 
@@ -107,10 +107,10 @@ export async function verifyHostedToolContract(
       metadata,
       MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
     )?.trim();
-    if (coarseFingerprint !== MCP_TOOL_MANIFEST_FINGERPRINT) {
+    if (coarseFingerprint !== snapshot.toolManifestFingerprint) {
       throw responseError(
         metadata,
-        `Expected ${MCP_TOOL_MANIFEST_FINGERPRINT_HEADER}=${MCP_TOOL_MANIFEST_FINGERPRINT}; received ${coarseFingerprint || "missing"}`,
+        `Expected ${MCP_TOOL_MANIFEST_FINGERPRINT_HEADER}=${snapshot.toolManifestFingerprint}; received ${coarseFingerprint || "missing"}`,
       );
     }
     const count = readHeader(metadata, MCP_TOOL_COUNT_HEADER)?.trim();
@@ -148,12 +148,19 @@ function readSnapshot(): ChatGptAppContractSnapshot {
 
   const snapshotVersion = parsed.snapshotVersion;
   const toolCount = parsed.toolCount;
+  const toolManifestFingerprint = parsed.toolManifestFingerprint;
   const toolContractFingerprint = parsed.toolContractFingerprint;
   if (!Number.isInteger(snapshotVersion) || (snapshotVersion as number) < 1) {
     throw new Error("ChatGPT app action snapshot version is invalid");
   }
   if (!Number.isInteger(toolCount) || (toolCount as number) < 0) {
     throw new Error("ChatGPT app action snapshot tool count is invalid");
+  }
+  if (
+    typeof toolManifestFingerprint !== "string"
+    || !SHA256_PATTERN.test(toolManifestFingerprint)
+  ) {
+    throw new Error("ChatGPT app action snapshot manifest fingerprint is invalid");
   }
   if (typeof toolContractFingerprint !== "string" || !SHA256_PATTERN.test(toolContractFingerprint)) {
     throw new Error("ChatGPT app action snapshot contract fingerprint is invalid");
@@ -162,6 +169,7 @@ function readSnapshot(): ChatGptAppContractSnapshot {
   return {
     snapshotVersion: snapshotVersion as number,
     toolCount: toolCount as number,
+    toolManifestFingerprint,
     toolContractFingerprint,
   };
 }
