@@ -9,7 +9,6 @@ import {
   canonicalApplicationWorkBindingInputJson,
   exactApplicationLaneBindingId,
   exactApplicationLaneBindingItemId,
-  exactApplicationLaneBindingProject,
   parseApplicationWorkBindingInputJson,
   retireApplicationWorkBinding,
 } from "../src/application-lane-binding-store";
@@ -85,6 +84,7 @@ export const bind = mutation({
       workspaceId: scope.workspaceId,
       projectId: scope.projectId,
       itemId: item._id,
+      itemExternalId: command.binding.itemId,
       externalId: command.binding.id,
       generation: command.binding.generation,
       provider: "elatura",
@@ -251,6 +251,7 @@ export const retire = mutation({
       workspaceId: scope.workspaceId,
       projectId: scope.projectId,
       itemId: currentRow.itemId,
+      itemExternalId: current.itemId,
       externalId: retired.id,
       generation: retired.generation,
       provider: "elatura",
@@ -358,6 +359,7 @@ function admitStoredBinding(
     workspaceId: unknown;
     projectId: unknown;
     itemId: ItemId;
+    itemExternalId: string;
     externalId: string;
     generation: number;
     provider: string;
@@ -386,6 +388,7 @@ function admitStoredBinding(
   const valid = row.workspaceId === scope.workspaceId
     && row.projectId === scope.projectId
     && row.itemId === expectedItemId
+    && row.itemExternalId === binding.itemId
     && row.externalId === binding.id
     && row.generation === binding.generation
     && row.provider === "elatura"
