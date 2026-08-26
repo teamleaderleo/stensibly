@@ -261,20 +261,34 @@ function strictRecord(value: unknown, label: string, keys: readonly string[]): R
 
 function stringList(value: unknown, label: string, maxItems: number, maxLength: number): readonly string[] {
   let isArray: boolean;
+  let prototype: object | null;
   let descriptors: PropertyDescriptorMap;
   try {
     isArray = Array.isArray(value);
+    prototype = Object.getPrototypeOf(value);
     descriptors = Object.getOwnPropertyDescriptors(value);
   } catch {
     throw new TypeError(`${label} inspection failed`);
   }
   if (!isArray) throw new TypeError(`${label} must be an array`);
+  if (prototype !== Array.prototype) throw new TypeError(`${label} must be an ordinary array`);
+  const descriptorKeys = Reflect.ownKeys(descriptors);
+  if (descriptorKeys.some((key) => typeof key === "symbol")) {
+    throw new TypeError(`${label} contains symbol decoration`);
+  }
   const lengthDescriptor = descriptors.length;
   if (!lengthDescriptor || !("value" in lengthDescriptor) || !Number.isSafeInteger(lengthDescriptor.value)) {
     throw new TypeError(`${label} length is invalid`);
   }
   const length = lengthDescriptor.value as number;
   if (length < 0 || length > maxItems) throw new RangeError(`${label} has invalid cardinality`);
+  const allowedKeys = new Set<string>(["length"]);
+  for (let index = 0; index < length; index += 1) allowedKeys.add(String(index));
+  for (const key of descriptorKeys) {
+    if (typeof key === "string" && !allowedKeys.has(key)) {
+      throw new TypeError(`${label} contains unsupported field ${key}`);
+    }
+  }
   const output: string[] = [];
   for (let index = 0; index < length; index += 1) {
     const descriptor = descriptors[String(index)];
