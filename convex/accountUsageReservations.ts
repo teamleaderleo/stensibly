@@ -7,6 +7,10 @@ import {
   type AccountUsageReservationReceipt,
   type AccountUsageSubjectKind,
 } from "../src/account-usage-reservation";
+import {
+  ACCOUNT_USAGE_WINDOW_MAX_RECEIPTS,
+  compileAccountUsageWindowEvidence,
+} from "../src/account-usage-window";
 import { containsRealisticRetainedCredential } from "../src/github-retained-credential-policy";
 import {
   findWorkspace,
@@ -47,6 +51,7 @@ const reservationResult = v.object({
 });
 
 const RECEIPT_JSON_MAX_BYTES = 8_192;
+const EVIDENCE_JSON_MAX_BYTES = 8_192;
 const boundedIdentityPattern = /^[A-Za-z0-9][A-Za-z0-9._:/#@-]*$/;
 
 export const reserve = mutation({
@@ -174,6 +179,60 @@ export const get = query({
         scope.workspaceSlug,
       ))
       : null;
+  },
+});
+
+export const readWindow = query({
+  args: {
+    ...serviceArgs,
+    subjectKind: subjectKindValidator,
+    subjectId: v.string(),
+    serviceClass: serviceClassValidator,
+    windowId: v.string(),
+    observedAt: v.string(),
+  },
+  returns: v.string(),
+  handler: async (ctx, args) => {
+    requireServiceSecret(args.serviceSecret);
+    const scope = await resolveWorkspace(ctx, args.workspace);
+    const subjectId = boundedIdentity(args.subjectId, "usage subject id", 240);
+    const windowId = boundedIdentity(args.windowId, "allowance window id", 240);
+    const rows = await ctx.db
+      .query("accountUsageReservations")
+      .withIndex(
+        "by_workspace_subject_window",
+        (q) => q
+          .eq("workspaceId", scope.workspaceId)
+          .eq("subjectKind", args.subjectKind)
+          .eq("subjectExternalId", subjectId)
+          .eq("serviceClass", args.serviceClass)
+          .eq("windowId", windowId),
+      )
+      .take(ACCOUNT_USAGE_WINDOW_MAX_RECEIPTS + 1);
+    if (rows.length > ACCOUNT_USAGE_WINDOW_MAX_RECEIPTS) {
+      throw new Error("ACCOUNT_USAGE_WINDOW_TOO_LARGE");
+    }
+    const receipts = rows.map((row) => admitStoredReceipt(
+      row,
+      scope.workspaceId,
+      scope.workspaceSlug,
+    ));
+    const evidence = compileAccountUsageWindowEvidence({
+      subject: {
+        kind: args.subjectKind,
+        id: subjectId,
+        workspace: scope.workspaceSlug,
+      },
+      serviceClass: args.serviceClass,
+      windowId,
+      observedAt: args.observedAt,
+      receipts,
+    });
+    const json = JSON.stringify(evidence);
+    if (json.length > EVIDENCE_JSON_MAX_BYTES) {
+      throw new Error("ACCOUNT_USAGE_WINDOW_EVIDENCE_JSON_INVALID");
+    }
+    return json;
   },
 });
 
