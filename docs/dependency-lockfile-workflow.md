@@ -67,10 +67,13 @@ exactly one open pull request for the source branch and requires that PR's curre
 head SHA to equal the triggering workflow head SHA.
 
 After checkout it verifies the same SHA and a clean worktree. Checkout credentials and
-the GitHub token are absent during package resolution. It generates the lock directly
-with `bun install --lockfile-only --ignore-scripts`; artifact bytes are never used as
-write input. Any changed path besides `bun.lock` aborts publication. The final push
-targets only the source branch and uses:
+an explicit GitHub token environment variable are absent during package resolution.
+The job-scoped `github.token` remains available through the Actions context, so every
+external action in this write-capable job is pinned to a reviewed immutable commit
+before package resolution runs. The writer generates the lock directly with
+`bun install --lockfile-only --ignore-scripts`; artifact bytes are never used as write
+input. Any changed path besides `bun.lock` aborts publication. The final push targets
+only the source branch and uses:
 
 ```text
 --force-with-lease=refs/heads/<branch>:<triggering-head-sha>
@@ -95,7 +98,9 @@ CI gate.
 - The writer regenerates from package declarations and never copies artifact bytes.
 - Lock generation resolves metadata without installing dependencies or executing
   package lifecycle scripts.
-- Repository credentials are unavailable during dependency resolution.
+- Checkout credentials and explicit token environment variables are absent during
+  dependency resolution; every preceding external action is commit-pinned because
+  the job-scoped token authority remains available in the Actions context.
 - A failed registry request leaves the branch unchanged.
 - Force-with-lease protects concurrent branch work.
 - Exact-SHA dispatch validation detects a branch advance between publication and CI.
