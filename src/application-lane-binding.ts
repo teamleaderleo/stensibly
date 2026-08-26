@@ -10,10 +10,13 @@ export type ApplicationLaneBindingCapability = typeof applicationLaneBindingCapa
 
 export const elaturaLaneEventTypes = [
   "changed",
-  "possible-completion",
-  "unavailable",
+  "generating",
+  "idle",
+  "possible_completion",
+  "error",
   "drifted",
-  "recovery-needed",
+  "discarded_or_unavailable",
+  "recovery_needed",
   "available",
 ] as const;
 export type ElaturaLaneEventType = typeof elaturaLaneEventTypes[number];
@@ -43,6 +46,8 @@ export interface ElaturaApplicationLaneEventV1 {
   laneGeneration: number;
   eventType: ElaturaLaneEventType;
   observedAt: string;
+  confidence: "exact" | "probable" | "unknown";
+  freshness: "fresh" | "stale" | "unknown";
   sourceRefs: readonly string[];
   grantsWorkAuthority: false;
   authorizesWorkDispatch: false;
@@ -60,6 +65,8 @@ export interface ApplicationLaneBoundObservationV1 {
   itemId: string;
   itemGeneration: number;
   observedAt: string;
+  confidence: "exact" | "probable" | "unknown";
+  freshness: "fresh" | "stale" | "unknown";
   sourceRefs: readonly string[];
   binding: Readonly<{ id: string; generation: number }>;
   grantsWorkAuthority: false;
@@ -148,6 +155,8 @@ export function parseElaturaApplicationLaneEventV1(value: unknown): ElaturaAppli
     "laneGeneration",
     "eventType",
     "observedAt",
+    "confidence",
+    "freshness",
     "sourceRefs",
     "grantsWorkAuthority",
     "authorizesWorkDispatch",
@@ -166,6 +175,8 @@ export function parseElaturaApplicationLaneEventV1(value: unknown): ElaturaAppli
     laneGeneration: positiveInteger(input.laneGeneration, "Elatura lane generation"),
     eventType: exactEnum(input.eventType, elaturaLaneEventTypes, "Elatura lane event type"),
     observedAt: timestamp(input.observedAt, "Lane event observation time"),
+    confidence: exactEnum(input.confidence, ["exact", "probable", "unknown"] as const, "Lane event confidence"),
+    freshness: exactEnum(input.freshness, ["fresh", "stale", "unknown"] as const, "Lane event freshness"),
     sourceRefs: sourceReferenceList(input.sourceRefs),
     grantsWorkAuthority: false,
     authorizesWorkDispatch: false,
@@ -233,6 +244,8 @@ function buildBoundObservation(
     itemId: binding.itemId,
     itemGeneration: binding.itemGeneration,
     observedAt: event.observedAt,
+    confidence: event.confidence,
+    freshness: event.freshness,
     sourceRefs: event.sourceRefs,
     binding: { id: binding.id, generation: binding.generation },
     grantsWorkAuthority: false as const,
