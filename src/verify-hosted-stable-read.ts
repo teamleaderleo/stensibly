@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   PROCESSING_STAGE_HEADER,
   WORKER_VERSION_CREATED_AT_HEADER,
@@ -63,11 +64,10 @@ export async function verifyHostedStableRead(
         id: 3,
         method: "tools/call",
         params: {
-          name: "survey_workspace",
+          name: "list_work",
           arguments: {
             ...(options.project ? { project: options.project } : {}),
-            limit: 1,
-            expiringWithinSeconds: 900,
+            status: "ready",
           },
         },
       }),
@@ -152,6 +152,25 @@ function readSurvey(
   } catch {
     throw new Error("MCP survey_workspace returned invalid JSON text");
   }
+
+  if (Array.isArray(parsed)) {
+    for (const item of parsed) {
+      if (!isRecord(item)) {
+        throw new Error("MCP list_work returned an invalid item");
+      }
+      if (item.status !== "ready") {
+        throw new Error("MCP list_work returned an item outside the ready filter");
+      }
+      if (expectedProject && item.project !== expectedProject) {
+        throw new Error("MCP list_work scope did not match the requested project");
+      }
+    }
+    return Object.freeze({
+      fingerprint: `sha256:${createHash("sha256").update(block.text).digest("hex")}`,
+      total: parsed.length,
+    });
+  }
+
   if (!isRecord(parsed) || parsed.version !== 1) {
     throw new Error("MCP survey_workspace returned an invalid survey version");
   }

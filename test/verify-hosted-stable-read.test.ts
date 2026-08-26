@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import {
   PROCESSING_STAGE_HEADER,
@@ -28,6 +29,19 @@ function survey(project: string | null = null) {
   };
 }
 
+function readyItems(project = "stensibly") {
+  return [{
+    id: "item_1",
+    project,
+    status: "ready",
+    title: "Published read verification",
+  }];
+}
+
+function valueFingerprint(value: unknown): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+}
+
 function toolResponse(
   value: unknown = survey(),
   headers: Record<string, string> = {},
@@ -51,8 +65,9 @@ function toolResponse(
 }
 
 describe("hosted MCP stable read verification", () => {
-  test("executes one bounded survey_workspace read and retains only bounded receipts", async () => {
+  test("executes one published list_work read and retains only bounded receipts", async () => {
     let calls = 0;
+    const items = readyItems("stensibly");
     const fetchImpl: FetchLike = async (input, init = {}) => {
       calls += 1;
       expect(new URL(String(input)).pathname).toBe("/mcp");
@@ -68,15 +83,14 @@ describe("hosted MCP stable read verification", () => {
         id: 3,
         method: "tools/call",
         params: {
-          name: "survey_workspace",
+          name: "list_work",
           arguments: {
             project: "stensibly",
-            limit: 1,
-            expiringWithinSeconds: 900,
+            status: "ready",
           },
         },
       });
-      return toolResponse(survey("stensibly"));
+      return toolResponse(items);
     };
 
     const result = await verifyHostedStableRead({
@@ -90,20 +104,18 @@ describe("hosted MCP stable read verification", () => {
     expect(result).toEqual({
       name: "remote MCP stable read",
       ok: true,
-      detail: `200 survey=${fingerprint} items=7 project=stensibly workerVersion=worker-version-1 requestId=stable-read-request-1`,
+      detail: `200 survey=${valueFingerprint(items)} items=1 project=stensibly workerVersion=worker-version-1 requestId=stable-read-request-1`,
     });
   });
 
-  test("supports an unscoped survey while preserving the null survey scope", async () => {
+  test("supports an unscoped published read", async () => {
+    const items = readyItems("another-project");
     const fetchImpl: FetchLike = async (_input, init = {}) => {
       const payload = JSON.parse(String(init.body)) as {
         params: { arguments: Record<string, unknown> };
       };
-      expect(payload.params.arguments).toEqual({
-        limit: 1,
-        expiringWithinSeconds: 900,
-      });
-      return toolResponse(survey());
+      expect(payload.params.arguments).toEqual({ status: "ready" });
+      return toolResponse(items);
     };
 
     const result = await verifyHostedStableRead({
@@ -115,7 +127,7 @@ describe("hosted MCP stable read verification", () => {
     expect(result).toEqual({
       name: "remote MCP stable read",
       ok: true,
-      detail: `200 survey=${fingerprint} items=7 workerVersion=worker-version-1 requestId=stable-read-request-1`,
+      detail: `200 survey=${valueFingerprint(items)} items=1 workerVersion=worker-version-1 requestId=stable-read-request-1`,
     });
   });
 

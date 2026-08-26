@@ -1,10 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-  MCP_SERVER_VERSION,
   MCP_TOOL_COUNT_HEADER,
-  MCP_TOOL_MANIFEST_FINGERPRINT,
   MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
-  MCP_TOOL_NAMES,
 } from "../src/mcp-diagnostics.ts";
 import {
   formatResults,
@@ -15,6 +12,9 @@ import {
 } from "../src/verify-hosted.ts";
 
 const token = `stn.tok_${"a".repeat(32)}.${"B".repeat(43)}`;
+const manifestFingerprint = `sha256:${"d".repeat(64)}`;
+const manifestToolCount = 19;
+const manifestServerVersion = `0.0.1+manifest.${manifestFingerprint.slice(7, 19)}`;
 
 function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -156,12 +156,12 @@ describe("hosted verifier checks", () => {
             result: {
               protocolVersion: "2025-06-18",
               capabilities: {},
-              serverInfo: { name: "stensibly", version: MCP_SERVER_VERSION },
+              serverInfo: { name: "stensibly", version: manifestServerVersion },
             },
           }, 200, {
             "x-request-id": "mcp-success",
-            [MCP_TOOL_MANIFEST_FINGERPRINT_HEADER]: MCP_TOOL_MANIFEST_FINGERPRINT,
-            [MCP_TOOL_COUNT_HEADER]: String(MCP_TOOL_NAMES.length),
+            [MCP_TOOL_MANIFEST_FINGERPRINT_HEADER]: manifestFingerprint,
+            [MCP_TOOL_COUNT_HEADER]: String(manifestToolCount),
           });
         }
         expect(payload.method).toBe("server/discover");
@@ -177,14 +177,14 @@ describe("hosted verifier checks", () => {
             _meta: {
               "io.modelcontextprotocol/serverInfo": {
                 name: "stensibly",
-                version: MCP_SERVER_VERSION,
+                version: manifestServerVersion,
               },
             },
           },
         }, 200, {
           "x-request-id": "mcp-discovery-success",
-          [MCP_TOOL_MANIFEST_FINGERPRINT_HEADER]: MCP_TOOL_MANIFEST_FINGERPRINT,
-          [MCP_TOOL_COUNT_HEADER]: String(MCP_TOOL_NAMES.length),
+          [MCP_TOOL_MANIFEST_FINGERPRINT_HEADER]: manifestFingerprint,
+          [MCP_TOOL_COUNT_HEADER]: String(manifestToolCount),
         });
       }
       throw new Error(`Unexpected request: ${requestUrl}`);
@@ -202,8 +202,9 @@ describe("hosted verifier checks", () => {
     expect(results[0]?.detail).toContain(
       "workerVersion=123e4567-e89b-12d3-a456-426614174000",
     );
-    expect(results[4]?.detail).toContain(`version=${MCP_SERVER_VERSION}`);
-    expect(results[4]?.detail).toContain(`manifest=${MCP_TOOL_MANIFEST_FINGERPRINT}`);
+    expect(results[4]?.detail).toContain(`version=${manifestServerVersion}`);
+    expect(results[4]?.detail).toContain(`manifest=${manifestFingerprint}`);
+    expect(results[4]?.detail).toContain(`tools=${manifestToolCount}`);
     expect(results[5]?.detail).toContain("protocol=2026-07-28");
     expect(calls).toHaveLength(6);
     const output = formatResults(results);
@@ -211,7 +212,7 @@ describe("hosted verifier checks", () => {
     expect(output).not.toContain("requestId=");
   });
 
-  test("fails MCP verification when the server manifest version is stale", async () => {
+  test("fails MCP verification when the server version contradicts its manifest receipt", async () => {
     const fetchImpl: FetchLike = async (input, init = {}) => {
       const requestUrl = new URL(String(input));
       if (requestUrl.pathname === "/health") {
@@ -247,8 +248,8 @@ describe("hosted verifier checks", () => {
         },
       }, 200, {
         "x-request-id": "stale-server-version",
-        [MCP_TOOL_MANIFEST_FINGERPRINT_HEADER]: MCP_TOOL_MANIFEST_FINGERPRINT,
-        [MCP_TOOL_COUNT_HEADER]: String(MCP_TOOL_NAMES.length),
+        [MCP_TOOL_MANIFEST_FINGERPRINT_HEADER]: manifestFingerprint,
+        [MCP_TOOL_COUNT_HEADER]: String(manifestToolCount),
       });
     };
 
@@ -259,7 +260,7 @@ describe("hosted verifier checks", () => {
     }, fetchImpl);
 
     expect(results[4]).toMatchObject({ name: "remote MCP initialize", ok: false });
-    expect(results[4]?.detail).toContain(`Expected MCP serverInfo.version=${MCP_SERVER_VERSION}`);
+    expect(results[4]?.detail).toContain(`Expected MCP serverInfo.version=${manifestServerVersion}`);
     expect(results[4]?.detail).toContain("received 0.0.1");
     expect(results[4]?.detail).toContain("requestId=stale-server-version");
   });

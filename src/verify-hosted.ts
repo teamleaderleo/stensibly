@@ -1,9 +1,6 @@
 import {
-  MCP_SERVER_VERSION,
   MCP_TOOL_COUNT_HEADER,
-  MCP_TOOL_MANIFEST_FINGERPRINT,
   MCP_TOOL_MANIFEST_FINGERPRINT_HEADER,
-  MCP_TOOL_NAMES,
 } from "./mcp-diagnostics.js";
 import { parseToken } from "./token-provider.js";
 import {
@@ -21,6 +18,8 @@ const MODERN_MCP_PROTOCOL_VERSION = "2026-07-28";
 const TOKEN_PATTERN = /stn\.tok_[a-f0-9]{32}\.[A-Za-z0-9_-]{40,}/g;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const DIAGNOSTIC_VALUE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/;
+const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const MCP_SERVER_VERSION_PREFIX = "0.0.1+manifest.";
 
 export interface VerifyHostedOptions {
   endpoint: string;
@@ -45,6 +44,12 @@ export type FetchLike = (
   input: string | URL | Request,
   init?: RequestInit,
 ) => Promise<Response>;
+
+interface McpManifestReceipt {
+  fingerprint: string;
+  toolCount: number;
+  serverVersion: string;
+}
 
 export function parseVerifyHostedArgs(
   rawArgs: string[],
@@ -219,14 +224,14 @@ export async function verifyHosted(
         `Expected MCP serverInfo.name=stensibly; received ${jsonPreview(body)}`,
       );
     }
-    if (serverInfo.version !== MCP_SERVER_VERSION) {
+    const manifest = requireMcpManifestReceipt(response);
+    if (serverInfo.version !== manifest.serverVersion) {
       throw responseError(
         response,
-        `Expected MCP serverInfo.version=${MCP_SERVER_VERSION}; received ${typeof serverInfo.version === "string" ? serverInfo.version : "missing"}`,
+        `Expected MCP serverInfo.version=${manifest.serverVersion}; received ${typeof serverInfo.version === "string" ? serverInfo.version : "missing"}`,
       );
     }
-    const manifestFingerprint = requireMcpManifestReceipt(response);
-    return `200 protocol=${LEGACY_MCP_PROTOCOL_VERSION} server=stensibly version=${MCP_SERVER_VERSION} manifest=${manifestFingerprint}`;
+    return `200 protocol=${LEGACY_MCP_PROTOCOL_VERSION} server=stensibly version=${manifest.serverVersion} manifest=${manifest.fingerprint} tools=${manifest.toolCount}`;
   }));
 
   results.push(await runCheck("remote MCP discovery", normalized, async () => {
@@ -285,14 +290,14 @@ export async function verifyHosted(
         `Expected MCP discovery serverInfo.name=stensibly; received ${jsonPreview(body)}`,
       );
     }
-    if (serverInfo.version !== MCP_SERVER_VERSION) {
+    const manifest = requireMcpManifestReceipt(response);
+    if (serverInfo.version !== manifest.serverVersion) {
       throw responseError(
         response,
-        `Expected MCP discovery serverInfo.version=${MCP_SERVER_VERSION}; received ${typeof serverInfo.version === "string" ? serverInfo.version : "missing"}`,
+        `Expected MCP discovery serverInfo.version=${manifest.serverVersion}; received ${typeof serverInfo.version === "string" ? serverInfo.version : "missing"}`,
       );
     }
-    const manifestFingerprint = requireMcpManifestReceipt(response);
-    return `200 protocol=${MODERN_MCP_PROTOCOL_VERSION} server=stensibly version=${MCP_SERVER_VERSION} manifest=${manifestFingerprint}`;
+    return `200 protocol=${MODERN_MCP_PROTOCOL_VERSION} server=stensibly version=${manifest.serverVersion} manifest=${manifest.fingerprint} tools=${manifest.toolCount}`;
   }));
 
   return results;
@@ -467,24 +472,31 @@ function requireWorkerReceipt(response: Response): string {
   return versionId;
 }
 
-function requireMcpManifestReceipt(response: Response): string {
+function requireMcpManifestReceipt(response: Response): McpManifestReceipt {
   const fingerprint = response.headers
     .get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)
     ?.trim();
-  if (fingerprint !== MCP_TOOL_MANIFEST_FINGERPRINT) {
+  if (!fingerprint || !SHA256_PATTERN.test(fingerprint)) {
     throw responseError(
       response,
-      `Expected ${MCP_TOOL_MANIFEST_FINGERPRINT_HEADER}=${MCP_TOOL_MANIFEST_FINGERPRINT}; received ${fingerprint || "missing"}`,
+      `Expected a sha256 ${MCP_TOOL_MANIFEST_FINGERPRINT_HEADER}; received ${fingerprint || "missing"}`,
     );
   }
-  const count = response.headers.get(MCP_TOOL_COUNT_HEADER)?.trim();
-  if (count !== String(MCP_TOOL_NAMES.length)) {
+
+  const rawCount = response.headers.get(MCP_TOOL_COUNT_HEADER)?.trim();
+  if (!rawCount || !/^[1-9][0-9]{0,3}$/.test(rawCount)) {
     throw responseError(
       response,
-      `Expected ${MCP_TOOL_COUNT_HEADER}=${MCP_TOOL_NAMES.length}; received ${count || "missing"}`,
+      `Expected a positive bounded ${MCP_TOOL_COUNT_HEADER}; received ${rawCount || "missing"}`,
     );
   }
-  return fingerprint;
+  const toolCount = Number(rawCount);
+  const revision = fingerprint.slice("sha256:".length, "sha256:".length + 12);
+  return Object.freeze({
+    fingerprint,
+    toolCount,
+    serverVersion: `${MCP_SERVER_VERSION_PREFIX}${revision}`,
+  });
 }
 
 function responseError(response: Response, message: string): Error {
