@@ -257,6 +257,7 @@ describe("dashboard project setup-status wiring", () => {
     expect(entry).toContain('id=\"project-setup-status-panel\"');
     expect(entry).toContain("saved advisory repository proposal");
     expect(entry).toContain("Proposed repository");
+    expect(entry).toContain("recovery.requested.workProfile === 'draft_pr' ? 'Build' : 'Read only'");
     expect(entry).toContain("review STENSIBLY.md");
     expect(reader).toContain("repositorySetupObservation");
     expect(reader).not.toContain("authorityNotice:");

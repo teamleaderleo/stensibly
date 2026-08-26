@@ -127,6 +127,7 @@ export function projectAttachmentRecovery(
       "propose",
       "record_progress",
       "attach_artifact",
+      "github_issue_write",
       "create_draft_pr",
     ];
 

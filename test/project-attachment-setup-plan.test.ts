@@ -35,6 +35,7 @@ describe("project attachment setup recovery", () => {
           "propose",
           "record_progress",
           "attach_artifact",
+          "github_issue_write",
           "create_draft_pr",
         ],
         checks: ["bun run typecheck", "bun test"],
@@ -82,23 +83,29 @@ describe("project attachment setup recovery", () => {
     expect(projectAttachmentRecovery("scrapbook", current, scrapbookContext)).toBeNull();
   });
 
-  test("keeps read-only and draft-PR profiles visibly distinct", () => {
+  test("keeps read-only narrow and makes the normal profile useful for GitHub work", () => {
     const readOnly = projectAttachmentRecovery("scrapbook", null, {
       ...scrapbookContext,
       workProfile: "read_only",
     });
-    expect(readOnly && "requested" in readOnly
+    const readOnlyActions = readOnly && "requested" in readOnly
       ? readOnly.requested.autonomousActions
-      : null).toEqual([
+      : null;
+    expect(readOnlyActions).toEqual([
       "inspect",
       "propose",
       "record_progress",
       "attach_artifact",
     ]);
-    const draft = projectAttachmentRecovery("scrapbook", null, scrapbookContext);
-    expect(draft && "requested" in draft
-      ? draft.requested.autonomousActions
-      : null).toContain("create_draft_pr");
+    expect(readOnlyActions).not.toContain("github_issue_write");
+    expect(readOnlyActions).not.toContain("create_draft_pr");
+
+    const build = projectAttachmentRecovery("scrapbook", null, scrapbookContext);
+    const buildActions = build && "requested" in build
+      ? build.requested.autonomousActions
+      : null;
+    expect(buildActions).toContain("github_issue_write");
+    expect(buildActions).toContain("create_draft_pr");
   });
 
   test("canonicalizes profile ordering but preserves explicit check ordering", () => {

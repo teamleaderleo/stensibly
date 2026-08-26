@@ -327,7 +327,7 @@ function repositorySection(setup) {
   section.append(
     fact('Repository', recovery.repository.fullName),
     fact('Default branch', recovery.repository.defaultBranch),
-    fact('Work profile', recovery.requested.workProfile === 'draft_pr' ? 'Draft pull request' : 'Read only'),
+    fact('Work profile', recovery.requested.workProfile === 'draft_pr' ? 'Build' : 'Read only'),
     fact('Runner profiles', recovery.requested.runnerProfiles.join(', ')),
   );
   if (recovery.requested.checks.length) {
