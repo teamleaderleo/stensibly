@@ -185,7 +185,10 @@ export function compileApplicationLaneWakeIntentV1(
   else if (registration.laneRef !== binding.laneRef) reason = "lane_ref_mismatch";
   else if (registration.laneGeneration !== binding.laneGeneration) reason = "lane_generation_mismatch";
   else {
-    const admitted = matchApplicationLaneEventV1(binding, event);
+    // Reuse #1730's raw-input admission path. The canonical binding above adds
+    // derived fields (fingerprint and zero-authority flags) that intentionally
+    // do not belong to the strict ApplicationWorkBindingV1 creation input.
+    const admitted = matchApplicationLaneEventV1(currentBindingValue, eventValue);
     if (!admitted.matched) {
       reason = admitted.reason === "lane_ref_mismatch"
         ? "event_lane_ref_mismatch"
