@@ -31,7 +31,6 @@ export interface HostedExactDispatchInput {
   readonly continuationRef?: string;
   readonly executionEnvelope: ExecutionEnvelope;
   readonly eventSource: string;
-  readonly sourceEvidence?: Record<string, unknown>;
   readonly now: number;
 }
 
@@ -148,9 +147,6 @@ export async function dispatchHostedExactGeneration(
     createdAt: input.now,
   });
 
-  const optionalEvidence = input.sourceEvidence === undefined
-    ? {}
-    : { sourceEvidence: input.sourceEvidence };
   await appendEvent(ctx, {
     workspaceId: current.workspaceId,
     projectId: current.projectId,
@@ -162,7 +158,6 @@ export async function dispatchHostedExactGeneration(
       leaseSeconds: input.leaseSeconds,
       expiresAt: new Date(leaseExpiresAt).toISOString(),
       source: input.eventSource,
-      ...optionalEvidence,
     },
     createdAt: input.now,
   });
@@ -184,7 +179,6 @@ export async function dispatchHostedExactGeneration(
       source: input.eventSource,
       readyPromiseWakeups: 0,
       envelopeSchemaVersion: input.executionEnvelope.schemaVersion,
-      ...optionalEvidence,
     },
     createdAt: input.now,
   });
