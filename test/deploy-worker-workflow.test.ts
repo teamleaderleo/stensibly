@@ -4,6 +4,31 @@ const workflowPath = new URL("../.github/workflows/deploy-worker.yml", import.me
 const workflow = await Bun.file(workflowPath).text();
 
 describe("production Worker deployment workflow", () => {
+  test("pins every external action and the Bun runtime", () => {
+    const actionReferences = [...workflow.matchAll(/uses:\s+[^@\s]+@([^\s]+)/gu)];
+
+    expect(actionReferences).toHaveLength(5);
+    for (const [, revision] of actionReferences) {
+      expect(revision).toMatch(/^[0-9a-f]{40}$/u);
+    }
+    expect(
+      workflow.match(
+        /actions\/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6\.1\.0/g,
+      ),
+    ).toHaveLength(2);
+    expect(
+      workflow.match(
+        /oven-sh\/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2\.2\.0/g,
+      ),
+    ).toHaveLength(2);
+    expect(workflow).toContain(
+      "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2",
+    );
+    expect(workflow.match(/bun-version: 1\.4\.0/g)).toHaveLength(2);
+    expect(workflow).toContain("permissions:\n  contents: read");
+    expect(workflow).not.toContain("issues: write");
+  });
+
   test("deploys relevant main changes automatically and keeps manual recovery", () => {
     expect(workflow).toContain("push:");
     expect(workflow).toContain("branches:");
