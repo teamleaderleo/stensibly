@@ -1,13 +1,14 @@
 # Application lane bindings
 
 Owner: #1729  
-Elatura counterpart: teamleaderleo/elatura#116
+Elatura counterpart: teamleaderleo/elatura#116  
+Elatura product record: teamleaderleo/elatura#119 and `docs/application-lanes.md`
 
 ## Purpose
 
 Attach one current Stensibly work/responsibility generation to one opaque Elatura application lane generation.
 
-The binding is a cross-reference. Stensibly continues to own work, wake policy, dispatch, continuation, and authority. Elatura continues to own the live application and its browser/runtime projection.
+The binding is a cross-reference. Stensibly owns work, wake policy, dispatch, continuation, and authority. Elatura owns the live application and its browser/runtime projection.
 
 ```text
 itemId + itemGeneration
@@ -45,6 +46,22 @@ A match requires:
 - exact lane generation;
 - event time within the binding lifetime.
 
+The admitted event vocabulary mirrors Elatura's application-local signal vocabulary:
+
+```text
+changed
+generating
+idle
+possible_completion
+error
+drifted
+discarded_or_unavailable
+recovery_needed
+available
+```
+
+Each event also carries Elatura's application-local confidence and freshness. Stensibly preserves those facts without turning them into work priority or authority.
+
 A successful match emits `ApplicationLaneBoundObservationV1`:
 
 ```text
@@ -54,6 +71,7 @@ sourceObjectRef = laneRef
 sourceObjectGeneration = laneGeneration
 eventType = lane.<elatura-event-type>
 itemId + itemGeneration
+confidence + freshness
 sourceRefs
 binding id + generation
 grantsWorkAuthority = false
@@ -61,7 +79,7 @@ authorizesDispatch = false
 fingerprint + idempotencyKey
 ```
 
-The adapter performs no materiality classification, priority assignment, continuation creation, dispatch, application action, or authority grant.
+The adapter performs zero materiality classification, priority assignment, continuation creation, dispatch, application action, or authority grant.
 
 Exact replay produces the same observation and idempotency identity.
 
@@ -69,7 +87,7 @@ Exact replay produces the same observation and idempotency identity.
 
 ### Same-item wake
 
-#46 owns durable current-generation wake conditions. A bound `provider_observation` can satisfy an exact application-event condition such as `lane.changed` or `lane.possible-completion` after the owning intake path admits/classifies it.
+#46 owns durable current-generation wake conditions. A bound `provider_observation` can satisfy an exact application-event condition such as `lane.changed`, `lane.possible_completion`, or `lane.recovery_needed` after the owning intake path classifies its relevance to current work.
 
 ### Cross-item wake
 
@@ -77,7 +95,7 @@ Exact replay produces the same observation and idempotency identity.
 
 ### Worker brief
 
-#1616 may surface the binding as one current tool/source reference in a worker brief. The brief gains no authority from the binding.
+#1616 may surface the binding as one current tool/source reference in a worker brief. The brief gains zero authority from the binding.
 
 ### Application operations
 
