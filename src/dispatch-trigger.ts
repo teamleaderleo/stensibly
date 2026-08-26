@@ -124,22 +124,27 @@ export function applicationLaneWakeToDispatchTriggerV1(value: unknown): Dispatch
 }
 
 function strictRecord(value: unknown, label: string, keys: readonly string[]): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (value === null || typeof value !== "object") {
     throw new TypeError(`${label} must be an object`);
   }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new TypeError(`${label} must be a plain object`);
-  }
-  if (Object.getOwnPropertySymbols(value).length > 0) {
-    throw new TypeError(`${label} contains symbol decoration`);
-  }
+  let isArray: boolean;
+  let prototype: object | null;
+  let symbols: symbol[];
   let descriptors: PropertyDescriptorMap;
   try {
+    isArray = Array.isArray(value);
+    prototype = Object.getPrototypeOf(value);
+    symbols = Object.getOwnPropertySymbols(value);
     descriptors = Object.getOwnPropertyDescriptors(value);
   } catch {
     throw new TypeError(`${label} inspection failed`);
   }
+  if (isArray) throw new TypeError(`${label} must be an object`);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${label} must be a plain object`);
+  }
+  if (symbols.length > 0) throw new TypeError(`${label} contains symbol decoration`);
+
   const output: Record<string, unknown> = {};
   for (const [key, descriptor] of Object.entries(descriptors)) {
     if (!descriptor.enumerable || !("value" in descriptor)) {
