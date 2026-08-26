@@ -109,7 +109,7 @@ describe("remote MCP", () => {
     });
     const ledger = new SqliteWorkLedger(store);
     let eventWrites = 0;
-    ledger.getItemProject = async () => {
+    ledger.getItem = async () => {
       throw new Error("synthetic project lookup failure");
     };
     const recordEvent = ledger.recordEvent.bind(ledger);
