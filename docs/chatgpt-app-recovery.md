@@ -1,68 +1,59 @@
 # ChatGPT app latest-manifest and coexistence recovery
 
-This runbook covers the #490 failure mode where ChatGPT discovers Stensibly actions, a later call fails before reaching the Worker, the Stensibly namespace disappears, or another app becomes forbidden inside the same conversation.
+This runbook covers the #490 failure mode where ChatGPT discovers Stensibly actions, a later call fails before reaching the Worker, the Stensibly namespace disappears, or another app becomes unavailable inside the same conversation.
 
-## Current release
+## Current published profile
 
-The hosted production composition defines **52** public MCP tools with two release fingerprints:
+Normal hosted ChatGPT publication uses the reviewed **`published_default`** profile with **19** outcome-level MCP tools. The complete current list lives in [`docs/chatgpt-app-actions.json`](chatgpt-app-actions.json), which is the release receipt and canonical owner for the published action set.
 
 ```text
-full ChatGPT tool contract: sha256:1a0f755cce23354b67c049de774f17c723ed2c2f9823c57ed0abc87b07540834
-names-only diagnostic:       sha256:320eac8917e10b5bb8528e48f95a17311ea246940561e7dcccde943ec67d4745
+published ChatGPT tool contract: sha256:68fd7b40327d970cd574909abe3a064ee0e317b20a60fd227ed3c2dfa497698f
+names-only diagnostic:            sha256:482bfea495a3aab3789b9e2f6dfae9de0414f8cf7a42879aa37b67713eb1fb07
 ```
 
-The hosted contract includes `github_call_tool`, registered only when the guarded delegated GitHub provider is mounted, and `enrol_worker`, registered only when the durable worker-enrolment provider is mounted. An unmounted local/core server has 50 tools; a server with only one optional provider has 51; the production composition has both and reports 52. Each composition reports its own matching count, fingerprint, and server version. The full-contract fingerprint above covers the exact production tool names, descriptions, annotations, and input schemas; it is the ChatGPT refresh checkpoint. The names-only fingerprint remains useful for transport diagnostics and coarse hosted tool-surface identity.
+The public profile keeps frequent work coordination, project context, bounded GitHub issue work, repository health/CI diagnosis, reviewed publication, and PR landing immediately visible. Each visible tool carries canonical `readOnlyHint`, `destructiveHint`, and `openWorldHint` metadata derived from the capability policy.
 
-Stensibly dogfood supports the **latest manifest only**. The checked-in action file records the current server release. It is not a historical client-compatibility fixture.
+The broader **`full_internal`** profile remains available to explicit internal/admin clients. It retains long-tail provider discovery, receipts, worker enrolment, continuation machinery, low-level repository primitives, and recovery operations. Public visibility and backend capability stay separate.
 
-ChatGPT keeps approved custom-app tools and inputs as a frozen snapshot. Server changes do not appear automatically. A refresh, rescan, or app recreation is therefore part of every Stensibly release that changes a public tool name, description, annotation, or input schema.
+Stensibly dogfood supports the **latest manifest only**. ChatGPT keeps approved custom-app actions as a frozen snapshot, so every change to a published tool name, description, annotation, or input schema requires a refresh, rescan, or app recreation.
 
-Before a dogfood run begins:
+Before a dogfood run:
 
-1. update `docs/chatgpt-app-actions.json` to the current server manifest;
+1. update `docs/chatgpt-app-actions.json` from the exact candidate contract;
 2. refresh, rescan, or recreate the ChatGPT app;
 3. review and enable the current actions;
-4. start a new conversation using the refreshed app;
-5. treat any older visible action set as stale host state, not a supported execution mode.
+4. start a fresh conversation using that action snapshot;
+5. compare the visible action count and contract identity with the release receipt.
 
-## GitHub tool-surface policy
+## Normal agent workflow
 
-Keep a compact set of frequent Stensibly workflow tools and GitHub discovery tools immediately visible. Group the broader GitHub surface by workflow and retrieve it on demand.
+The public profile is designed so an agent can understand the project and complete common work without learning internal policy vocabulary.
 
-- use `get_github_project_context` for the last accepted project-scoped GitHub issue context when direct provider execution is unavailable or continuity evidence is needed;
-- use `enrol_worker` once per participating chat with a stable session ID; normally omit `callsign` so Stensibly assigns a pool-backed name and sigil, optionally pass one broad `callsignCategory`, and use an explicit callsign only when deliberately requested; the server derives ownership, project scope, replay protection, short expiry, and callsign lease attribution, and the resulting presence record grants no work or provider authority;
-- pass that active `workerRef` plus the current run ID to `github_add_issue_comment` so Stensibly resolves the canonical callsign and lease generation; explicit `signoff` remains the migration and recovery fallback;
-- use `remember_project_repository_setup` to durably save a pre-attachment repository/default-branch proposal after those facts are observed in the conversation; the saved proposal grants zero provider or attachment authority, and replacing a different proposal requires the current observation id;
-- use `github_create_issue`, `github_update_issue`, and `github_add_issue_comment` only with one explicit idempotency key per intended effect;
-- use `github_create_branch` only for an absent branch at one exact source commit, with one explicit idempotency key;
-- use `github_create_file` and `github_update_file` only on an existing non-default branch, with an exact expected parent commit SHA; updates also require the exact current content SHA;
-- production mounts branch and pull-request publication only when the guarded
-  `STENSIBLY_GITHUB_PUBLICATION_WRITES_ENABLED=true` binding is present;
-- use `github_create_pull_request` only with exact expected head and base commit SHAs plus one explicit idempotency key;
-- use `github_repo_health` before a new repository workflow, `github_branch_tidy` for a non-mutating exact-SHA cleanup plan, and `github_ci_diagnose` for bounded PR-to-job failure traversal;
-- use `github_land_pr` only under a current runner lease with an atomically fenced head and freshly observed base; it requires positive successful CI evidence, durably reserves the merge, rejects unresolved review threads, verifies the resulting commit's base parent, sends base races to reconciliation, and deliberately leaves branch cleanup separate;
-- reconcile an ambiguous file write through `get_github_repository_write_receipt` before retrying the exact request;
-- reconcile an ambiguous or lost GitHub write through `get_github_provider_receipt` before retrying the exact request;
-- initial label and assignee changes remain outside the public GitHub write surface;
-- use host-native tool search or deferred loading when the host supports it;
-- keep `github_list_toolsets`, `github_search_tools`, and `github_get_tool` as the ChatGPT-compatible discovery fallback;
-- through guarded `github_call_tool`, use `list_directory` only with an exact immutable commit SHA and an explicit root `""` or canonical relative directory, and use `resolve_ref` only with a fully-qualified `refs/heads/...` or `refs/tags/...` identity before consuming the returned immutable commit SHA;
-- load or return exact schemas before execution;
-- validate a delegated call against the catalogue schema, project binding, repository scope, authority, approval policy, and provider budget;
-- keep write and admin operations approval-aware;
-- do not expose one universal unvalidated argument tunnel as the primary interface.
+- use `get_brief`, `list_work`, `get_item`, and `get_project_attachment` for project/work context;
+- use `claim_work`, `block_work`, `unblock_work`, `complete_work`, and `handoff_work` for ordinary work transitions;
+- use `github_repo_health` before a consequential repository workflow;
+- use `github_search_issues`, `github_get_issue`, `github_create_issue`, `github_update_issue`, and `github_add_issue_comment` for the normal GitHub issue loop;
+- use one explicit idempotency key for each intended GitHub write;
+- use `github_ci_diagnose` for bounded PR-to-job failure diagnosis;
+- use `github_publish_change` for the reviewed outcome-level branch/file/draft-PR publication path with exact revision fences;
+- use `github_land_pr` only with current runner authority and successful exact-head evidence;
+- follow typed ambiguity/reconciliation guidance before replaying a write whose provider outcome is uncertain.
 
-The catalogue is a routing layer. Typed first-party actions remain appropriate where exact inputs, stale-version checks, readback verification, receipts, or recovery semantics improve execution. Accepted GitHub context remains provider evidence and project continuity; it does not create a claim, lease, approval, capability grant, or GitHub write authority.
+Low-level repository write primitives, generic delegated-provider dispatch, explicit receipt reads, worker enrolment, and supervisor/continuation administration live in discovery/internal profiles. They remain available where recovery or internal dogfood requires them without crowding normal ChatGPT tool selection.
+
+## Human setup relationship
+
+The dashboard presents the normal repository work profile as **Build**. Build proposes routine project-scoped GitHub issue work plus draft-PR preparation while consequential merge/deploy/provider/permission effects remain approval-gated. The accepted project attachment remains the authority owner; MCP publication only controls which tools are visible to the agent.
 
 ## Refresh path
 
 ### Enterprise or Edu published app
 
 1. Open **Workspace Settings → Apps**.
-2. Open Stensibly's menu and choose **Action control**.
-3. Select **Refresh** to scan the current MCP actions.
+2. Open Stensibly and choose **Action control**.
+3. Select **Refresh**.
 4. Review the action-definition diff.
-5. Enable the current actions required for dogfood.
+5. Enable the current published actions.
 
 ### Business published app
 
@@ -70,32 +61,21 @@ Recreate and republish the app when the published action set or metadata changes
 
 ### Developer-mode draft
 
-Use **Scan Tools** after every public tool or schema change, review the result, and recreate the draft when scanning cannot adopt the current definition cleanly.
+Use **Scan Tools** after a published action or schema change. Review the result and recreate the draft when scanning cannot adopt the current definition cleanly.
 
-Reconnect OAuth when ChatGPT presents a Worker-visible authentication failure or an expired connection. OAuth changes do not repair a call that vanished before network dispatch.
+Reconnect OAuth when ChatGPT presents a Worker-visible authentication failure or an expired connection. A call that vanished before network dispatch belongs to the host/conversation binding layer.
 
-## Mixed GitHub and Stensibly proof
+## Representative fresh-connection proof
 
-Use a new normal ChatGPT conversation with the refreshed Stensibly app and GitHub selected explicitly. Keep agent mode and company knowledge outside this write-capable proof.
+Use a new normal ChatGPT conversation with the refreshed Stensibly app. Exercise the public profile as a user would:
 
-Use one unique run identity and idempotency prefix. Execute the sequence in separate visible checkpoints:
-
-```text
-GitHub read → Stensibly read → GitHub read → Stensibly read
-→ Stensibly idempotent write → GitHub comment
-→ Stensibly receipt/read-after-write → GitHub read
-```
-
-Recommended calls:
-
-1. GitHub: read #490 and current `main`.
-2. Stensibly: `get_github_project_context` for one exact accepted issue, then `survey_workspace` or `get_brief`.
-3. GitHub: add a pre-write checkpoint comment.
-4. Stensibly: `get_continuation` or `get_item`.
-5. Stensibly: create one uniquely named item with an idempotency key.
-6. Stensibly: create or comment on one dedicated dogfood GitHub issue with a separate idempotency key.
-7. Stensibly: reconcile through `get_github_provider_receipt`, `get_operation_receipt`, or a bounded read-after-write.
-8. GitHub: read #490 and the affected issue again.
+1. read one project with `get_brief` and `get_project_attachment`;
+2. find useful work with `list_work` and inspect one item;
+3. run `github_repo_health` and find one issue through `github_search_issues` or `github_get_issue`;
+4. perform one permitted issue create/update/comment workflow with a unique idempotency key;
+5. prepare one bounded repository change through `github_publish_change` when the project contract permits it;
+6. verify the agent can explain why merge/deploy remains gated when approval is required;
+7. exercise one ambiguous-effect recovery scenario and confirm the agent follows the returned reconciliation instruction without duplicate provider effect.
 
 Record the first transition where discovery, executable binding, network dispatch, server processing, result delivery, or another app changes.
 
@@ -103,81 +83,59 @@ Record the first transition where discovery, executable binding, network dispatc
 
 ### Stale ChatGPT action snapshot
 
-Evidence:
+Evidence: the visible action count/names differ from the current 19-action release receipt, or recently changed definitions are absent.
 
-- ChatGPT exposes fewer or different actions than the current release;
-- the app was created or refreshed before the current manifest;
-- newly added or changed definitions are absent.
-
-Action: refresh, rescan, or recreate the app before continuing the dogfood run. Do not spend server effort preserving that stale action set.
+Action: refresh, rescan, or recreate the app and start a fresh conversation.
 
 ### Current snapshot and server disagree
 
-Evidence:
+Evidence: the refreshed app reaches `/mcp`, while the live tool schema, count, names-only fingerprint, or full contract differs from `docs/chatgpt-app-actions.json`.
 
-- the app was refreshed against the current release;
-- a selected action reaches `/mcp` but fails request validation because the live schema differs from the reviewed action definition;
-- the response carries Stensibly Worker receipts and typed request-validation evidence.
-
-Action: treat this as a release defect. Reconcile the current action file, server implementation, deployed revision, and refreshed ChatGPT app, then repeat from a new conversation.
+Action: treat this as a release defect. Reconcile the exact server revision, release receipt, deployment, and refreshed ChatGPT app before continuing.
 
 ### ChatGPT host binding or conversation registry failure
 
-Evidence:
+Evidence: discovery shows the current action, then a direct call returns `Resource not found`, loses its binding, or changes another app's eligibility; Stensibly receives no request and emits no Worker request ID or MCP contract headers.
 
-- the current app schema appears during discovery;
-- a direct call returns `Resource not found`, loses its tool binding, or changes another app's eligibility;
-- Stensibly receives no request;
-- no Worker request ID, version receipt, response stage, manifest fingerprint, or tool-count header exists.
+This occurs **before network dispatch**. Preserve the evidence and reproduce from a fresh conversation before escalating the host failure.
 
-This failure occurs before network dispatch. Server retries, schema changes, and OAuth changes cannot repair that specific call. Start a new conversation, preserve the evidence, and escalate the host failure to OpenAI.
+### OAuth or project access failure
 
-### OAuth or workspace access failure
+Evidence: the request reaches `/mcp`; the response carries Stensibly diagnostics and reports authentication, token authority, scope, or project access.
 
-Evidence:
-
-- the request reaches `/mcp`;
-- the response carries Stensibly Worker and manifest receipts;
-- the response reports authentication, token authority, authorization, scope, or project access.
-
-Action: reconnect OAuth, inspect requested scopes and project access, then follow the bounded diagnostic action returned by the server.
+Action: reconnect OAuth or correct project/scope admission, then retry according to the bounded diagnostic.
 
 ### Stensibly gateway or MCP failure
 
-Evidence:
+Evidence: the response carries `x-stensibly-mcp-tool-manifest-fingerprint` and `x-stensibly-mcp-tool-count`, plus bounded failure data identifying stage and retry/reconciliation guidance.
 
-- the response carries `x-stensibly-mcp-tool-manifest-fingerprint` and `x-stensibly-mcp-tool-count`;
-- a bounded `error.data` object identifies the layer, stage, retry safety, reconciliation requirement, and next action.
-
-Action: follow the typed diagnostic. Reconcile any ambiguous write through `get_github_provider_receipt`, `get_operation_receipt`, or read-after-write before replay.
+Action: follow that guidance. For an ambiguous provider effect, reconcile/read back before replay.
 
 ## OpenAI support evidence packet
 
-Capture one packet for the first clean host-side reproduction:
+Capture the smallest packet that identifies the first host-side failure:
 
 - absolute timestamp with timezone;
 - ChatGPT conversation URL and workspace plan;
 - browser or desktop-app version;
 - Stensibly app name, draft/published state, and visible action count;
-- exact prompt and tool selected;
-- the previous successful GitHub and Stensibly checkpoints;
-- the first `Resource not found` or `FORBIDDEN` text;
-- confirmation of the expected server manifest count and fingerprint;
-- confirmation that the failed call produced no Stensibly Worker receipt;
-- whether the app was refreshed or recreated against the current release;
-- browser console export and HAR captured around the failure;
-- whether a new conversation, app refresh, app recreation, and OAuth reconnect changed the result.
+- exact prompt and selected tool;
+- first failure text;
+- expected published count and fingerprints from the release receipt;
+- whether the failed call produced a Stensibly request/diagnostic receipt;
+- whether refresh/recreation, a fresh conversation, or OAuth reconnect changed the result;
+- browser console export and **HAR** when the failure occurs before or around dispatch.
 
 Remove credentials, cookies, OAuth codes, tokens, and private project payloads before sharing the packet.
 
 ## Repository release rule
 
-`docs/chatgpt-app-actions.json` is the current ChatGPT action release receipt.
+`docs/chatgpt-app-actions.json` owns the current ChatGPT publication receipt.
 
-- it tracks the current public manifest only;
-- its full-contract fingerprint must change when a public tool name, description, annotation, or input schema changes;
-- any public tool or schema change requires refresh, rescan, or recreation before dogfood;
-- historical ChatGPT action sets are outside the support target;
-- the complete latest-manifest journey must pass after refresh;
-- host-native lazy loading is preferred where available;
-- the stable searchable catalogue remains the fallback for hosts that freeze a compact app surface.
+- `published_default` is the normal ChatGPT profile;
+- `full_internal` stays available for explicit internal/admin use;
+- public visibility changes rotate the names-only manifest identity;
+- public name/description/annotation/input-schema changes rotate the full contract identity;
+- any public contract change enters the refresh/rescan/recreation flow before dogfood;
+- the representative fresh-connection proof passes before directory submission;
+- historical action snapshots remain available through Git history instead of becoming supported live modes.

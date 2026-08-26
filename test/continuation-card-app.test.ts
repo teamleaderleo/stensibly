@@ -13,7 +13,7 @@ const agent = { id: "agent", name: "Agent", kind: "agent" as const };
 const leo = { id: "leo", name: "Leo", kind: "human" as const };
 
 describe("ChatGPT continuation card app", () => {
-  test("renders one durable proposal with editing and fresh-turn interaction contracts", async () => {
+  test("remains available in the explicit internal profile with its backing controls", async () => {
     const store = new StensiblyStore(":memory:");
     const ledger = new SqliteWorkLedger(store);
     const item = await ledger.createItem({
@@ -41,7 +41,9 @@ describe("ChatGPT continuation card app", () => {
       deliveryMode: "current_conversation",
     });
 
-    const server = createChatGptMcpServer(ledger);
+    const server = createChatGptMcpServer(ledger, {
+      exposureProfile: "full_internal",
+    });
     const client = new Client(
       { name: "continuation-card-test", version: "0.0.1" },
       { capabilities: {} },

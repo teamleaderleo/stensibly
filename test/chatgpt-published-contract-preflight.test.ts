@@ -7,7 +7,7 @@ import {
   mcpCapabilityPolicyRegistry,
   requireMcpCapabilityPolicy,
 } from "../src/mcp-capability-policy.ts";
-import { createMcpServer } from "../src/mcp.ts";
+import { createChatGptMcpServer } from "../src/chatgpt-mcp.ts";
 import { compileMcpPublishedContract } from "../src/mcp-published-contract.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
@@ -53,10 +53,10 @@ const submissionAnnotationKeys = [
 ] as const;
 
 describe("ChatGPT curated publication preflight", () => {
-  test("compiles the real hosted 52-tool catalogue into the reviewed 19-tool default", async () => {
+  test("serves the reviewed 19-tool default with complete canonical action metadata", async () => {
     const snapshot = readSnapshot();
     const store = new StensiblyStore(":memory:");
-    const server = createMcpServer(withHostedMcpProviders(
+    const server = createChatGptMcpServer(withHostedMcpProviders(
       new SqliteWorkLedger(store),
     ));
     const client = new Client(
@@ -70,8 +70,11 @@ describe("ChatGPT curated publication preflight", () => {
       await client.connect(clientTransport);
       const listed = await client.listTools();
 
-      expect(listed.tools).toHaveLength(52);
-      expect(snapshot.toolCount).toBe(52);
+      expect(listed.tools).toHaveLength(19);
+      expect(snapshot.toolCount).toBe(19);
+      expect(listed.tools.map((tool) => tool.name).sort()).toEqual(
+        [...publishedDefaultNames].sort(),
+      );
 
       const listedByName = new Map(listed.tools.map((tool) => [tool.name, tool] as const));
       const annotationMismatches: string[] = [];
@@ -86,7 +89,7 @@ describe("ChatGPT curated publication preflight", () => {
         );
         const actual = tool.annotations ?? {};
         for (const key of submissionAnnotationKeys) {
-          if (Object.hasOwn(actual, key) && actual[key] !== expected[key]) {
+          if (!Object.hasOwn(actual, key) || actual[key] !== expected[key]) {
             annotationMismatches.push(
               `${toolName}.${key}:${String(actual[key])}!=${String(expected[key])}`,
             );
@@ -113,10 +116,8 @@ describe("ChatGPT curated publication preflight", () => {
         [...publishedDefaultNames],
       );
       expect(contract.publishedManifest.tools).toHaveLength(19);
+      expect(contract.publishedManifest.digest).toBe(snapshot.toolContractFingerprint);
       expect(contract.publishedContractFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
-      expect(contract.publishedContractFingerprint).not.toBe(
-        contract.sourceManifestDigest,
-      );
       expect(contract.grantsAuthority).toBe(false);
       expect(contract.authorizesToolRegistration).toBe(false);
       expect(contract.authorizesPublication).toBe(false);

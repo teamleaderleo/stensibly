@@ -47,13 +47,17 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 describe("hosted MCP reconnect lifecycle", () => {
-  test("preserves a generation-fenced lifecycle across app recreation", async () => {
+  test("preserves a generation-fenced public lifecycle across app recreation", async () => {
     const initialApp = createApp();
     await initialize(initialApp);
 
     const initialTools = await listTools(initialApp);
     expect(initialTools).toContain("create_item");
+    expect(initialTools).toContain("claim_work");
+    expect(initialTools).toContain("get_item");
     expect(initialTools).toContain("complete_work");
+    expect(initialTools).not.toContain("record_event");
+    expect(initialTools).not.toContain("attach_artifact");
 
     const created = await callTool<{
       id: string;
@@ -64,7 +68,7 @@ describe("hosted MCP reconnect lifecycle", () => {
       kind: "task",
       title: "Hosted MCP reconnect regression",
       summary: "Exercise repeated hosted MCP writes across app recreation.",
-      nextAction: "Claim, append evidence, reconnect, and complete.",
+      nextAction: "Claim, reconnect, read back, and complete.",
       priority: 100,
       actor,
       idempotencyKey: "mcp-http-reconnect-create-v1",
@@ -87,74 +91,35 @@ describe("hosted MCP reconnect lifecycle", () => {
       claimGeneration: 1,
     });
 
-    const event = await callTool<{ id: string; type: string }>(
-      initialApp,
-      "record_event",
-      {
-        id: created.id,
-        actor,
-        type: "progress.reconnect_test",
-        payload: {
-          checkpoint: "before-app-recreation",
-          nextAction: "Recreate the hosted app and read this item back.",
-        },
-        idempotencyKey: "mcp-http-reconnect-event-v1",
-      },
-    );
-    expect(event.type).toBe("progress.reconnect_test");
-
-    const artifact = await callTool<{ id: string; kind: string }>(
-      initialApp,
-      "attach_artifact",
-      {
-        id: created.id,
-        actor,
-        kind: "issue",
-        label: "Reliability incident #490",
-        uri: "https://github.com/teamleaderleo/stensibly/issues/490",
-        metadata: { issueNumber: 490, lane: "hosted-mcp-reconnect-regression" },
-        idempotencyKey: "mcp-http-reconnect-artifact-v1",
-      },
-    );
-    expect(artifact.kind).toBe("issue");
-
     const active = await callTool<{
       item: { id: string; status: string; claimGeneration: number };
-      events: Array<{ id: string; type: string }>;
-      artifacts: Array<{ id: string }>;
     }>(initialApp, "get_item", { id: created.id });
     expect(active.item).toMatchObject({
       id: created.id,
       status: "active",
       claimGeneration: claimed.claimGeneration,
     });
-    expect(active.events.map((entry) => entry.id)).toContain(event.id);
-    expect(active.artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
 
     const reconnectedApp = createApp();
     await initialize(reconnectedApp);
-    expect(await listTools(reconnectedApp)).toContain("get_item");
+    const reconnectedTools = await listTools(reconnectedApp);
+    expect(reconnectedTools).toContain("get_item");
+    expect(reconnectedTools).not.toContain("record_event");
 
     const reconnected = await callTool<{
       item: { id: string; status: string; claimGeneration: number };
-      events: Array<{ type: string }>;
-      artifacts: Array<{ id: string }>;
     }>(reconnectedApp, "get_item", { id: created.id });
     expect(reconnected.item).toMatchObject({
       id: created.id,
       status: "active",
       claimGeneration: claimed.claimGeneration,
     });
-    expect(reconnected.events.map((entry) => entry.type)).toContain(
-      "progress.reconnect_test",
-    );
-    expect(reconnected.artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
 
     await callTool(reconnectedApp, "complete_work", {
       id: created.id,
       actor,
       expectedClaimGeneration: claimed.claimGeneration,
-      summary: "Hosted MCP lifecycle survived app recreation and remained writable.",
+      summary: "Hosted MCP public lifecycle survived app recreation and remained writable.",
       idempotencyKey: "mcp-http-reconnect-complete-v1",
     });
 
@@ -162,17 +127,13 @@ describe("hosted MCP reconnect lifecycle", () => {
     await initialize(finalApp);
     const completed = await callTool<{
       item: { id: string; status: string; claimGeneration: number; summary: string };
-      events: Array<{ type: string }>;
-      artifacts: Array<{ id: string }>;
     }>(finalApp, "get_item", { id: created.id });
     expect(completed.item).toMatchObject({
       id: created.id,
       status: "done",
       claimGeneration: claimed.claimGeneration + 1,
-      summary: "Hosted MCP lifecycle survived app recreation and remained writable.",
+      summary: "Hosted MCP public lifecycle survived app recreation and remained writable.",
     });
-    expect(completed.events.map((entry) => entry.type)).toContain("item.completed");
-    expect(completed.artifacts.map((entry) => entry.id)).toEqual([artifact.id]);
   });
 });
 

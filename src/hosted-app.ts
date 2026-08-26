@@ -24,7 +24,9 @@ import {
 } from "./hosted-provider-capacity-api.js";
 import { createHostedSetupStatusObserver } from "./hosted-setup-status.js";
 import type { WorkLedger } from "./ledger.js";
+import { compileMcpExposureRegistrationPlan } from "./mcp-exposure-registration.js";
 import { handleMcpHttpRequest } from "./mcp-http.js";
+import { createMcpServer, createModernMcpServer } from "./mcp.js";
 import {
   createMcpOAuth,
   createMcpOAuthAuthenticator,
@@ -110,6 +112,10 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
         insufficientScope: mcpOAuthChallenge(options.mcpOAuth, "insufficient_scope"),
       }
     : null;
+  const publishedMcp = compileMcpExposureRegistrationPlan(
+    options.ledger,
+    "published_default",
+  );
 
   app.onError((_error, context) => {
     const category = failureCategoryForPath(context.req.path);
@@ -146,6 +152,17 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
       authenticator: mcpAuthenticator,
       allowedOrigins,
       allowedHosts: options.allowedHosts,
+      diagnosticManifest: publishedMcp.manifest,
+      createServer: (ledger, requestContext) => createMcpServer(
+        ledger,
+        requestContext,
+        { exposureProfile: "published_default" },
+      ),
+      createModernServer: (ledger, requestContext) => createModernMcpServer(
+        ledger,
+        requestContext,
+        { exposureProfile: "published_default" },
+      ),
       waitUntil: (promise) => context.executionCtx.waitUntil(promise),
       ...(options.mcpSetupFirstReadRecorder
         ? { mcpSetupFirstReadRecorder: options.mcpSetupFirstReadRecorder }

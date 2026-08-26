@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createMcpServer } from "../src/mcp.ts";
+import { createChatGptMcpServer } from "../src/chatgpt-mcp.ts";
 import { createMcpReleaseManifest } from "../src/mcp-release-manifest.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
@@ -18,11 +18,11 @@ function readSnapshot(): ChatGptAppContractSnapshot {
   return JSON.parse(readFileSync(snapshotPath, "utf8")) as ChatGptAppContractSnapshot;
 }
 
-describe("ChatGPT app full contract snapshot", () => {
-  test("requires a checked-in refresh checkpoint for schema and metadata drift", async () => {
+describe("ChatGPT app published contract snapshot", () => {
+  test("requires a checked-in refresh checkpoint for the curated live contract", async () => {
     const snapshot = readSnapshot();
     const store = new StensiblyStore(":memory:");
-    const server = createMcpServer(withHostedMcpProviders(
+    const server = createChatGptMcpServer(withHostedMcpProviders(
       new SqliteWorkLedger(store),
     ));
     const client = new Client(
@@ -45,6 +45,7 @@ describe("ChatGPT app full contract snapshot", () => {
         inputSchema: tool.inputSchema as Record<string, unknown>,
       })));
 
+      expect(listed.tools).toHaveLength(19);
       expect(manifest.digest).toBe(snapshot.toolContractFingerprint);
     } finally {
       await client.close();
