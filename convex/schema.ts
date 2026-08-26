@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { accountUsageTables } from "./accountUsageSchema";
+import { applicationLaneBindingTables } from "./applicationLaneBindingSchema";
 import { callsignLeaseTables } from "./callsignLeaseSchema";
 import { runnerAdapterCommandRecoveryTables } from "./runnerAdapterCommandRecoverySchema";
 
@@ -115,6 +116,7 @@ export const accountRole = v.union(
 
 export default defineSchema({
   ...accountUsageTables,
+  ...applicationLaneBindingTables,
   ...callsignLeaseTables,
   ...runnerAdapterCommandRecoveryTables,
 
@@ -546,7 +548,7 @@ export default defineSchema({
     .index("by_external_id", ["externalId"])
     .index("by_item_status", ["itemId", "status", "startedAt"])
     .index("by_project_status", ["projectId", "status", "lastHeartbeatAt"])
-    .index("by_actor_status", ["actorId", "status", "lastHeartbeatAt"]),
+    .index("by_actor_status", ["actorId", "status", "updatedAt"]),
 
   queuedRuns: defineTable({
     workspaceId: v.id("workspaces"),
