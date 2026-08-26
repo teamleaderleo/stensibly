@@ -256,18 +256,23 @@ function mapWakeRow(row: ApplicationLaneWakeRow): ApplicationLaneWakeIntentV1 {
 }
 
 function admitRecordInput(value: unknown): RecordApplicationLaneWakeIntentInput {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (value === null || typeof value !== "object") {
     throw new TypeError("Application lane wake record input must be an object");
   }
+  let isArray: boolean;
   let prototype: object | null;
   let symbols: symbol[];
   let descriptors: PropertyDescriptorMap;
   try {
+    isArray = Array.isArray(value);
     prototype = Object.getPrototypeOf(value);
     symbols = Object.getOwnPropertySymbols(value);
     descriptors = Object.getOwnPropertyDescriptors(value);
   } catch {
     throw new TypeError("Application lane wake record input inspection failed");
+  }
+  if (isArray) {
+    throw new TypeError("Application lane wake record input must be an object");
   }
   if (prototype !== Object.prototype && prototype !== null) {
     throw new TypeError("Application lane wake record input must be a plain object");
