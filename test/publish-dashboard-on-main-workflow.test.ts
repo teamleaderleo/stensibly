@@ -20,20 +20,31 @@ describe("guarded dashboard publication workflow", () => {
     expect(workflow).toContain("cancel-in-progress: false");
   });
 
-  test("requires the coordinator's exact revision before checkout or protected publication", () => {
+  test("requires main and the coordinator's exact revision before protected publication", () => {
     const revisionGate = position("Require the exact admitted revision");
+    const refGuard = position('[ "${GITHUB_REF}" != "refs/heads/main" ]');
+    const shaGuard = position('[ "${GITHUB_SHA}" != "${EXPECTED_REVISION}" ]');
     const firstCheckout = position("actions/checkout@v6");
     const publishJob = position("  publish:");
+    const publishMainGuard = position("if: github.ref == 'refs/heads/main'");
+    const productionEnvironment = position("    environment:");
 
     expect(workflow).toContain("expected_revision:");
     expect(workflow).toContain("required: true");
     expect(workflow).toContain("type: string");
     expect(workflow).toContain("EXPECTED_REVISION: ${{ inputs.expected_revision }}");
     expect(workflow).toContain('[[ ! "${EXPECTED_REVISION}" =~ ^[0-9a-f]{40}$ ]]');
-    expect(workflow).toContain('[ "${GITHUB_SHA}" != "${EXPECTED_REVISION}" ]');
+    expect(workflow).toContain("Production dashboard publication requires refs/heads/main");
     expect(workflow).toContain("needs: validate");
-    expect(revisionGate).toBeLessThan(firstCheckout);
+    expect(revisionGate).toBeLessThan(refGuard);
+    expect(refGuard).toBeLessThan(shaGuard);
+    expect(shaGuard).toBeLessThan(firstCheckout);
     expect(firstCheckout).toBeLessThan(publishJob);
+    expect(publishJob).toBeLessThan(publishMainGuard);
+    expect(publishMainGuard).toBeLessThan(productionEnvironment);
+
+    const publishHeader = workflow.slice(publishJob, workflow.indexOf("    steps:", publishJob));
+    expect(publishHeader).toContain("if: github.ref == 'refs/heads/main'");
 
     const validate = workflow.slice(position("  validate:"), publishJob);
     expect(validate).not.toContain("secrets.");
