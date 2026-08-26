@@ -1,5 +1,6 @@
 import { stableJson } from "./canonical-json.js";
 import {
+  compileApplicationLaneWakeIntentV1,
   parseApplicationLaneWakeIntentV1,
   type ApplicationLaneWakeIntentV1,
 } from "./application-lane-wake-intent.js";
@@ -8,6 +9,13 @@ import {
   NotFoundError,
   type StensiblyStore,
 } from "./store.js";
+
+export interface RecordApplicationLaneWakeIntentInput {
+  readonly registration: unknown;
+  readonly currentBinding: unknown;
+  readonly currentAuthority: unknown;
+  readonly event: unknown;
+}
 
 interface ApplicationLaneWakeRow {
   source_ref: string;
@@ -68,18 +76,32 @@ export function ensureApplicationLaneWakeStoreSchema(store: StensiblyStore): voi
 }
 
 /**
- * Persist one same-item application wake after re-admitting its exact bytes and
- * proving that its work generation and application relation are current at the
- * first durable admission. Exact replay returns the original admitted wake even
- * after later work/binding movement.
+ * Compile and persist one exact same-item application wake. The store owns the
+ * admission step: callers cannot submit an already-compiled hash as provenance.
+ *
+ * Exact replay is checked before current-state revalidation, so an admitted
+ * wake remains historical evidence after later work or binding movement. A
+ * first insert must still match the current durable item generation and current
+ * durable application binding.
  */
 export function recordApplicationLaneWakeIntent(
   store: StensiblyStore,
-  value: unknown,
+  input: RecordApplicationLaneWakeIntentInput,
   recordedAt = new Date(),
 ): ApplicationLaneWakeIntentV1 {
   ensureApplicationLaneWakeStoreSchema(store);
-  const wake = parseApplicationLaneWakeIntentV1(value);
+  const decision = compileApplicationLaneWakeIntentV1(
+    input.registration,
+    input.currentBinding,
+    input.currentAuthority,
+    input.event,
+  );
+  if (!decision.matched || !decision.wakeIntent) {
+    throw new ApplicationLaneWakeConflictError(
+      `Application lane wake was not admitted: ${decision.reason}`,
+    );
+  }
+  const wake = decision.wakeIntent;
   const sourceRef = exactSourceRef(wake.idempotencyKey);
   const wakeJson = stableJson(wake);
   const recordedAtIso = exactDate(recordedAt, "Application lane wake recorded time");
@@ -205,6 +227,12 @@ function mapWakeRow(row: ApplicationLaneWakeRow): ApplicationLaneWakeIntentV1 {
   } catch {
     throw new ApplicationLaneWakeStorageError();
   }
+  let canonicalRecordedAt: string;
+  try {
+    canonicalRecordedAt = new Date(row.recorded_at).toISOString();
+  } catch {
+    throw new ApplicationLaneWakeStorageError();
+  }
   const valid = stableJson(wake) === row.wake_json
     && row.source_ref === wake.idempotencyKey
     && row.project_id === wake.project
@@ -216,8 +244,7 @@ function mapWakeRow(row: ApplicationLaneWakeRow): ApplicationLaneWakeIntentV1 {
     && row.lane_generation === wake.laneGeneration
     && row.source_event_id === wake.sourceEventId
     && row.wake_fingerprint === wake.fingerprint
-    && typeof row.recorded_at === "string"
-    && new Date(row.recorded_at).toISOString() === row.recorded_at
+    && canonicalRecordedAt === row.recorded_at
     && Date.parse(row.recorded_at) >= Date.parse(wake.observedAt);
   if (!valid) throw new ApplicationLaneWakeStorageError();
   return wake;
