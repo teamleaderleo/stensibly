@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { accountUsageTables } from "./accountUsageSchema";
+import { applicationLaneBindingTables } from "./applicationLaneBindingSchema";
 import { callsignLeaseTables } from "./callsignLeaseSchema";
 import { runnerAdapterCommandRecoveryTables } from "./runnerAdapterCommandRecoverySchema";
 
@@ -115,6 +116,7 @@ export const accountRole = v.union(
 
 export default defineSchema({
   ...accountUsageTables,
+  ...applicationLaneBindingTables,
   ...callsignLeaseTables,
   ...runnerAdapterCommandRecoveryTables,
 
