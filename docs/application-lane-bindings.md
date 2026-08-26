@@ -1,7 +1,9 @@
 # Application lane bindings
 
 Owner: #1729  
+Implementation: #1730  
 Elatura counterpart: teamleaderleo/elatura#116  
+Elatura protocol: teamleaderleo/elatura#127  
 Elatura product record: teamleaderleo/elatura#119 and `docs/application-lanes.md`
 
 ## Purpose
