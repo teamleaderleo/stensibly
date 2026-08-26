@@ -16,6 +16,7 @@ import {
   mcpToolManifestForLedger,
   withMcpDiagnostics,
 } from "../src/mcp-diagnostics.ts";
+import { handleMcpHttpRequest } from "../src/mcp-http.ts";
 import { createServerApp } from "../src/server-app.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
@@ -233,18 +234,19 @@ async function writeFailureDiagnostic(
   args: Record<string, unknown>,
   requestId: string,
 ): Promise<Record<string, unknown>> {
+  const requestPayload = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: { name: tool, arguments: args },
+  };
   const request = new Request("https://api.example/mcp", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-request-id": requestId,
     },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: { name: tool, arguments: args },
-    }),
+    body: JSON.stringify(requestPayload),
   });
   const response = new Response(JSON.stringify({
     jsonrpc: "2.0",
@@ -258,7 +260,7 @@ async function writeFailureDiagnostic(
       [MCP_FAILURE_STAGE_HEADER]: "request_execution",
     },
   });
-  const diagnosed = await withMcpDiagnostics(request, response);
+  const diagnosed = await withMcpDiagnostics(request, response, undefined, requestPayload);
   const payload = await diagnosed.json() as {
     error?: { data?: Record<string, unknown> };
   };
@@ -320,9 +322,71 @@ describe("MCP gateway validation diagnostics", () => {
           recommendedAction: "fix_request",
           manifestFingerprint: MCP_CORE_TOOL_MANIFEST_FINGERPRINT,
           manifestToolCount: MCP_CORE_TOOL_NAMES.length,
-          method: "initialize",
         });
       }
+    } finally {
+      store.close();
+    }
+  });
+
+  test("does not clone or parse request bodies rejected before authentication", async () => {
+    const store = new StensiblyStore(":memory:");
+    try {
+      const request = new Request("https://api.example/mcp", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer synthetic-invalid-token",
+          "content-type": "application/json",
+          "x-request-id": "diag-unauthenticated-body",
+        },
+        body: JSON.stringify(initializeMessage(32, diagnosticsClient)),
+      });
+      let cloneCalls = 0;
+      let jsonCalls = 0;
+      let authenticateCalls = 0;
+      Object.defineProperty(request, "clone", {
+        configurable: true,
+        value: () => {
+          cloneCalls += 1;
+          throw new Error("request clone should stay unreachable before authentication");
+        },
+      });
+      Object.defineProperty(request, "json", {
+        configurable: true,
+        value: async () => {
+          jsonCalls += 1;
+          throw new Error("request body parsing should stay unreachable before authentication");
+        },
+      });
+
+      const response = await handleMcpHttpRequest(request, {
+        ledger: new SqliteWorkLedger(store),
+        authenticator: {
+          async authenticate() {
+            authenticateCalls += 1;
+            return null;
+          },
+        },
+      });
+
+      expect(response.status).toBe(401);
+      expect(authenticateCalls).toBe(1);
+      expect(cloneCalls).toBe(0);
+      expect(jsonCalls).toBe(0);
+      expect(request.bodyUsed).toBe(false);
+      const payload = await response.json() as {
+        error?: { data?: Record<string, unknown> };
+      };
+      expect(payload.error?.data).toEqual({
+        layer: "authentication",
+        stage: "authentication",
+        requestId: "diag-unauthenticated-body",
+        retryable: false,
+        reconciliation: "not_required",
+        recommendedAction: "reauthenticate",
+        manifestFingerprint: MCP_CORE_TOOL_MANIFEST_FINGERPRINT,
+        manifestToolCount: MCP_CORE_TOOL_NAMES.length,
+      });
     } finally {
       store.close();
     }
