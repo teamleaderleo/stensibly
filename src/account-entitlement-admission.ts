@@ -128,12 +128,12 @@ export function compileAccountEntitlementAdmission(
     });
   }
 
-  const entitlement = normalizeEntitlement(input.entitlement);
+  const route = normalizeEntitlementRoute(input.entitlement);
   if (
-    entitlement.subject.kind !== subject.kind
-    || entitlement.subject.id !== subject.id
-    || entitlement.subject.workspace !== subject.workspace
-    || entitlement.serviceClass !== serviceClass
+    route.subject.kind !== subject.kind
+    || route.subject.id !== subject.id
+    || route.subject.workspace !== subject.workspace
+    || route.serviceClass !== serviceClass
   ) {
     return decision({
       subject,
@@ -150,6 +150,7 @@ export function compileAccountEntitlementAdmission(
     });
   }
 
+  const entitlement = normalizeEntitlement(input.entitlement, route);
   const source = {
     entitlementRevision: entitlement.revision,
     entitlementSourceReference: entitlement.sourceReference,
@@ -219,7 +220,13 @@ export function compileAccountEntitlementAdmission(
 
   const allowance = entitlement.allowance;
   const resetAtMs = Date.parse(allowance.resetAt);
-  if (resetAtMs <= evaluatedAtMs || allowance.usage.state === "unknown") {
+  const usageIsFuture = allowance.usage.state === "known"
+    && Date.parse(allowance.usage.observedAt) > evaluatedAtMs;
+  if (
+    resetAtMs <= evaluatedAtMs
+    || allowance.usage.state === "unknown"
+    || usageIsFuture
+  ) {
     return decision({
       subject,
       serviceClass,
@@ -265,10 +272,21 @@ export function compileAccountEntitlementAdmission(
   });
 }
 
-function normalizeEntitlement(value: AccountEntitlement): AccountEntitlement {
+function normalizeEntitlementRoute(value: AccountEntitlement): {
+  subject: EntitlementSubject;
+  serviceClass: HostedServiceClass;
+} {
   if (value.version !== 1) throw new TypeError("entitlement version is invalid");
-  const subject = normalizeSubject(value.subject, "entitlement subject");
-  const serviceClass = normalizeServiceClass(value.serviceClass);
+  return {
+    subject: normalizeSubject(value.subject, "entitlement subject"),
+    serviceClass: normalizeServiceClass(value.serviceClass),
+  };
+}
+
+function normalizeEntitlement(
+  value: AccountEntitlement,
+  route: { subject: EntitlementSubject; serviceClass: HostedServiceClass },
+): AccountEntitlement {
   const revision = boundedIdentity(value.revision, "entitlement revision", 240);
   const sourceReference = boundedIdentity(
     value.sourceReference,
@@ -295,8 +313,8 @@ function normalizeEntitlement(value: AccountEntitlement): AccountEntitlement {
   const allowance = normalizeAllowance(value.allowance);
   return {
     version: 1,
-    subject,
-    serviceClass,
+    subject: route.subject,
+    serviceClass: route.serviceClass,
     revision,
     sourceReference,
     status: value.status,
