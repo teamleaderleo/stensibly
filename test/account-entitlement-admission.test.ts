@@ -39,6 +39,7 @@ function input(
     },
     serviceClass: "hosted_write",
     requestIdentity: "request:write:001",
+    units: 1,
     currentTime,
     entitlement: entitlement(),
     ...overrides,
@@ -54,6 +55,7 @@ describe("account entitlement admission", () => {
       reason: "allowed",
       subjectId: "acct_leo",
       serviceClass: "hosted_write",
+      units: 1,
       entitlementRevision: "entitlement:beta:v1",
       remaining: null,
       grantsAuthority: false,
@@ -87,6 +89,58 @@ describe("account entitlement admission", () => {
       resetAt: "2026-08-27T00:00:00.000Z",
       remaining: 2,
       grantsAuthority: false,
+    });
+  });
+
+  test("denies a multi-unit request when the authoritative remaining allowance is smaller", () => {
+    const insufficient = compileAccountEntitlementAdmission(input({
+      requestIdentity: "request:write:multi-unit",
+      units: 2,
+      entitlement: entitlement({
+        allowance: {
+          kind: "window",
+          windowId: "window:multi-unit",
+          limit: 10,
+          resetAt: "2026-08-27T00:00:00.000Z",
+          usage: {
+            state: "known",
+            consumed: 8,
+            reserved: 1,
+            observedAt: "2026-08-26T07:59:00.000Z",
+          },
+        },
+      }),
+    }));
+    const exactFit = compileAccountEntitlementAdmission(input({
+      requestIdentity: "request:write:single-unit",
+      units: 1,
+      entitlement: entitlement({
+        allowance: {
+          kind: "window",
+          windowId: "window:multi-unit",
+          limit: 10,
+          resetAt: "2026-08-27T00:00:00.000Z",
+          usage: {
+            state: "known",
+            consumed: 8,
+            reserved: 1,
+            observedAt: "2026-08-26T07:59:00.000Z",
+          },
+        },
+      }),
+    }));
+
+    expect(insufficient).toMatchObject({
+      outcome: "deny",
+      reason: "allowance_exhausted",
+      units: 2,
+      remaining: 1,
+    });
+    expect(exactFit).toMatchObject({
+      outcome: "admit",
+      reason: "allowed",
+      units: 1,
+      remaining: 1,
     });
   });
 
@@ -260,7 +314,7 @@ describe("account entitlement admission", () => {
     expect(JSON.stringify(result)).not.toContain("foreign");
   });
 
-  test("binds the decision fingerprint to the stable subject, request identity, and current usage", () => {
+  test("binds the decision fingerprint to the stable subject, request identity, units, and current usage", () => {
     const first = compileAccountEntitlementAdmission(input({
       entitlement: entitlement({
         allowance: {
@@ -310,6 +364,23 @@ describe("account entitlement admission", () => {
         },
       }),
     }));
+    const differentUnits = compileAccountEntitlementAdmission(input({
+      units: 2,
+      entitlement: entitlement({
+        allowance: {
+          kind: "window",
+          windowId: "window:fingerprint",
+          limit: 10,
+          resetAt: "2026-08-27T00:00:00.000Z",
+          usage: {
+            state: "known",
+            consumed: 2,
+            reserved: 1,
+            observedAt: "2026-08-26T07:59:00.000Z",
+          },
+        },
+      }),
+    }));
     const changedUsage = compileAccountEntitlementAdmission(input({
       entitlement: entitlement({
         allowance: {
@@ -329,11 +400,14 @@ describe("account entitlement admission", () => {
 
     expect(replay.decisionFingerprint).toBe(first.decisionFingerprint);
     expect(differentRequest.decisionFingerprint).not.toBe(first.decisionFingerprint);
+    expect(differentUnits.decisionFingerprint).not.toBe(first.decisionFingerprint);
     expect(changedUsage.decisionFingerprint).not.toBe(first.decisionFingerprint);
     expect(changedUsage.remaining).toBe(6);
   });
 
-  test("rejects invalid allowance arithmetic and intervals before producing a decision", () => {
+  test("rejects invalid allowance arithmetic, request units, and intervals before producing a decision", () => {
+    expect(() => compileAccountEntitlementAdmission(input({ units: 0 }))).toThrow("usage units");
+
     expect(() => compileAccountEntitlementAdmission(input({
       entitlement: entitlement({
         allowance: {
