@@ -45,25 +45,7 @@ describe("hosted exact-generation dispatch", () => {
   test("reserves generation zero as one and runner pickup does not advance it again", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seed(t, "Reserve hosted generation zero");
-    const now = Date.now();
-
-    const outcome = await t.run(async (ctx) =>
-      await dispatchHostedExactGeneration(ctx, {
-        workspaceId: fixture.workspaceId,
-        itemId: fixture.item._id,
-        actor: fixture.actor,
-        expectedClaimGeneration: 0,
-        runnerType: "generic-mcp",
-        runnerProfile: "codex-default",
-        runnerProfileVersion: null,
-        leaseSeconds: 900,
-        maxAttempts: 3,
-        retryBackoffSeconds: 60,
-        executionEnvelope,
-        eventSource: "hosted_exact_dispatch_test",
-        now,
-      })
-    );
+    const outcome = await dispatch(t, fixture, 0, Date.now());
 
     expect(outcome.status).toBe("dispatched");
     if (outcome.status !== "dispatched") throw new Error("expected dispatch");
@@ -98,7 +80,7 @@ describe("hosted exact-generation dispatch", () => {
     }) as any;
     expect(claimed).toMatchObject({ id: outcome.run.externalId, status: "starting" });
 
-    const itemAfterPickup = await t.run(async (ctx) => await ctx.db.get("items", fixture.item._id));
+    const itemAfterPickup = await itemState(t, fixture.item._id);
     expect(itemAfterPickup).toMatchObject({
       status: "active",
       claimGeneration: 1,
@@ -124,24 +106,7 @@ describe("hosted exact-generation dispatch", () => {
       expectedClaimGeneration: claimed.claimGeneration,
     });
 
-    const outcome = await t.run(async (ctx) =>
-      await dispatchHostedExactGeneration(ctx, {
-        workspaceId: fixture.workspaceId,
-        itemId: fixture.item._id,
-        actor: fixture.actor,
-        expectedClaimGeneration: 0,
-        runnerType: "generic-mcp",
-        runnerProfile: "codex-default",
-        runnerProfileVersion: null,
-        leaseSeconds: 900,
-        maxAttempts: 3,
-        retryBackoffSeconds: 60,
-        executionEnvelope,
-        eventSource: "hosted_exact_dispatch_test",
-        now: Date.now(),
-      })
-    );
-    expect(outcome).toEqual({
+    expect(await dispatch(t, fixture, 0, Date.now())).toEqual({
       status: "stale_generation",
       expectedClaimGeneration: 0,
       currentClaimGeneration: 2,
@@ -153,49 +118,18 @@ describe("hosted exact-generation dispatch", () => {
     const t = convexTest(schema, modules);
     const fixture = await seed(t, "Reject duplicate hosted dispatch");
     const now = Date.now();
-    const first = await t.run(async (ctx) =>
-      await dispatchHostedExactGeneration(ctx, {
-        workspaceId: fixture.workspaceId,
-        itemId: fixture.item._id,
-        actor: fixture.actor,
-        expectedClaimGeneration: 0,
-        runnerType: "generic-mcp",
-        runnerProfile: "codex-default",
-        runnerProfileVersion: null,
-        leaseSeconds: 900,
-        maxAttempts: 3,
-        retryBackoffSeconds: 60,
-        executionEnvelope,
-        eventSource: "hosted_exact_dispatch_test",
-        now,
-      })
-    );
-    expect(first.status).toBe("dispatched");
-
-    const second = await t.run(async (ctx) =>
-      await dispatchHostedExactGeneration(ctx, {
-        workspaceId: fixture.workspaceId,
-        itemId: fixture.item._id,
-        actor: fixture.actor,
-        expectedClaimGeneration: 1,
-        runnerType: "generic-mcp",
-        runnerProfile: "codex-default",
-        runnerProfileVersion: null,
-        leaseSeconds: 900,
-        maxAttempts: 3,
-        retryBackoffSeconds: 60,
-        executionEnvelope,
-        eventSource: "hosted_exact_dispatch_test",
-        now: now + 1,
-      })
-    );
-    expect(second).toEqual({ status: "unavailable", expectedClaimGeneration: 1 });
+    expect((await dispatch(t, fixture, 0, now)).status).toBe("dispatched");
+    expect(await dispatch(t, fixture, 1, now + 1)).toEqual({
+      status: "unavailable",
+      expectedClaimGeneration: 1,
+    });
     expect(await runCount(t, fixture.item._id)).toBe(1);
   });
 
-  test("a later failure in the same Convex transaction rolls reservation and run back", async () => {
+  test("a later failure in the same Convex transaction restores the exact reservation baseline", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seed(t, "Roll back hosted exact dispatch");
+    const before = await itemState(t, fixture.item._id);
 
     await expect(t.run(async (ctx) => {
       const outcome = await dispatchHostedExactGeneration(ctx, {
@@ -218,11 +152,15 @@ describe("hosted exact-generation dispatch", () => {
       throw new Error("forced post-dispatch receipt failure");
     })).rejects.toThrow("forced post-dispatch receipt failure");
 
-    const item = await t.run(async (ctx) => await ctx.db.get("items", fixture.item._id));
-    expect(item).toMatchObject({
-      status: "ready",
-      claimGeneration: 0,
-      claimedByExternalId: undefined,
+    const after = await itemState(t, fixture.item._id);
+    expect(after).toMatchObject({
+      status: before!.status,
+      claimGeneration: before!.claimGeneration,
+      claimedByActorId: before!.claimedByActorId,
+      claimedByExternalId: before!.claimedByExternalId,
+      claimExpiresAt: before!.claimExpiresAt,
+      version: before!.version,
+      updatedAt: before!.updatedAt,
     });
     expect(await runCount(t, fixture.item._id)).toBe(0);
     const events = await t.run(async (ctx) =>
@@ -232,6 +170,31 @@ describe("hosted exact-generation dispatch", () => {
     expect(events.filter((event) => event.type === "run.queued")).toHaveLength(0);
   });
 });
+
+async function dispatch(
+  t: ReturnType<typeof convexTest>,
+  fixture: Awaited<ReturnType<typeof seed>>,
+  expectedClaimGeneration: number,
+  now: number,
+) {
+  return await t.run(async (ctx) =>
+    await dispatchHostedExactGeneration(ctx, {
+      workspaceId: fixture.workspaceId,
+      itemId: fixture.item._id,
+      actor: fixture.actor,
+      expectedClaimGeneration,
+      runnerType: "generic-mcp",
+      runnerProfile: "codex-default",
+      runnerProfileVersion: null,
+      leaseSeconds: 900,
+      maxAttempts: 3,
+      retryBackoffSeconds: 60,
+      executionEnvelope,
+      eventSource: "hosted_exact_dispatch_test",
+      now,
+    })
+  );
+}
 
 async function seed(t: ReturnType<typeof convexTest>, title: string) {
   const item = await t.mutation(convexApi.items.create, {
@@ -262,6 +225,10 @@ async function seed(t: ReturnType<typeof convexTest>, title: string) {
       actor: Doc<"actors">;
     };
   });
+}
+
+async function itemState(t: ReturnType<typeof convexTest>, itemId: Doc<"items">["_id"]) {
+  return await t.run(async (ctx) => await ctx.db.get("items", itemId));
 }
 
 async function runCount(t: ReturnType<typeof convexTest>, itemId: Doc<"items">["_id"]) {
