@@ -77,7 +77,7 @@ describe("durable application-lane dispatch trigger consumption", () => {
         replay: true,
         receipt: first.receipt,
       });
-      expect(store.listRuns({ itemId: fixture.itemId })).toHaveLength(1);
+      expect(runCount(store, fixture.itemId)).toBe(1);
     } finally {
       store.close();
     }
@@ -101,7 +101,7 @@ describe("durable application-lane dispatch trigger consumption", () => {
         expectedClaimGeneration: 0,
         currentClaimGeneration: 2,
       });
-      expect(store.listRuns({ itemId: fixture.itemId })).toHaveLength(0);
+      expect(runCount(store, fixture.itemId)).toBe(0);
       expect(getDispatchTriggerConsumptionReceipt(store, fixture.trigger.idempotencyKey)).toBeNull();
     } finally {
       store.close();
@@ -128,7 +128,7 @@ describe("durable application-lane dispatch trigger consumption", () => {
         triggerFingerprint: fixture.trigger.fingerprint,
       });
       expect(store.getItem(fixture.itemId)).toMatchObject({ status: "ready", claimGeneration: 0 });
-      expect(store.listRuns({ itemId: fixture.itemId })).toHaveLength(0);
+      expect(runCount(store, fixture.itemId)).toBe(0);
     } finally {
       store.close();
     }
@@ -145,7 +145,7 @@ describe("durable application-lane dispatch trigger consumption", () => {
         status: "stale_source",
         triggerFingerprint: fixture.trigger.fingerprint,
       });
-      expect(store.listRuns({ itemId: fixture.itemId })).toHaveLength(0);
+      expect(runCount(store, fixture.itemId)).toBe(0);
     } finally {
       store.close();
     }
@@ -206,7 +206,7 @@ describe("durable application-lane dispatch trigger consumption", () => {
         claimedBy: null,
         claimGeneration: 0,
       });
-      expect(store.listRuns({ itemId: fixture.itemId })).toHaveLength(0);
+      expect(runCount(store, fixture.itemId)).toBe(0);
       expect(getDispatchTriggerConsumptionReceipt(store, fixture.trigger.idempotencyKey)).toBeNull();
     } finally {
       store.close();
@@ -346,4 +346,14 @@ async function setup(store: StensiblyStore, suffix: string, persistWake = true) 
   }
   const trigger = applicationLaneWakeToDispatchTriggerV1(wake);
   return { itemId: item.id, bindingId, bindings, wake, trigger };
+}
+
+function runCount(store: StensiblyStore, itemId: string): number {
+  ensureRunSchema(store);
+  const row = store.db
+    .query<{ count: number }, [string]>(
+      "SELECT COUNT(*) AS count FROM work_runs WHERE item_id = ?1",
+    )
+    .get(itemId);
+  return row?.count ?? 0;
 }
