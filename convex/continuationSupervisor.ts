@@ -14,8 +14,8 @@ import {
   requireServiceSecret,
   upsertActor,
 } from "./lib/domain";
+import { dispatchHostedExactGeneration } from "./lib/exactDispatch";
 import {
-  appendExecutionEnvelopeEvent,
   executionEnvelopeValidator,
   normalizeExecutionEnvelope,
 } from "./lib/executionEnvelope";
@@ -345,96 +345,35 @@ async function queueOne(
     );
   }
 
-  const leaseExpiresAt = now + input.leaseSeconds * 1_000;
-  await ctx.db.patch(target._id, {
-    status: "active",
-    claimedByActorId: supervisor._id,
-    claimedByExternalId: supervisor.externalId,
-    claimExpiresAt: leaseExpiresAt,
-    claimGeneration: target.claimGeneration + 1,
-    version: target.version + 1,
-    updatedAt: now,
-  });
-
   const runnerProfile = continuation.action.kind === "dispatch_item"
     ? continuation.action.runnerProfile ?? input.runnerProfile
     : input.runnerProfile;
   const runnerProfileVersion = runnerProfile === input.runnerProfile
     ? input.runnerProfileVersion
     : null;
-  const queuedRunId = await ctx.db.insert("queuedRuns", {
+  const dispatch = await dispatchHostedExactGeneration(ctx, {
     workspaceId: workspace._id,
-    projectId: target.projectId,
     itemId: target._id,
-    externalId: "pending",
-    actorId: supervisor._id,
-    actorExternalId: supervisor.externalId,
+    actor: supervisor,
+    expectedClaimGeneration: target.claimGeneration,
     runnerType: input.runnerType,
     runnerProfile,
-    ...(runnerProfileVersion === null ? {} : { runnerProfileVersion }),
-    status: "queued",
-    generation: 1,
-    leaseGeneration: 1,
-    leaseOwnerExternalId: supervisor.externalId,
-    leaseExpiresAt,
-    continuationRef: continuation.externalId,
-    usage: {},
-    retryAttempt: 0,
+    runnerProfileVersion,
+    leaseSeconds: input.leaseSeconds,
     maxAttempts: input.maxAttempts,
     retryBackoffSeconds: input.retryBackoffSeconds,
-    createdAt: now,
-    updatedAt: now,
+    continuationRef: continuation.externalId,
+    executionEnvelope: input.executionEnvelope,
+    eventSource: "supervisor_dispatch",
+    now,
   });
-  const runExternalId = `run_${queuedRunId}`;
-  await ctx.db.patch(queuedRunId, { externalId: runExternalId });
-  await appendExecutionEnvelopeEvent(ctx, {
-    workspaceId: workspace._id,
-    projectId: target.projectId,
-    itemId: target._id,
-    actorId: supervisor._id,
-    actorExternalId: supervisor.externalId,
-    runId: runExternalId,
-    runGeneration: 1,
-    leaseGeneration: 1,
-    envelope: input.executionEnvelope,
-    createdAt: now,
-  });
-
-  await appendEvent(ctx, {
-    workspaceId: workspace._id,
-    projectId: target.projectId,
-    itemId: target._id,
-    actorId: supervisor._id,
-    actorExternalId: supervisor.externalId,
-    type: "claim.created",
-    payload: {
-      leaseSeconds: input.leaseSeconds,
-      expiresAt: new Date(leaseExpiresAt).toISOString(),
-      source: "supervisor_dispatch",
-    },
-    createdAt: now,
-  });
-  await appendEvent(ctx, {
-    workspaceId: workspace._id,
-    projectId: target.projectId,
-    itemId: target._id,
-    actorId: supervisor._id,
-    actorExternalId: supervisor.externalId,
-    type: "run.queued",
-    payload: {
-      runId: runExternalId,
-      generation: 1,
-      leaseGeneration: 1,
-      leaseExpiresAt: new Date(leaseExpiresAt).toISOString(),
-      runnerType: input.runnerType,
-      runnerProfile,
-      runnerProfileVersion,
-      source: "supervisor_dispatch",
-      readyPromiseWakeups: 0,
-      envelopeSchemaVersion: input.executionEnvelope.schemaVersion,
-    },
-    createdAt: now,
-  });
+  if (dispatch.status !== "dispatched") {
+    throw new Error(
+      `Continuation target ${target.externalId} is not eligible for supervisor dispatch`,
+    );
+  }
+  const queuedRunId = dispatch.run._id;
+  const runExternalId = dispatch.run.externalId;
 
   const consumedGeneration = continuation.generation + 1;
   const consumptionResult = { itemId: target.externalId, runId: runExternalId };
