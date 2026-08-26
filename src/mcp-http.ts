@@ -108,7 +108,19 @@ async function handleMcpHttpRequestCore(
     return jsonRpcError(400, -32700, "Parse error: Invalid JSON", null);
   }
 
-  const denial = await authorizePayload(options.ledger, principal, body);
+  let denial: Response | null;
+  try {
+    denial = await authorizePayload(options.ledger, principal, body);
+  } catch {
+    return jsonRpcError(
+      502,
+      -32603,
+      "Hosted authorization lookup failed",
+      requestId(body),
+      {},
+      "convex_failure",
+    );
+  }
   if (denial) return denial;
 
   if (await isLegacyRequest(request, body)) {
@@ -436,8 +448,12 @@ async function itemAccessRule(
 ): Promise<AccessRule> {
   if (!id) return { scope };
   try {
-    return { scope, project: (await ledger.getItem(id)).item.project };
-  } catch {
+    const project = ledger.getItemProject
+      ? await ledger.getItemProject(id)
+      : (await ledger.getItem(id)).item.project;
+    return { scope, project };
+  } catch (error) {
+    if (!(error instanceof Error) || error.name !== "NotFoundError") throw error;
     return { scope };
   }
 }
