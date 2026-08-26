@@ -2,6 +2,7 @@ import { makeFunctionReference } from "convex/server";
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ConvexCaller } from "../src/convex-ledger";
+import { buildApplicationWorkBindingV1 } from "../src/application-lane-binding";
 import {
   ConvexApplicationLaneBindingStore,
   withConvexApplicationLaneBindingStore,
@@ -150,10 +151,11 @@ describe("hosted application lane bindings", () => {
     await t.mutation(bindRef, bindArgs(input, "bind-app-lane-1"));
 
     await t.run(async (ctx: any) => {
+      const wsId = await workspaceId(ctx);
       const item = await ctx.db
         .query("items")
         .withIndex("by_workspace_external", (q: any) =>
-          q.eq("workspaceId", await workspaceId(ctx)).eq("externalId", itemId)
+          q.eq("workspaceId", wsId).eq("externalId", itemId)
         )
         .unique();
       for (let index = 0; index < 1_050; index += 1) {
@@ -233,11 +235,10 @@ function binding(itemId: string, override: Record<string, unknown> = {}) {
 }
 
 function bindArgs(value: Record<string, unknown>, idempotencyKey: string) {
+  const admitted = buildApplicationWorkBindingV1(value);
   return queryArgs({
-    project: String(value.project),
-    bindingJson: canonicalApplicationWorkBindingInputJson(
-      parseApplicationWorkBindingInputJson(JSON.stringify(value)),
-    ),
+    project: admitted.project,
+    bindingJson: canonicalApplicationWorkBindingInputJson(admitted),
     idempotencyKey,
   });
 }
