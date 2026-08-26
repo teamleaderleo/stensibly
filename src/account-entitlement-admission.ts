@@ -81,6 +81,7 @@ export interface AccountEntitlementAdmission {
   evaluatedAt: string;
   entitlementRevision: string | null;
   entitlementSourceReference: string | null;
+  entitlementFingerprint: string | null;
   windowId: string | null;
   resetAt: string | null;
   remaining: number | null;
@@ -122,6 +123,7 @@ export function compileAccountEntitlementAdmission(
       reason: "no_entitlement",
       entitlementRevision: null,
       entitlementSourceReference: null,
+      entitlementFingerprint: null,
       windowId: null,
       resetAt: null,
       remaining: null,
@@ -144,6 +146,7 @@ export function compileAccountEntitlementAdmission(
       reason: "no_entitlement",
       entitlementRevision: null,
       entitlementSourceReference: null,
+      entitlementFingerprint: null,
       windowId: null,
       resetAt: null,
       remaining: null,
@@ -154,6 +157,7 @@ export function compileAccountEntitlementAdmission(
   const source = {
     entitlementRevision: entitlement.revision,
     entitlementSourceReference: entitlement.sourceReference,
+    entitlementFingerprint: fingerprintCanonicalRequest(entitlement),
   };
   const effectiveFromMs = Date.parse(entitlement.effectiveFrom);
   const effectiveUntilMs = entitlement.effectiveUntil === null
@@ -394,6 +398,7 @@ function decision(input: {
   reason: AccountEntitlementAdmissionReason;
   entitlementRevision: string | null;
   entitlementSourceReference: string | null;
+  entitlementFingerprint: string | null;
   windowId: string | null;
   resetAt: string | null;
   remaining: number | null;
@@ -410,6 +415,7 @@ function decision(input: {
     evaluatedAt: input.evaluatedAt,
     entitlementRevision: input.entitlementRevision,
     entitlementSourceReference: input.entitlementSourceReference,
+    entitlementFingerprint: input.entitlementFingerprint,
     windowId: input.windowId,
     resetAt: input.resetAt,
     remaining: input.remaining,
