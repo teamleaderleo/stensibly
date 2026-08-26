@@ -18,6 +18,21 @@ const ciSerialFullJob = ciWorkflow.match(
 )?.[1];
 
 describe("fenced Bun lock writer workflow", () => {
+  test("pins every external action used by the write-capable job", () => {
+    const actionReferences = [...workflow.matchAll(/uses:\s+[^@\s]+@([^\s]+)/gu)];
+
+    expect(actionReferences).toHaveLength(2);
+    for (const [, revision] of actionReferences) {
+      expect(revision).toMatch(/^[0-9a-f]{40}$/u);
+    }
+    expect(workflow).toContain(
+      "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0",
+    );
+    expect(workflow).toContain(
+      "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0",
+    );
+  });
+
   test("runs only for one exact current same-repository pull request", () => {
     expect(workflow).toContain("workflow_run:");
     expect(workflow).toContain("workflows: [CI]");
