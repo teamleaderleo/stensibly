@@ -375,6 +375,7 @@ function mapBinding(row: ApplicationLaneBindingRow): ApplicationWorkBindingV1 {
   } catch {
     throw new ApplicationLaneBindingStorageError();
   }
+  const expectedRecordedAt = binding.retiredAt ?? binding.createdAt;
   const valid = row.id === binding.id
     && row.project_id === binding.project
     && row.item_id === binding.itemId
@@ -386,8 +387,7 @@ function mapBinding(row: ApplicationLaneBindingRow): ApplicationWorkBindingV1 {
     && (row.is_current === 0 || row.is_current === 1)
     && typeof row.request_json === "string"
     && row.request_json.length > 0
-    && typeof row.recorded_at === "string"
-    && Number.isFinite(Date.parse(row.recorded_at));
+    && row.recorded_at === expectedRecordedAt;
   if (!valid) throw new ApplicationLaneBindingStorageError();
   return binding;
 }
