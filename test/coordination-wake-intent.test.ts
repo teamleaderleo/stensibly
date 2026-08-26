@@ -85,6 +85,48 @@ describe("cross-item coordination wake intents", () => {
     expect(generation12.wakeIntent?.idempotencyKey).not.toBe(generation11.wakeIntent?.idempotencyKey);
   });
 
+  test("supports never-claimed target generation zero without weakening exact generation identity", () => {
+    const generation0 = compileCoordinationWakeIntentV1({
+      ...subscription,
+      targetGeneration: 0,
+    }, event);
+    const generation1 = compileCoordinationWakeIntentV1({
+      ...subscription,
+      targetGeneration: 1,
+    }, event);
+
+    expect(parseCoordinationEventSubscriptionV1({
+      ...subscription,
+      targetGeneration: 0,
+    }).targetGeneration).toBe(0);
+    expect(generation0).toMatchObject({
+      matched: true,
+      targetGeneration: 0,
+      wakeIntent: {
+        targetGeneration: 0,
+        grantsAuthority: false,
+        authorizesDispatch: false,
+      },
+    });
+    expect(generation1.targetGeneration).toBe(1);
+    expect(generation0.decisionFingerprint).not.toBe(generation1.decisionFingerprint);
+    expect(generation0.wakeIntent?.fingerprint).not.toBe(generation1.wakeIntent?.fingerprint);
+    expect(generation0.wakeIntent?.idempotencyKey).not.toBe(generation1.wakeIntent?.idempotencyKey);
+  });
+
+  test("keeps target generation non-negative while subscription generation remains positive", () => {
+    for (const invalid of [-1, -0.5, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => parseCoordinationEventSubscriptionV1({
+        ...subscription,
+        targetGeneration: invalid,
+      })).toThrow("Target generation must be a non-negative safe integer");
+    }
+    expect(() => parseCoordinationEventSubscriptionV1({
+      ...subscription,
+      generation: 0,
+    })).toThrow("Subscription generation must be a positive safe integer");
+  });
+
   test("treats event types and source references as semantic sets", () => {
     const first = compileCoordinationWakeIntentV1(subscription, event);
     const second = compileCoordinationWakeIntentV1(
@@ -193,13 +235,6 @@ describe("cross-item coordination wake intents", () => {
       ...subscription,
       targetItemId: subscription.sourceItemId,
     })).toThrow("different source and target items");
-  });
-
-  test("requires a positive target generation", () => {
-    expect(() => parseCoordinationEventSubscriptionV1({
-      ...subscription,
-      targetGeneration: 0,
-    })).toThrow("Target generation must be a positive safe integer");
   });
 
   test("admits dense data only and never executes caller accessors", () => {
