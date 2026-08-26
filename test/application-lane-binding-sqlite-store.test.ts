@@ -164,13 +164,23 @@ describe("SQLite application lane binding store", () => {
         idempotencyKey: "bind-lane-a",
       });
 
+      const insertEvent = store.db.query(`
+        INSERT INTO events (
+          id,
+          item_id,
+          actor_id,
+          type,
+          payload_json,
+          created_at
+        ) VALUES (?1, ?2, NULL, 'diagnostic.noise', ?3, ?4)
+      `);
       for (let index = 0; index < 250; index += 1) {
-        store.appendEvent({
-          itemId: item.id,
-          actorId: actor.id,
-          type: "diagnostic.noise",
-          payload: { index },
-        });
+        insertEvent.run(
+          `evt_noise_${index}`,
+          item.id,
+          JSON.stringify({ index }),
+          new Date(Date.UTC(2026, 7, 27, 0, 0, 1, index)).toISOString(),
+        );
       }
 
       expect(store.listEvents(item.id).length).toBeGreaterThan(200);
