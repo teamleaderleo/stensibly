@@ -6,14 +6,17 @@ import {
   admitBindApplicationLaneCommand,
   admitRetireApplicationLaneBindingCommand,
   canonicalApplicationWorkBindingInputJson,
+  compileProjectApplicationLaneBindingSnapshotV1,
   exactApplicationLaneBindingId,
   exactApplicationLaneBindingIdempotencyKey,
   exactApplicationLaneBindingItemId,
   exactApplicationLaneBindingProject,
+  exactApplicationLaneBindingProjectReadLimit,
   parseApplicationWorkBindingInputJson,
   retireApplicationWorkBinding,
   type ApplicationLaneBindingStore,
   type BindApplicationLaneInput,
+  type ProjectApplicationLaneBindingSnapshotV1,
   type RetireApplicationLaneBindingInput,
 } from "./application-lane-binding-store.js";
 import type { ApplicationWorkBindingV1 } from "./application-lane-binding.js";
@@ -61,6 +64,13 @@ export class SqliteApplicationLaneBindingStore
     return listSqliteCurrentApplicationLaneBindings(this.store, project, itemId);
   }
 
+  async listProjectCurrentApplicationLaneBindings(
+    project: string,
+    limit?: number,
+  ): Promise<ProjectApplicationLaneBindingSnapshotV1> {
+    return listSqliteProjectCurrentApplicationLaneBindings(this.store, project, limit);
+  }
+
   async listApplicationLaneBindingHistory(
     project: string,
     bindingId: string,
@@ -101,6 +111,9 @@ export function ensureApplicationLaneBindingSchema(store: StensiblyStore): void 
 
     CREATE INDEX IF NOT EXISTS idx_application_lane_bindings_current_item
       ON application_lane_bindings(project_id, item_id, status, is_current, sequence DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_application_lane_bindings_current_project
+      ON application_lane_bindings(project_id, status, is_current, item_id, id, sequence ASC);
 
     CREATE INDEX IF NOT EXISTS idx_application_lane_bindings_history
       ON application_lane_bindings(project_id, id, generation ASC);
@@ -199,6 +212,32 @@ export function listSqliteCurrentApplicationLaneBindings(
     `)
     .all(exactProject, exactItem)
     .map(mapBinding));
+}
+
+export function listSqliteProjectCurrentApplicationLaneBindings(
+  store: StensiblyStore,
+  project: string,
+  limit?: number,
+): ProjectApplicationLaneBindingSnapshotV1 {
+  ensureApplicationLaneBindingSchema(store);
+  const exactProject = exactApplicationLaneBindingProject(project);
+  const exactLimit = exactApplicationLaneBindingProjectReadLimit(limit);
+  const rows = store.db
+    .query<ApplicationLaneBindingRow, [string, number]>(`
+      SELECT *
+      FROM application_lane_bindings
+      WHERE project_id = ?1
+        AND status = 'active'
+        AND is_current = 1
+      ORDER BY item_id ASC, id ASC, generation ASC, sequence ASC
+      LIMIT ?2
+    `)
+    .all(exactProject, exactLimit + 1);
+  return compileProjectApplicationLaneBindingSnapshotV1(
+    exactProject,
+    rows.map(mapBinding),
+    exactLimit,
+  );
 }
 
 export function listSqliteApplicationLaneBindingHistory(

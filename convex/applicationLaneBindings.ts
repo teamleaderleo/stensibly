@@ -9,6 +9,7 @@ import {
   canonicalApplicationWorkBindingInputJson,
   exactApplicationLaneBindingId,
   exactApplicationLaneBindingItemId,
+  exactApplicationLaneBindingProjectReadLimit,
   parseApplicationWorkBindingInputJson,
   retireApplicationWorkBinding,
 } from "../src/application-lane-binding-store";
@@ -178,6 +179,35 @@ export const listCurrent = query({
       )
       .order("asc")
       .collect();
+    return await Promise.all(rows.map(async (row) =>
+      canonicalApplicationWorkBindingInputJson(
+        await admitStoredBinding(ctx, row, scope),
+      )
+    ));
+  },
+});
+
+export const listProjectCurrent = query({
+  args: {
+    ...serviceArgs,
+    project: v.string(),
+    limit: v.number(),
+  },
+  returns: v.array(v.string()),
+  handler: async (ctx, args) => {
+    requireServiceSecret(args.serviceSecret);
+    const limit = exactApplicationLaneBindingProjectReadLimit(args.limit);
+    const scope = await resolveProject(ctx, args.workspace, args.project, false);
+    if (!scope) return [];
+    const rows = await ctx.db
+      .query("applicationLaneBindings")
+      .withIndex("by_project_current_item_binding", (q) =>
+        q.eq("projectId", scope.projectId)
+          .eq("status", "active")
+          .eq("isCurrent", true)
+      )
+      .order("asc")
+      .take(limit + 1);
     return await Promise.all(rows.map(async (row) =>
       canonicalApplicationWorkBindingInputJson(
         await admitStoredBinding(ctx, row, scope),

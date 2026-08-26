@@ -34,6 +34,14 @@ export const applicationLaneBindingTables = {
       "externalId",
       "generation",
     ])
+    .index("by_project_current_item_binding", [
+      "projectId",
+      "status",
+      "isCurrent",
+      "itemExternalId",
+      "externalId",
+      "generation",
+    ])
     .index("by_item_id_and_status_and_is_current_and_generation", [
       "itemId",
       "status",
