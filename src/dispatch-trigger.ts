@@ -101,6 +101,16 @@ export function parseDispatchTriggerV1(value: unknown): DispatchTriggerV1 {
     sourceRef: input.sourceRef,
     sourceFingerprint: input.sourceFingerprint,
   });
+  if (
+    input.triggerClass !== expected.triggerClass
+    || input.project !== expected.project
+    || input.itemId !== expected.itemId
+    || input.expectedClaimGeneration !== expected.expectedClaimGeneration
+    || input.sourceRef !== expected.sourceRef
+    || input.sourceFingerprint !== expected.sourceFingerprint
+  ) {
+    throw new TypeError("Dispatch trigger fields are not canonical");
+  }
   if (input.fingerprint !== expected.fingerprint) throw new TypeError("Dispatch trigger fingerprint is invalid");
   if (input.idempotencyKey !== expected.idempotencyKey) throw new TypeError("Dispatch trigger idempotency key is invalid");
   return expected;
