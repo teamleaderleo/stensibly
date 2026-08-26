@@ -156,15 +156,13 @@ describe("hosted exact-generation dispatch", () => {
     })).rejects.toThrow("forced post-dispatch receipt failure");
 
     const after = await itemState(t, fixture.item._id);
-    expect(after).toMatchObject({
-      status: before!.status,
-      claimGeneration: before!.claimGeneration,
-      claimedByActorId: before!.claimedByActorId,
-      claimedByExternalId: before!.claimedByExternalId,
-      claimExpiresAt: before!.claimExpiresAt,
-      version: before!.version,
-      updatedAt: before!.updatedAt,
-    });
+    expect(after?.status).toBe(before?.status);
+    expect(after?.claimGeneration).toBe(before?.claimGeneration);
+    expect(after?.claimedByActorId).toBe(before?.claimedByActorId);
+    expect(after?.claimedByExternalId).toBe(before?.claimedByExternalId);
+    expect(after?.claimExpiresAt).toBe(before?.claimExpiresAt);
+    expect(after?.version).toBe(before?.version);
+    expect(after?.updatedAt).toBe(before?.updatedAt);
     expect(await runCount(t, fixture.item._id)).toBe(beforeRuns);
     const afterEvents = await itemEvents(t, fixture.item._id);
     expect(afterEvents.filter((event) => event.type === "claim.created")).toHaveLength(beforeClaimEvents);
