@@ -409,8 +409,7 @@ function admitConsumptionInput(value: unknown): ConsumeApplicationLaneDispatchTr
     "continuationRef",
     "executionEnvelope",
   ], true);
-  const detachedDispatch = Object.freeze(dispatch)
-    as unknown as ConsumeApplicationLaneDispatchTriggerInput["dispatch"];
+  const detachedDispatch = Object.freeze(dispatch) as unknown as ConsumeApplicationLaneDispatchTriggerInput["dispatch"];
   return Object.freeze({
     trigger: input.trigger,
     dispatch: detachedDispatch,
