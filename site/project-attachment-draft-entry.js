@@ -177,7 +177,14 @@ export function createProjectAttachmentDraft(setup) {
   }
   const autonomousActions = workProfile === 'read_only'
     ? ['inspect', 'propose', 'record_progress', 'attach_artifact']
-    : ['inspect', 'propose', 'record_progress', 'attach_artifact', 'create_draft_pr'];
+    : [
+      'inspect',
+      'propose',
+      'record_progress',
+      'attach_artifact',
+      'github_issue_write',
+      'create_draft_pr',
+    ];
   const contract = {
     version: 1,
     project,
