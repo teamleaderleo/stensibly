@@ -4,7 +4,10 @@ import {
   parseApplicationLaneWakeIntentV1,
   type ApplicationLaneWakeIntentV1,
 } from "./application-lane-wake-intent.js";
-import { getSqliteApplicationLaneBinding } from "./application-lane-binding-sqlite-store.js";
+import {
+  ensureApplicationLaneBindingSchema,
+  getSqliteApplicationLaneBinding,
+} from "./application-lane-binding-sqlite-store.js";
 import {
   NotFoundError,
   type StensiblyStore,
@@ -86,10 +89,12 @@ export function ensureApplicationLaneWakeStoreSchema(store: StensiblyStore): voi
  */
 export function recordApplicationLaneWakeIntent(
   store: StensiblyStore,
-  input: RecordApplicationLaneWakeIntentInput,
+  inputValue: unknown,
   recordedAt = new Date(),
 ): ApplicationLaneWakeIntentV1 {
+  const input = admitRecordInput(inputValue);
   ensureApplicationLaneWakeStoreSchema(store);
+  ensureApplicationLaneBindingSchema(store);
   const decision = compileApplicationLaneWakeIntentV1(
     input.registration,
     input.currentBinding,
@@ -250,6 +255,50 @@ function mapWakeRow(row: ApplicationLaneWakeRow): ApplicationLaneWakeIntentV1 {
   return wake;
 }
 
+function admitRecordInput(value: unknown): RecordApplicationLaneWakeIntentInput {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Application lane wake record input must be an object");
+  }
+  let prototype: object | null;
+  let symbols: symbol[];
+  let descriptors: PropertyDescriptorMap;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    symbols = Object.getOwnPropertySymbols(value);
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throw new TypeError("Application lane wake record input inspection failed");
+  }
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError("Application lane wake record input must be a plain object");
+  }
+  if (symbols.length > 0) {
+    throw new TypeError("Application lane wake record input contains symbol decoration");
+  }
+  const keys = ["registration", "currentBinding", "currentAuthority", "event"] as const;
+  const output: Record<string, unknown> = {};
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+      throw new TypeError("Application lane wake record input must contain enumerable data properties");
+    }
+    if (!(keys as readonly string[]).includes(key)) {
+      throw new TypeError(`Application lane wake record input contains unsupported field ${key}`);
+    }
+    output[key] = descriptor.value;
+  }
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(output, key)) {
+      throw new TypeError(`Application lane wake record input is missing required field ${key}`);
+    }
+  }
+  return Object.freeze({
+    registration: output.registration,
+    currentBinding: output.currentBinding,
+    currentAuthority: output.currentAuthority,
+    event: output.event,
+  });
+}
+
 function exactSourceRef(value: string): string {
   if (
     typeof value !== "string"
@@ -261,8 +310,13 @@ function exactSourceRef(value: string): string {
 }
 
 function exactDate(value: Date, label: string): string {
-  if (!(value instanceof Date) || !Number.isFinite(value.getTime())) {
+  if (!(value instanceof Date)) throw new TypeError(`${label} is invalid`);
+  let millis: number;
+  try {
+    millis = Date.prototype.getTime.call(value);
+  } catch {
     throw new TypeError(`${label} is invalid`);
   }
-  return value.toISOString();
+  if (!Number.isFinite(millis)) throw new TypeError(`${label} is invalid`);
+  return new Date(millis).toISOString();
 }
