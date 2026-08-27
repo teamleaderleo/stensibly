@@ -4,6 +4,7 @@ import {
 } from "./github-actions-oidc.js";
 import {
   createHostedDeployGovernorDispatcherFromEnv,
+  HostedDeployGovernorDispatchError,
   type HostedDeployGovernorOverrides,
 } from "./hosted-deploy-governor-worker.js";
 
@@ -18,6 +19,12 @@ export interface HostedDeployGovernorOidcOverrides extends HostedDeployGovernorO
 export interface HostedDeployGovernorOidcHandler {
   handle(request: Request): Promise<Response>;
 }
+
+type DeployGovernorUnavailableStage =
+  | "oidc-verification"
+  | "governor-dispatch"
+  | "governor-token-mint"
+  | "governor-repository-dispatch";
 
 export function createHostedDeployGovernorOidcHandlerFromEnv(
   env: Record<string, string | undefined>,
@@ -64,19 +71,33 @@ export function createHostedDeployGovernorOidcHandlerFromEnv(
           return new Response("Forbidden", { status: 403 });
         }
         return new Response(null, { status: 204 });
-      } catch {
+      } catch (error) {
+        if (error instanceof HostedDeployGovernorDispatchError) {
+          return unavailable(
+            error.stage === "token-mint"
+              ? "governor-token-mint"
+              : "governor-repository-dispatch",
+            error.code,
+          );
+        }
         return unavailable("governor-dispatch");
       }
     },
   });
 }
 
-function unavailable(stage: "oidc-verification" | "governor-dispatch"): Response {
-  return new Response(`Service Unavailable: ${stage}`, {
+function unavailable(
+  stage: DeployGovernorUnavailableStage,
+  code?: string,
+): Response {
+  const detail = code ? `${stage}:${code}` : stage;
+  const headers: Record<string, string> = {
+    "Retry-After": "30",
+    "X-Stensibly-Deploy-Governor-Stage": stage,
+  };
+  if (code) headers["X-Stensibly-Deploy-Governor-Code"] = code;
+  return new Response(`Service Unavailable: ${detail}`, {
     status: 503,
-    headers: {
-      "Retry-After": "30",
-      "X-Stensibly-Deploy-Governor-Stage": stage,
-    },
+    headers,
   });
 }
