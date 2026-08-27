@@ -233,7 +233,37 @@ test("keeps ordinary jwks transport and status failures normalized as unauthoriz
   expect(nonOkFailure.status).toBe(401);
 });
 
-test("reports governor-dispatch stage when candidate dispatch fails", async () => {
+test("reports token-mint rejection code when GitHub rejects installation scope", async () => {
+  const { keys, publicJwk } = await oidcKeys();
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "https://token.actions.test/.well-known/jwks") {
+      return Response.json({ keys: [publicJwk] });
+    }
+    if (url.includes("/app/installations/98765/access_tokens")) {
+      return new Response(null, { status: 422 });
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  }) as unknown as typeof fetch;
+  const handler = createHostedDeployGovernorOidcHandlerFromEnv(environment(), {
+    fetch: fetchImpl,
+    now: () => now,
+    jwksUrl: "https://token.actions.test/.well-known/jwks",
+  })!;
+  const jwt = await signJwt(keys.privateKey, claims());
+  const response = await handler.handle(new Request(deployGovernorOidcAudience, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${jwt}` },
+  }));
+
+  await expectStagedServiceUnavailable(
+    response,
+    "governor-token-mint",
+    "github_installation_request_rejected",
+  );
+});
+
+test("reports repository-dispatch stage and status when candidate dispatch fails", async () => {
   const { keys, publicJwk } = await oidcKeys();
   const fetchImpl = (async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -265,14 +295,25 @@ test("reports governor-dispatch stage when candidate dispatch fails", async () =
     headers: { Authorization: `Bearer ${jwt}` },
   }));
 
-  await expectStagedServiceUnavailable(response, "governor-dispatch");
+  await expectStagedServiceUnavailable(
+    response,
+    "governor-repository-dispatch",
+    "github_repository_dispatch_http_500",
+  );
 });
 
-async function expectStagedServiceUnavailable(response: Response, stage: string): Promise<void> {
+async function expectStagedServiceUnavailable(
+  response: Response,
+  stage: string,
+  code?: string,
+): Promise<void> {
   expect(response.status).toBe(503);
   expect(response.headers.get("X-Stensibly-Deploy-Governor-Stage")).toBe(stage);
+  expect(response.headers.get("X-Stensibly-Deploy-Governor-Code")).toBe(code ?? null);
   expect(response.headers.get("Retry-After")).toBe("30");
-  expect(await response.text()).toBe(`Service Unavailable: ${stage}`);
+  expect(await response.text()).toBe(
+    `Service Unavailable: ${code ? `${stage}:${code}` : stage}`,
+  );
 }
 
 async function signJwt(privateKey: CryptoKey, payload: Record<string, unknown>): Promise<string> {

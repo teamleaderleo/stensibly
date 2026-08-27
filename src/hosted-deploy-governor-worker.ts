@@ -1,6 +1,10 @@
 import { exactBooleanEnv } from "./exact-boolean-env.js";
 import { GitHubAppInstallationTokenMinter } from "./github-app-installation-token.js";
 import type { PreparedGitHubWebhookDelivery } from "./github-webhook-ingress.js";
+import {
+  GitHubProviderRejectedError,
+  githubPublicationProviderRejectionCode,
+} from "./github-provider-contracts.js";
 import { normalizeGitHubRepository } from "./github-provider-validation.js";
 import { receiverSafeFetch } from "./fetch-implementation.js";
 
@@ -28,6 +32,22 @@ export interface HostedDeployGovernorOverrides {
   now?: () => number;
 }
 
+export type HostedDeployGovernorDispatchFailureStage =
+  | "token-mint"
+  | "repository-dispatch";
+
+export class HostedDeployGovernorDispatchError extends Error {
+  readonly stage: HostedDeployGovernorDispatchFailureStage;
+  readonly code: string;
+
+  constructor(stage: HostedDeployGovernorDispatchFailureStage, code: string) {
+    super("Hosted deploy governor dispatch failed");
+    this.name = "HostedDeployGovernorDispatchError";
+    this.stage = stage;
+    this.code = code;
+  }
+}
+
 interface HostedDeployGovernorConfiguration {
   targetRepository: string;
   sourceRepositories: ReadonlySet<string>;
@@ -41,6 +61,8 @@ interface HostedDeployGovernorConfiguration {
 const fullRevisionPattern = /^[a-f0-9]{40}$/u;
 const githubApiVersion = "2022-11-28";
 const deploySignalWorkflowName = "Production deploy signal";
+const repositoryDispatchTransportFailureCode =
+  "github_repository_dispatch_transport_failed";
 
 export function createHostedDeployGovernorDispatcherFromEnv(
   env: Record<string, string | undefined>,
@@ -67,39 +89,61 @@ export function createHostedDeployGovernorDispatcherFromEnv(
         return Object.freeze({ status: "ignored" as const });
       }
 
-      const credential = await tokens.getInstallationToken({
-        repositoryFullName: config.targetRepository,
-        permission: { name: "contents", access: "write" },
-      });
-      const response = await fetchImpl(
-        `${config.apiBaseUrl}/repos/${config.targetRepository}/dispatches`,
-        {
-          method: "POST",
-          headers: {
-            Accept: "application/vnd.github+json",
-            Authorization: `Bearer ${credential.token}`,
-            "Content-Type": "application/json",
-            "User-Agent": "stensibly",
-            "X-GitHub-Api-Version": githubApiVersion,
-          },
-          body: JSON.stringify({
-            event_type: "vercel-deploy-candidate",
-            client_payload: {
-              repository: candidate.repository,
-              branch: candidate.branch,
-              sha: candidate.sha,
-              delivery_id: candidate.deliveryId,
+      let credential;
+      try {
+        credential = await tokens.getInstallationToken({
+          repositoryFullName: config.targetRepository,
+          permission: { name: "contents", access: "write" },
+        });
+      } catch (error) {
+        throw new HostedDeployGovernorDispatchError(
+          "token-mint",
+          error instanceof GitHubProviderRejectedError
+            ? error.code
+            : githubPublicationProviderRejectionCode.credentialMintFailed,
+        );
+      }
+
+      let response: Response;
+      try {
+        response = await fetchImpl(
+          `${config.apiBaseUrl}/repos/${config.targetRepository}/dispatches`,
+          {
+            method: "POST",
+            headers: {
+              Accept: "application/vnd.github+json",
+              Authorization: `Bearer ${credential.token}`,
+              "Content-Type": "application/json",
+              "User-Agent": "stensibly",
+              "X-GitHub-Api-Version": githubApiVersion,
             },
-          }),
-        },
-      );
+            body: JSON.stringify({
+              event_type: "vercel-deploy-candidate",
+              client_payload: {
+                repository: candidate.repository,
+                branch: candidate.branch,
+                sha: candidate.sha,
+                delivery_id: candidate.deliveryId,
+              },
+            }),
+          },
+        );
+      } catch {
+        throw new HostedDeployGovernorDispatchError(
+          "repository-dispatch",
+          repositoryDispatchTransportFailureCode,
+        );
+      }
       if (response.status !== 204) {
         try {
           await response.body?.cancel();
         } catch {
           // Provider body disposal does not change the fixed dispatch failure.
         }
-        throw new Error(`Deploy governor dispatch failed with GitHub status ${response.status}`);
+        throw new HostedDeployGovernorDispatchError(
+          "repository-dispatch",
+          `github_repository_dispatch_http_${response.status}`,
+        );
       }
       return Object.freeze({ status: "dispatched" as const });
     },

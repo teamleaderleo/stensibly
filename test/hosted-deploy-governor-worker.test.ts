@@ -2,6 +2,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import {
   createHostedDeployGovernorConsumerFromEnv,
+  HostedDeployGovernorDispatchError,
 } from "../src/hosted-deploy-governor-worker.ts";
 import {
   digestGitHubWebhookPayload,
@@ -277,8 +278,14 @@ describe("hosted deploy governor dispatch", () => {
       fetch: githubFetch(() => new Response("forbidden", { status: 403 })),
       now: () => Date.parse("2026-08-24T08:00:00.000Z"),
     })!;
-    await expect(consumer.consume(delivery())).rejects.toThrow(
-      "Deploy governor dispatch failed with GitHub status 403",
-    );
+    try {
+      await consumer.consume(delivery());
+      throw new Error("expected deploy governor dispatch failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(HostedDeployGovernorDispatchError);
+      const dispatchError = error as HostedDeployGovernorDispatchError;
+      expect(dispatchError.stage).toBe("repository-dispatch");
+      expect(dispatchError.code).toBe("github_repository_dispatch_http_403");
+    }
   });
 });
