@@ -6,6 +6,8 @@ const workflow = await Bun.file(
 
 test("hosted Lazy verification workflow is exact, bounded, and secret-safe", () => {
   expect(workflow).toContain("workflow_dispatch:");
+  expect(workflow).toContain("run_ref:");
+  expect(workflow).toContain("HOSTED_LAZY_RUN_REF: ${{ inputs.run_ref || github.run_id }}");
   expect(workflow).toContain("environment:\n      name: production");
   expect(workflow).toContain("current_main=\"$(git rev-parse FETCH_HEAD)\"");
   expect(workflow).toContain("bun scripts/convex-production-deploy-key.ts");
