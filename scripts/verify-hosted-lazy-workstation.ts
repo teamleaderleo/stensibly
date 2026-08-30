@@ -42,6 +42,7 @@ type VerificationLedger = Pick<ConvexWorkLedger,
 export interface HostedLazyVerificationReceiptV1 {
   schema: "stensibly-hosted-lazy-verification/v1";
   revision: string;
+  operationRevision: string;
   runRef: string;
   project: typeof PROJECT;
   sourceItemId: string;
@@ -67,9 +68,11 @@ export async function verifyHostedLazyWorkstation(input: {
   ledger: VerificationLedger;
   runRef: string;
   revision: string;
+  operationRevision?: string;
 }): Promise<HostedLazyVerificationReceiptV1> {
   const runRef = boundedRef(input.runRef, "run reference");
   const revision = exactRevision(input.revision);
+  const operationRevision = exactRevision(input.operationRevision ?? revision);
   const prefix = `hosted-lazy-${runRef}`;
   const source = await input.ledger.createItem({
     project: PROJECT,
@@ -102,7 +105,7 @@ export async function verifyHostedLazyWorkstation(input: {
     id: continuation.id,
     actor: SUPERVISOR,
     supervisor: SUPERVISOR,
-    expectedGeneration: continuation.generation,
+    expectedGeneration: 1,
     runnerType: "lazy-commander",
     runnerProfile: PROFILE,
     runnerProfileVersion: null,
@@ -127,7 +130,7 @@ export async function verifyHostedLazyWorkstation(input: {
   }
 
   const commandId = `${prefix}:command`;
-  const commandFingerprint = fingerprint({ commandId, revision });
+  const commandFingerprint = fingerprint({ commandId, revision: operationRevision });
   const reservation = {
     project: PROJECT,
     itemId: target.id,
@@ -139,7 +142,7 @@ export async function verifyHostedLazyWorkstation(input: {
     profileId: PROFILE,
     profileVersion: null,
     requestFingerprint: fingerprint({
-      revision,
+      revision: operationRevision,
       itemId: target.id,
       itemClaimGeneration: queued.item.claimGeneration,
       runId: claimed.id,
@@ -174,7 +177,7 @@ export async function verifyHostedLazyWorkstation(input: {
     kind: "bounded_episode_completed" as const,
     observationCount: 1,
     observationsSha256: fingerprint({
-      revision,
+      revision: operationRevision,
       runRef,
       observations: ["ledger_verification_completed"],
     }),
@@ -207,7 +210,7 @@ export async function verifyHostedLazyWorkstation(input: {
     reservation: {
       ...reservation,
       commandId: `${prefix}:replay-command`,
-      commandFingerprint: fingerprint({ revision, runRef, replay: true }),
+      commandFingerprint: fingerprint({ revision: operationRevision, runRef, replay: true }),
     },
   });
   if (replay.outcome !== "replayed" || replay.dispatchAuthorized) {
@@ -226,7 +229,7 @@ export async function verifyHostedLazyWorkstation(input: {
       reservation: {
         ...reservation,
         commandId: `${prefix}:stale-command`,
-        commandFingerprint: fingerprint({ revision, runRef, stale: true }),
+        commandFingerprint: fingerprint({ revision: operationRevision, runRef, stale: true }),
         idempotencyKey: `${prefix}:stale-reserve`,
       },
     });
@@ -257,6 +260,7 @@ export async function verifyHostedLazyWorkstation(input: {
   return Object.freeze({
     schema: "stensibly-hosted-lazy-verification/v1",
     revision,
+    operationRevision,
     runRef,
     project: PROJECT,
     sourceItemId: source.id,
@@ -338,12 +342,14 @@ async function main(): Promise<void> {
       "hosted Lazy run reference",
     ),
     revision: process.env.GITHUB_SHA ?? "",
+    operationRevision: process.env.HOSTED_LAZY_OPERATION_REVISION,
   });
   await mkdir(dirname(output), { recursive: true, mode: 0o700 });
   await writeFile(output, `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx", mode: 0o600 });
   console.log(JSON.stringify({
     schema: receipt.schema,
     revision: receipt.revision,
+    operationRevision: receipt.operationRevision,
     reservationAcquisition: receipt.reservationAcquisition,
     settlementAcquisition: receipt.settlementAcquisition,
     terminalClaimInvalidationReplay: receipt.terminalClaimInvalidationReplay,
