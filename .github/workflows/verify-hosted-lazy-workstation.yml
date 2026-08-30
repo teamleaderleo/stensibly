@@ -1,0 +1,106 @@
+name: Verify hosted Lazy reservation ledger
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Exact current main revision expected in production
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stensibly-hosted-lazy-workstation
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify exact reservation, replay, and refusal
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Require exact current main
+        env:
+          EXPECTED_REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" || ! "$EXPECTED_REVISION" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Hosted Lazy verification requires one exact main revision" >&2
+            exit 1
+          fi
+          git fetch --no-tags origin refs/heads/main
+          current_main="$(git rev-parse FETCH_HEAD)"
+          if [[ "$GITHUB_SHA" != "$EXPECTED_REVISION" || "$current_main" != "$EXPECTED_REVISION" ]]; then
+            echo "Hosted Lazy verification revision is not exact current main" >&2
+            exit 1
+          fi
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate protected production key
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: bun scripts/convex-production-deploy-key.ts
+
+      - name: Run bounded hosted verification
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          service_secret="$(bunx convex env get STENSIBLY_SERVICE_SECRET --prod)"
+          if [[ -z "$service_secret" || "$service_secret" == *$'\n'* || "$service_secret" == *$'\r'* ]]; then
+            echo "Hosted service secret is unavailable or malformed" >&2
+            exit 1
+          fi
+          echo "::add-mask::$service_secret"
+          CONVEX_URL="https://resilient-donkey-323.convex.cloud" \
+          STENSIBLY_SERVICE_SECRET="$service_secret" \
+            bun scripts/verify-hosted-lazy-workstation.ts \
+              --output "$RUNNER_TEMP/hosted-lazy-verification.json"
+          unset service_secret
+
+      - name: Validate content-free receipt
+        run: |
+          set -euo pipefail
+          jq -e '
+            .schema == "stensibly-hosted-lazy-verification/v1" and
+            .revision == env.GITHUB_SHA and
+            (.reservationAcquisition == "reserved" or .reservationAcquisition == "replayed") and
+            (.settlementAcquisition == "settled" or .settlementAcquisition == "replayed") and
+            .terminalClaimInvalidationReplay == "replayed" and
+            .freshStaleClaim == "refused" and
+            .targetTerminal == "succeeded" and
+            .sourceTerminal == "done" and
+            .containsPrivateContent == false and
+            .containsCredentials == false and
+            .authorizesWork == false and
+            .authorizesEffects == false and
+            .authorizesRedispatch == false
+          ' "$RUNNER_TEMP/hosted-lazy-verification.json" >/dev/null
+          {
+            echo "### Hosted Lazy reservation ledger verified"
+            echo
+            echo "- Revision: \`$GITHUB_SHA\`"
+            echo "- Reservation acquisition: exact and replay-safe"
+            echo "- Exact replay after claim invalidation: \`replayed\`"
+            echo "- Fresh stale reservation: \`refused\`"
+            echo "- Both bounded verification items: terminal"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload content-free receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hosted-lazy-verification-${{ github.sha }}
+          path: ${{ runner.temp }}/hosted-lazy-verification.json
+          if-no-files-found: error
+          retention-days: 14
