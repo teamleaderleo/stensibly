@@ -326,6 +326,77 @@ describe("hosted runner profile version provenance", () => {
     })).rejects.toThrow(/different command/);
   });
 
+  test("hosted Lazy reservations atomically fence the exact item claim generation", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seedQueuedRun(t, {
+      project: "lazy-hosted",
+      title: "Fence hosted Lazy proposal authority",
+      runnerProfileVersion: exactVersion,
+      runnerType: "lazy-commander",
+    });
+    const claimed = await t.mutation(convexApi.runnerRuns.claim, claimInput({
+      project: "lazy-hosted",
+      runId: seeded.runId,
+      runnerType: "lazy-commander",
+      runnerProfileVersion: exactVersion,
+      idempotencyKey: "claim-hosted-lazy-reservation",
+    })) as any;
+    const authority = await t.run(async (ctx) => {
+      const item = (await ctx.db.query("items").collect())
+        .find((entry) => entry.externalId === seeded.itemId);
+      if (!item || item.claimExpiresAt === undefined) throw new Error("Lazy item claim disappeared");
+      return {
+        generation: item.claimGeneration,
+        holder: item.claimedByExternalId,
+        expiresAt: new Date(item.claimExpiresAt).toISOString(),
+      };
+    });
+    expect(authority.holder).toBe(runner.id);
+    const input = {
+      ...baseArgs,
+      itemClaimGeneration: authority.generation,
+      authorityHolderId: runner.id,
+      authorityExpiresAt: authority.expiresAt,
+      project: "lazy-hosted",
+      itemId: seeded.itemId,
+      runId: seeded.runId,
+      runGeneration: claimed.generation as number,
+      leaseGeneration: claimed.leaseGeneration as number,
+      actor: runner,
+      adapterId: "lazy-commander",
+      profileId: "codex-default",
+      profileVersion: exactVersion,
+      requestFingerprint: `sha256:${"4".repeat(64)}`,
+      commandId: "hosted-lazy-command",
+      commandFingerprint: `sha256:${"5".repeat(64)}`,
+      idempotencyKey: "reserve-hosted-lazy-command",
+    };
+    const reserved = await t.mutation(convexApi.lazyWorkstationCommands.reserve, input) as any;
+    expect(reserved).toMatchObject({ outcome: "reserved", dispatchAuthorized: true });
+    await t.run(async (ctx) => {
+      const item = (await ctx.db.query("items").collect())
+        .find((entry) => entry.externalId === seeded.itemId);
+      if (!item) throw new Error("Lazy item disappeared before replay test");
+      await ctx.db.patch(item._id, {
+        claimGeneration: authority.generation + 1,
+        claimedByExternalId: undefined,
+        claimExpiresAt: undefined,
+      });
+    });
+    const replayed = await t.mutation(convexApi.lazyWorkstationCommands.reserve, {
+      ...input,
+      commandId: "hosted-lazy-replay-command",
+      commandFingerprint: `sha256:${"6".repeat(64)}`,
+    }) as any;
+    expect(replayed).toMatchObject({ outcome: "replayed", dispatchAuthorized: false });
+    await expect(t.mutation(convexApi.lazyWorkstationCommands.reserve, {
+      ...input,
+      idempotencyKey: "reserve-hosted-lazy-stale-claim",
+      commandId: "hosted-lazy-stale-claim",
+      commandFingerprint: `sha256:${"7".repeat(64)}`,
+    })).rejects.toThrow(/claim generation or authority changed/);
+  });
+
   test("fresh hosted reservations fail closed when durable profile provenance differs", async () => {
     const cases = [
       {
@@ -410,6 +481,7 @@ async function seedQueuedRun(
     project: string;
     title: string;
     runnerProfileVersion?: string;
+    runnerType?: string;
   },
 ) {
   const item = await createItem(t, input.title, input.project, 80, supervisor);
@@ -433,7 +505,7 @@ async function seedQueuedRun(
       externalId: "pending",
       actorId: actor._id,
       actorExternalId: actor.externalId,
-      runnerType: "generic-mcp",
+      runnerType: input.runnerType ?? "generic-mcp",
       runnerProfile: "codex-default",
       ...(input.runnerProfileVersion
         ? { runnerProfileVersion: input.runnerProfileVersion }

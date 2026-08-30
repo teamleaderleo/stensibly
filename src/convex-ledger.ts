@@ -53,6 +53,7 @@ import type {
   RunnerAdapterCommandLedger,
   SettleRunnerAdapterCommandInput,
 } from "./runner-adapter-command-contracts.js";
+import type { LazyWorkstationReservationInputV1 } from "./lazy-workstation-adapter.js";
 import type {
   ClaimRunnerAdapterCommandRecoveryInput,
   RunnerAdapterCommandRecoveryLedger,
@@ -318,6 +319,18 @@ export class ConvexWorkLedger implements
       convexApi.runnerAdapterCommands.reserve,
       this.args(input),
     ) as Awaited<ReturnType<RunnerAdapterCommandLedger["reserveRunnerAdapterCommand"]>>;
+  }
+
+  async reserveLazyWorkstationCommand(input: LazyWorkstationReservationInputV1) {
+    return await this.client.mutation(
+      convexApi.lazyWorkstationCommands.reserve,
+      this.args({
+        ...input.reservation,
+        itemClaimGeneration: input.itemClaimGeneration,
+        authorityHolderId: input.authority.holderId,
+        authorityExpiresAt: input.authority.expiresAt,
+      }),
+    ) as Awaited<ReturnType<import("./lazy-workstation-adapter.js").LazyWorkstationCommandLedgerV1["reserveLazyWorkstationCommand"]>>;
   }
 
   async settleRunnerAdapterCommand(input: SettleRunnerAdapterCommandInput) {
