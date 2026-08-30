@@ -34,6 +34,7 @@ type VerificationLedger = Pick<ConvexWorkLedger,
   | "proposeContinuation"
   | "queueContinuationForSupervisor"
   | "claimRunnerWork"
+  | "getRunnerAdapterCommand"
   | "reserveLazyWorkstationCommand"
   | "settleRunnerAdapterCommand"
   | "transitionRun"
@@ -221,7 +222,8 @@ export async function verifyHostedLazyWorkstation(input: {
     throw new Error("Hosted Lazy verification replay lost its exact settlement");
   }
   assertStoredSettlement(replay.settlement, commandId, commandFingerprint, expectedOutcome);
-  let staleRefused = false;
+  const staleIdempotencyKey = `${prefix}:stale-reserve`;
+  let staleErrored = false;
   try {
     await input.ledger.reserveLazyWorkstationCommand({
       itemClaimGeneration: queued.item.claimGeneration,
@@ -230,14 +232,16 @@ export async function verifyHostedLazyWorkstation(input: {
         ...reservation,
         commandId: `${prefix}:stale-command`,
         commandFingerprint: fingerprint({ revision: operationRevision, runRef, stale: true }),
-        idempotencyKey: `${prefix}:stale-reserve`,
+        idempotencyKey: staleIdempotencyKey,
       },
     });
-  } catch (error) {
-    staleRefused = error instanceof Error
-      && error.message.includes("claim generation or authority changed");
+  } catch {
+    staleErrored = true;
   }
-  if (!staleRefused) {
+  const staleStored = await input.ledger.getRunnerAdapterCommand({
+    idempotencyKey: staleIdempotencyKey,
+  });
+  if (!staleErrored || staleStored !== null) {
     throw new Error("Hosted Lazy verification accepted or ambiguously refused a fresh stale claim");
   }
 

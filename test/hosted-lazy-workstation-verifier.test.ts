@@ -50,6 +50,11 @@ describe("hosted Lazy workstation verifier", () => {
           settlement: storedSettlement,
         };
       },
+      async getRunnerAdapterCommand(input: any) {
+        calls.push("read-stale");
+        expect(input.idempotencyKey).toBe("hosted-lazy-33335147018:stale-reserve");
+        return null;
+      },
       async settleRunnerAdapterCommand(input: any) {
         calls.push("settle");
         expect(input.outcome).toMatchObject({
@@ -111,6 +116,7 @@ describe("hosted Lazy workstation verifier", () => {
       "succeed-run",
       "reserve:2",
       "reserve:3",
+      "read-stale",
       "claim-source",
       "complete-source",
     ]);
@@ -126,7 +132,7 @@ describe("hosted Lazy workstation verifier", () => {
       terminalClaimInvalidationReplay: "replayed",
       freshStaleClaim: "refused",
     });
-    expect(calls.slice(12)).toEqual([
+    expect(calls.slice(13)).toEqual([
       "create:hosted-lazy-33335147018:source",
       "create:hosted-lazy-33335147018:target",
       "propose",
@@ -137,6 +143,7 @@ describe("hosted Lazy workstation verifier", () => {
       "succeed-run",
       "reserve:5",
       "reserve:6",
+      "read-stale",
       "claim-source",
       "complete-source",
     ]);
