@@ -63,6 +63,20 @@ Every terminal receipt fixes `rawContentEmitted`, `containsPrivateContent`,
 `containsCredentials`, `authorizesWork`, `authorizesEffects`, and
 `authorizesRedispatch` to `false`.
 
+## Hosted verification
+
+After the exact revision is deployed, dispatch the main-only **Verify hosted
+Lazy reservation ledger** workflow with that 40-character revision. The production
+environment retrieves the existing Convex service secret without retaining it,
+creates two bounded verification items, and proves fresh reservation, exact
+settlement, replay after terminal claim invalidation, and refusal of a new
+stale claim. It deliberately records zero owner observations: this is a hosted
+ledger proof, not a Lazy owner-execution proof. Both items finish terminally
+and remain as bounded append-only audit evidence. A GitHub rerun reuses the
+same run ID and idempotency prefix instead of creating a second attempt. The
+workflow uploads only a content-free receipt for 14 days; it never runs for
+pull requests and grants no redispatch authority.
+
 ## Local dogfood
 
 Run from a clean isolated Stensibly worktree with a fresh output location:

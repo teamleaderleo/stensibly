@@ -20,6 +20,7 @@ const permanentWorkflows = [
   "publish-dashboard-on-main.yml",
   "sync-issue-labels.yml",
   "verify-github-observation-hosted.yml",
+  "verify-hosted-lazy-workstation.yml",
   "verify-oauth-hosted.yml",
 ] as const;
 
