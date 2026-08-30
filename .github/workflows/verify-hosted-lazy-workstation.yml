@@ -54,20 +54,17 @@ jobs:
 
       - name: Run bounded hosted verification
         env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          STENSIBLY_SERVICE_SECRET: ${{ secrets.STENSIBLY_SERVICE_SECRET }}
         run: |
           set -euo pipefail
-          service_secret="$(bunx convex env get STENSIBLY_SERVICE_SECRET --prod)"
-          if [[ -z "$service_secret" || "$service_secret" == *$'\n'* || "$service_secret" == *$'\r'* ]]; then
+          if [[ -z "${STENSIBLY_SERVICE_SECRET:-}" || "$STENSIBLY_SERVICE_SECRET" == *$'\n'* || "$STENSIBLY_SERVICE_SECRET" == *$'\r'* ]]; then
             echo "Hosted service secret is unavailable or malformed" >&2
             exit 1
           fi
-          echo "::add-mask::$service_secret"
+          echo "::add-mask::$STENSIBLY_SERVICE_SECRET"
           CONVEX_URL="https://resilient-donkey-323.convex.cloud" \
-          STENSIBLY_SERVICE_SECRET="$service_secret" \
             bun scripts/verify-hosted-lazy-workstation.ts \
               --output "$RUNNER_TEMP/hosted-lazy-verification.json"
-          unset service_secret
 
       - name: Validate content-free receipt
         run: |
