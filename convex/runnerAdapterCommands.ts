@@ -11,6 +11,7 @@ import {
 } from "./lib/domain";
 import { sameCanonical } from "./lib/executionEnvelope";
 import { mutation, query } from "./lib/server";
+import type { MutationCtx } from "./_generated/server";
 import { actorValidator, serviceArgs, type ActorInput } from "./lib/validators";
 import {
   admitRunnerAdapterCommandReservationRecord,
@@ -78,7 +79,20 @@ export const reserve = mutation({
   handler: async (ctx, args) => {
     requireServiceSecret(args.serviceSecret);
     const input = normalizeInput(args);
-    const workspace = await findWorkspace(ctx, normalizeWorkspace(args.workspace));
+    return reserveRunnerAdapterCommandInTransaction(
+      ctx,
+      normalizeWorkspace(args.workspace),
+      input,
+    );
+  },
+});
+
+export async function reserveRunnerAdapterCommandInTransaction(
+  ctx: MutationCtx,
+  workspaceSlug: string,
+  input: ReservationInput,
+) {
+    const workspace = await findWorkspace(ctx, workspaceSlug);
     if (!workspace) throw new Error(`Run ${input.runId} does not exist`);
     const stableRequest = stableRequestFor(input);
 
@@ -156,8 +170,7 @@ export const reserve = mutation({
       reservedAt,
     });
     return publicReservation("reserved", true, input, reservedAt, null);
-  },
-});
+}
 
 export const settle = mutation({
   args: {
@@ -215,7 +228,7 @@ export const settle = mutation({
   },
 });
 
-type ReservationInput = {
+export type ReservationInput = {
   project: string;
   itemId: string;
   runId: string;
@@ -231,7 +244,7 @@ type ReservationInput = {
   idempotencyKey: string;
 };
 
-function normalizeInput(args: ReservationInput): ReservationInput {
+export function normalizeInput(args: ReservationInput): ReservationInput {
   return {
     project: assertSlug(args.project, "Project"),
     itemId: assertText(args.itemId, "Runner adapter command item ID", 240),

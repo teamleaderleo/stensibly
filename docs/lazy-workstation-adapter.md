@@ -22,6 +22,16 @@ inside the same `BEGIN IMMEDIATE` transaction as the existing runner adapter
 command reservation. It delegates durable replay and settlement to
 `runner_adapter_commands`; it does not add another scheduler or replay ledger.
 
+The hosted `ConvexLedger.reserveLazyWorkstationCommand` path calls
+`lazyWorkstationCommands:reserve`. For a fresh reservation, that mutation checks
+the exact active item claim generation, holder, expiry, project, and actor in
+the same Convex transaction as the existing runner-adapter reservation. Exact
+replays remain available after the claim expires, while new stale reservations
+fail closed. The generic run lease, runner profile, replay, and settlement rows
+remain authoritative; there is no preflight query race or second hosted ledger.
+The mutation is service-secret protected and grants neither work acquisition
+nor execution authority.
+
 `bindLazyCampaignProposal` maps a strict Lazy campaign v2 acceptance proposal
 onto that same reservation. The idempotency key is the transition ID, while the
 command ID also includes a digest of the complete proposal. Exact replay thus
