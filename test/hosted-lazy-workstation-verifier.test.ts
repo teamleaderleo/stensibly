@@ -5,6 +5,7 @@ import { verifyHostedLazyWorkstation } from "../scripts/verify-hosted-lazy-works
 describe("hosted Lazy workstation verifier", () => {
   test("settles fresh, replay, and stale-refusal paths into a content-free receipt", async () => {
     const calls: string[] = [];
+    let proposalCalls = 0;
     let reservationCalls = 0;
     let storedCommand: any = null;
     let storedSettlement: any = null;
@@ -15,10 +16,12 @@ describe("hosted Lazy workstation verifier", () => {
       },
       async proposeContinuation() {
         calls.push("propose");
-        return { id: "continuation_1", generation: 1 };
+        proposalCalls += 1;
+        return { id: "continuation_1", generation: proposalCalls };
       },
-      async queueContinuationForSupervisor() {
+      async queueContinuationForSupervisor(input: any) {
         calls.push("queue");
+        expect(input.expectedGeneration).toBe(1);
         return { item: { claimGeneration: 1 }, run: { id: "run_1" } };
       },
       async claimRunnerWork() {
@@ -81,6 +84,7 @@ describe("hosted Lazy workstation verifier", () => {
       ledger,
       runRef: "33335147018",
       revision: "b".repeat(40),
+      operationRevision: "a".repeat(40),
     });
 
     expect(receipt).toMatchObject({
@@ -90,6 +94,7 @@ describe("hosted Lazy workstation verifier", () => {
       freshStaleClaim: "refused",
       targetTerminal: "succeeded",
       sourceTerminal: "done",
+      operationRevision: "a".repeat(40),
       containsPrivateContent: false,
       containsCredentials: false,
       authorizesEffects: false,
@@ -113,6 +118,7 @@ describe("hosted Lazy workstation verifier", () => {
       ledger,
       runRef: "33335147018",
       revision: "b".repeat(40),
+      operationRevision: "a".repeat(40),
     });
     expect(resumed).toMatchObject({
       reservationAcquisition: "replayed",

@@ -11,6 +11,10 @@ on:
         description: Existing bounded verification namespace to resume; defaults to this workflow run
         required: false
         type: string
+      operation_revision:
+        description: Original revision bound to an existing namespace; defaults to current main
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -60,6 +64,7 @@ jobs:
         env:
           STENSIBLY_SERVICE_SECRET: ${{ secrets.STENSIBLY_SERVICE_SECRET }}
           HOSTED_LAZY_RUN_REF: ${{ inputs.run_ref || github.run_id }}
+          HOSTED_LAZY_OPERATION_REVISION: ${{ inputs.operation_revision || inputs.revision }}
         run: |
           set -euo pipefail
           if [[ -z "${STENSIBLY_SERVICE_SECRET:-}" || "$STENSIBLY_SERVICE_SECRET" == *$'\n'* || "$STENSIBLY_SERVICE_SECRET" == *$'\r'* ]]; then
@@ -72,11 +77,14 @@ jobs:
               --output "$RUNNER_TEMP/hosted-lazy-verification.json"
 
       - name: Validate content-free receipt
+        env:
+          EXPECTED_OPERATION_REVISION: ${{ inputs.operation_revision || inputs.revision }}
         run: |
           set -euo pipefail
-          jq -e '
+          jq -e --arg expectedOperationRevision "$EXPECTED_OPERATION_REVISION" '
             .schema == "stensibly-hosted-lazy-verification/v1" and
             .revision == env.GITHUB_SHA and
+            .operationRevision == $expectedOperationRevision and
             (.reservationAcquisition == "reserved" or .reservationAcquisition == "replayed") and
             (.settlementAcquisition == "settled" or .settlementAcquisition == "replayed") and
             .terminalClaimInvalidationReplay == "replayed" and
