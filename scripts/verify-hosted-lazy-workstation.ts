@@ -172,10 +172,14 @@ export async function verifyHostedLazyWorkstation(input: {
   const expectedOutcome = {
     version: 1 as const,
     kind: "bounded_episode_completed" as const,
-    observationCount: 0,
-    observationsSha256: fingerprint({ revision, runRef, observations: [] }),
-    terminalObservationId: `${prefix}:no-owner-observation`,
-    terminalObservationType: "ledger_verification_no_owner_observation",
+    observationCount: 1,
+    observationsSha256: fingerprint({
+      revision,
+      runRef,
+      observations: ["ledger_verification_completed"],
+    }),
+    terminalObservationId: `${prefix}:verification-observation`,
+    terminalObservationType: "ledger_verification_completed",
     latestCheckpointExternalId: null,
     latestCheckpointSha256: null,
     containsPrivateContent: false as const,
@@ -329,7 +333,10 @@ async function main(): Promise<void> {
   const ledger = createConvexWorkLedgerFromEnv(process.env);
   const receipt = await verifyHostedLazyWorkstation({
     ledger,
-    runRef: boundedRef(process.env.GITHUB_RUN_ID ?? "", "GITHUB_RUN_ID"),
+    runRef: boundedRef(
+      process.env.HOSTED_LAZY_RUN_REF ?? process.env.GITHUB_RUN_ID ?? "",
+      "hosted Lazy run reference",
+    ),
     revision: process.env.GITHUB_SHA ?? "",
   });
   await mkdir(dirname(output), { recursive: true, mode: 0o700 });

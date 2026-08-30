@@ -49,6 +49,12 @@ describe("hosted Lazy workstation verifier", () => {
       },
       async settleRunnerAdapterCommand(input: any) {
         calls.push("settle");
+        expect(input.outcome).toMatchObject({
+          observationCount: 1,
+          terminalObservationType: "ledger_verification_completed",
+          containsPrivateContent: false,
+          containsCredentials: false,
+        });
         const outcome = storedSettlement ? "replayed" : "settled";
         storedSettlement ??= {
           ...input,

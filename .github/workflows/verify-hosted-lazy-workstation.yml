@@ -7,6 +7,10 @@ on:
         description: Exact current main revision expected in production
         required: true
         type: string
+      run_ref:
+        description: Existing bounded verification namespace to resume; defaults to this workflow run
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -55,6 +59,7 @@ jobs:
       - name: Run bounded hosted verification
         env:
           STENSIBLY_SERVICE_SECRET: ${{ secrets.STENSIBLY_SERVICE_SECRET }}
+          HOSTED_LAZY_RUN_REF: ${{ inputs.run_ref || github.run_id }}
         run: |
           set -euo pipefail
           if [[ -z "${STENSIBLY_SERVICE_SECRET:-}" || "$STENSIBLY_SERVICE_SECRET" == *$'\n'* || "$STENSIBLY_SERVICE_SECRET" == *$'\r'* ]]; then
