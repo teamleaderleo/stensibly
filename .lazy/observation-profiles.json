@@ -1,0 +1,55 @@
+{
+  "schema": "lazy-owner-observation-profiles/v1",
+  "repository": "teamleaderleo/stensibly",
+  "profiles": [
+    {
+      "id": "stensibly-workstation-snapshot",
+      "entrypoint": "tools/lazy_workstation_snapshot.py",
+      "sourceSha256": "1c076f113937040c4a089090131c6b320cd0e815d4d1ea876df51a4e379c7883",
+      "parameters": [
+        {
+          "name": "database",
+          "flag": "--database",
+          "kind": "absolute-file",
+          "roots": ["{repository}"]
+        },
+        { "name": "project", "flag": "--project", "kind": "safe-ref" },
+        { "name": "item-id", "flag": "--item-id", "kind": "safe-ref" },
+        {
+          "name": "claim-generation",
+          "flag": "--claim-generation",
+          "kind": "safe-ref"
+        },
+        { "name": "run-id", "flag": "--run-id", "kind": "safe-ref" },
+        {
+          "name": "run-generation",
+          "flag": "--run-generation",
+          "kind": "safe-ref"
+        },
+        {
+          "name": "lease-generation",
+          "flag": "--lease-generation",
+          "kind": "safe-ref"
+        },
+        {
+          "name": "authority-holder",
+          "flag": "--authority-holder",
+          "kind": "safe-ref"
+        },
+        {
+          "name": "authority-expires-at",
+          "flag": "--authority-expires-at",
+          "kind": "safe-ref"
+        },
+        { "name": "command-id", "flag": "--command-id", "kind": "safe-ref" },
+        { "name": "profile-id", "flag": "--profile-id", "kind": "safe-ref" },
+        {
+          "name": "profile-version",
+          "flag": "--profile-version",
+          "kind": "safe-ref"
+        }
+      ],
+      "output": { "flag": "--output", "filename": "snapshot.json" }
+    }
+  ]
+}
