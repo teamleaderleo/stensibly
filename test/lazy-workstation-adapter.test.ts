@@ -7,6 +7,7 @@ import {
 } from "../src/lazy-workstation-adapter.ts";
 import { SqliteLazyWorkstationCommandLedgerV1 } from "../src/lazy-workstation-adapter-sqlite.ts";
 import { RunnerAdapterCommandConflictError } from "../src/runner-adapter-command-contracts.ts";
+import { bindLazyCampaignProposal } from "../src/lazy-campaign-proposal.ts";
 import { claimRunnerWork } from "../src/runner-queue.ts";
 import { StensiblyStore } from "../src/store.ts";
 
@@ -64,6 +65,94 @@ class FakeOwnerProfileClient implements LazyOwnerProfileClientV1 {
 }
 
 describe("Stensibly-to-Lazy exact workstation adapter", () => {
+  test("binds one v2 campaign proposal into the existing exact command reservation", async () => {
+    const fixture = createFixture();
+    try {
+      const {
+        commandId: _commandId,
+        idempotencyKey: _idempotencyKey,
+        ...base
+      } = fixture.input;
+      const proposal = {
+        transitionId: "1".repeat(64),
+        ownerRef: "campaign:cost-aware",
+        evaluatedOwnerGeneration: 3,
+        evaluatedOwnerFingerprint: "2".repeat(64),
+        evaluatedCursorVectorFingerprint: "3".repeat(64),
+        requestedCodexReservationTokens: 5339,
+        authorizesWork: false as const,
+        authorizesEffects: false as const,
+        authorizesDispatch: false as const,
+      };
+      const binding = bindLazyCampaignProposal(base, proposal);
+      expect(binding.receipt).toMatchObject({
+        transitionId: proposal.transitionId,
+        requestedCodexReservationTokens: 5339,
+        executesWork: false,
+        authorizesWork: false,
+        authorizesEffects: false,
+        authorizesDispatch: false,
+      });
+      expect(binding.prepared.idempotencyKey).toBe(
+        `lazy-campaign:${proposal.transitionId}`,
+      );
+      expect(binding.prepared.profile.parameters["command-id"]).toBe(
+        binding.prepared.commandId,
+      );
+      const prepared = await fixture.adapter.prepare(binding.prepared);
+      const executed = await fixture.adapter.dispatch(prepared);
+      expect(executed.disposition).toBe("executed");
+      const replay = await fixture.adapter.dispatch(prepared);
+      expect(replay.disposition).toBe("settled_replay");
+      expect(fixture.client.observeCalls).toBe(1);
+
+      const changed = bindLazyCampaignProposal(base, {
+        ...proposal,
+        requestedCodexReservationTokens: 5340,
+      });
+      expect(changed.prepared.idempotencyKey).toBe(
+        binding.prepared.idempotencyKey,
+      );
+      expect(changed.prepared.commandId).not.toBe(binding.prepared.commandId);
+      const changedPrepared = await fixture.adapter.prepare(changed.prepared);
+      await expect(
+        fixture.adapter.dispatch(changedPrepared),
+      ).rejects.toBeInstanceOf(RunnerAdapterCommandConflictError);
+      expect(fixture.client.observeCalls).toBe(1);
+      expect(commandCount(fixture.store)).toBe(1);
+    } finally {
+      fixture.store.close();
+    }
+  });
+
+  test("rejects campaign proposals that claim authority before profile activity", async () => {
+    const fixture = createFixture();
+    try {
+      const {
+        commandId: _commandId,
+        idempotencyKey: _idempotencyKey,
+        ...base
+      } = fixture.input;
+      expect(() =>
+        bindLazyCampaignProposal(base, {
+          transitionId: "1".repeat(64),
+          ownerRef: "campaign:cost-aware",
+          evaluatedOwnerGeneration: 1,
+          evaluatedOwnerFingerprint: "2".repeat(64),
+          evaluatedCursorVectorFingerprint: "3".repeat(64),
+          requestedCodexReservationTokens: 0,
+          authorizesWork: true as false,
+          authorizesEffects: false,
+          authorizesDispatch: false,
+        }),
+      ).toThrow("must grant no authority");
+      expect(fixture.client.checkCalls).toBe(0);
+      expect(commandCount(fixture.store)).toBe(0);
+    } finally {
+      fixture.store.close();
+    }
+  });
+
   test("executes once, returns a content-free receipt, and reuses settled replay after expiry", async () => {
     const fixture = createFixture();
     try {

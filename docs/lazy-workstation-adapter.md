@@ -22,6 +22,14 @@ inside the same `BEGIN IMMEDIATE` transaction as the existing runner adapter
 command reservation. It delegates durable replay and settlement to
 `runner_adapter_commands`; it does not add another scheduler or replay ledger.
 
+`bindLazyCampaignProposal` maps a strict Lazy campaign v2 acceptance proposal
+onto that same reservation. The idempotency key is the transition ID, while the
+command ID also includes a digest of the complete proposal. Exact replay thus
+returns the existing command; changed proposal fields under the same transition
+conflict in the existing immediate reservation transaction. The mapping records
+requested Codex tokens but does not itself execute or authorize work and does
+not create a second Stensibly budget or acceptance ledger.
+
 The checked repository profile is
 `.lazy/observation-profiles.json#stensibly-workstation-snapshot`. Its source,
 `tools/lazy_workstation_snapshot.py`, opens the SQLite database read-only,
