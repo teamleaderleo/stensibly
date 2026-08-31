@@ -1,13 +1,17 @@
 #!/usr/bin/env bun
 import { stat } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { executeGlaedaVerifyFocusedRunV1 } from "../src/glaeda-verify-focused-runner.js";
+import {
+  executeGlaedaVerifyFocusedRunV1,
+  executeGlaedaVerifyRequiredRunV1,
+} from "../src/glaeda-verify-focused-runner.js";
 import { RunnerMcpHttpClient } from "../src/runner-mcp-http-client.js";
 
 const { values } = parseArgs({
   args: Bun.argv.slice(2),
   options: {
     endpoint: { type: "string", default: "https://api.stensibly.com/runner/mcp" },
+    "verification-profile": { type: "string", default: "focused" },
     project: { type: "string" },
     "run-id": { type: "string" },
     "token-file": { type: "string" },
@@ -32,7 +36,7 @@ const { values } = parseArgs({
 if (values.help) {
   console.log(`Usage: bun run glaeda:verify-focused -- [exact local runner options]
 
-Claims one dispatched verify-focused/v1 run, invokes the fixed Glaeda profile under
+Claims one dispatched named verification run, invokes the fixed Glaeda profile under
 credentialless_project, settles its compact receipt, and exits. The caller cannot
 supply shell, argv, environment, executable, remote URL, mutable ref, or credential.`);
   process.exit(0);
@@ -40,7 +44,8 @@ supply shell, argv, environment, executable, remote URL, mutable ref, or credent
 
 try {
   const token = await readPrivateToken(required(values["token-file"], "--token-file"));
-  const result = await executeGlaedaVerifyFocusedRunV1({
+  const execute = verificationExecutor(values["verification-profile"]);
+  const result = await execute({
     runner: new RunnerMcpHttpClient({ endpoint: required(values.endpoint, "--endpoint"), token }),
     project: required(values.project, "--project"),
     runId: required(values["run-id"], "--run-id"),
@@ -90,6 +95,12 @@ async function readPrivateToken(path: string): Promise<string> {
 function required(value: unknown, option: string): string {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${option} is required`);
   return value.trim();
+}
+
+function verificationExecutor(value: unknown) {
+  if (value === "focused") return executeGlaedaVerifyFocusedRunV1;
+  if (value === "required") return executeGlaedaVerifyRequiredRunV1;
+  throw new Error("--verification-profile must be focused or required");
 }
 
 function positiveInteger(value: unknown, option: string): number {

@@ -173,7 +173,7 @@ jobs:
               --actor-id "service:${RECIPIENT_NODE}-glaeda" \
               --runner-type glaeda-workstation \
               --adapter-id glaeda-workstation \
-              --profiles repo-query/v1,verify-focused/v1 \
+              --profiles repo-query/v1,verify-focused/v1,verify-required/v1 \
               --output-file "$credential_root/credential.token" \
               > "$credential_root/metadata.json"
           else

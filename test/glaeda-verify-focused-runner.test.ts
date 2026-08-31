@@ -8,6 +8,7 @@ import {
 } from "../src/glaeda-owned-workstation-capability.ts";
 import {
   executeGlaedaVerifyFocusedRunV1,
+  executeGlaedaVerifyRequiredRunV1,
 } from "../src/glaeda-verify-focused-runner.ts";
 import {
   fingerprintGlaedaVerifyFocusedRequestV1,
@@ -23,6 +24,48 @@ const actorId = "service:big-red-glaeda";
 const now = () => new Date("2026-08-31T05:00:00.000Z");
 
 describe("Glaeda verify-focused one-shot runner", () => {
+  test("claims verify-required only through its exact named runner profile", async () => {
+    const fixture = files();
+    const runtime = fingerprintGlaedaVerifyFocusedRuntimeV1(fixture.script, fixture.implementation);
+    let claim: Record<string, unknown> | null = null;
+    const client = new RunnerMcpHttpClient({
+      endpoint: "http://localhost/runner/mcp",
+      token: `stn.tok_${"1".repeat(32)}.${"A".repeat(43)}`,
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as {
+          id: number;
+          params: { name: string; arguments: Record<string, unknown> };
+        };
+        expect(body.params.name).toBe("claim_runner_work");
+        claim = body.params.arguments;
+        return toolResponse(body.id, null);
+      },
+    });
+    expect(await executeGlaedaVerifyRequiredRunV1({
+      runner: client,
+      project: "glaeda",
+      runId: "run-required-1",
+      profileGeneration: sha("a"),
+      pythonInterpreterPath: fixture.python,
+      verifyScriptPath: fixture.script,
+      verifyImplementationPath: fixture.implementation,
+      repositoryRoot: fixture.repository,
+      stateRoot: fixture.state,
+      cargoRoot: fixture.cargo,
+      rustupRoot: fixture.rustup,
+      node: {
+        id: "big-red", generation: 1, osClass: "linux", architectureClass: "x86_64",
+        glaedaRuntimeSha256: runtime,
+      },
+    })).toEqual({ outcome: "idle" });
+    expect(claim).toMatchObject({
+      runnerProfile: "verify-required/v1",
+      runnerProfileVersion: sha("a"),
+      project: "glaeda",
+      runId: "run-required-1",
+    });
+  });
+
   test("recovers a lost settlement response from the Glaeda receipt without reexecution", async () => {
     const fixture = files();
     const request = focusedRequest();
@@ -159,7 +202,7 @@ describe("Glaeda verify-focused one-shot runner", () => {
       command: "block",
       expectedGeneration: 1,
       expectedLeaseGeneration: 2,
-      checkpoint: "Credentialless verify-focused admission refused before physical dispatch.",
+      checkpoint: "Credentialless verify-focused/v1 admission refused before physical dispatch.",
     });
   });
 });

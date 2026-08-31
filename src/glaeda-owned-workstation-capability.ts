@@ -27,8 +27,8 @@ export interface GlaedaCapabilityTargetV1 {
     glaedaRuntimeSha256: string;
   };
   profile: {
-    id: "repo-query/v1" | "verify-focused/v1";
-    class: "repo_query" | "verify_focused";
+    id: "repo-query/v1" | "verify-focused/v1" | "verify-required/v1";
+    class: "repo_query" | "verify_focused" | "verify_required";
     versionSha256: string;
   };
   source: {
@@ -63,6 +63,7 @@ export function admitGlaedaCapabilityArtifactV1(
     !(
       (target.profile.id === "repo-query/v1" && target.profile.class === "repo_query")
       || (target.profile.id === "verify-focused/v1" && target.profile.class === "verify_focused")
+      || (target.profile.id === "verify-required/v1" && target.profile.class === "verify_required")
     )
     || !SHA256_PATTERN.test(target.profile.versionSha256)
   ) throw new Error("Glaeda capability target profile is invalid");

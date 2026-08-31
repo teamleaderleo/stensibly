@@ -6,10 +6,13 @@ import {
   assertGlaedaCapabilitySourceIdentityV1,
 } from "./glaeda-owned-workstation-capability.js";
 import {
+  GLAEDA_VERIFY_FOCUSED_PROFILE_V1,
+  GLAEDA_VERIFY_REQUIRED_PROFILE_V1,
   GlaedaVerifyFocusedWorkstationClientV1,
-  fingerprintGlaedaVerifyFocusedRequestV1,
+  fingerprintGlaedaVerificationRequestV1,
+  type GlaedaVerificationProfileContractV1,
+  type GlaedaVerificationRequestV1,
   type GlaedaVerifyFocusedProcessV1,
-  type GlaedaVerifyFocusedRequestV1,
 } from "./glaeda-verify-focused-workstation-client.js";
 import {
   GlaedaWorkstationAdapterV1,
@@ -21,10 +24,6 @@ import type { ActorInput } from "./schemas.js";
 import { sha256Hex } from "./sha256.js";
 import { HttpWorkstationCommandLedgerV1 } from "./workstation-command-adapter-http.js";
 
-const ARTIFACT_SCHEMA = "glaeda-verify-focused-request/v1";
-const PROFILE_ID = "verify-focused/v1";
-const RESOURCE_CLASS = "big-red-focused";
-const DEADLINE_SECONDS = 600;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const OID_PATTERN = /^[a-f0-9]{40}$/u;
 const REQUEST_ID_PATTERN = /^[a-z0-9][a-z0-9-]{7,63}$/u;
@@ -78,15 +77,31 @@ export type ExecuteGlaedaVerifyFocusedResultV1 =
     runStatus: string;
   };
 
+export type ExecuteGlaedaVerifyRequiredInputV1 = ExecuteGlaedaVerifyFocusedInputV1;
+export type ExecuteGlaedaVerifyRequiredResultV1 = ExecuteGlaedaVerifyFocusedResultV1;
+
 export async function executeGlaedaVerifyFocusedRunV1(
   raw: ExecuteGlaedaVerifyFocusedInputV1,
+): Promise<ExecuteGlaedaVerifyFocusedResultV1> {
+  return executeGlaedaVerificationRunV1(raw, GLAEDA_VERIFY_FOCUSED_PROFILE_V1);
+}
+
+export async function executeGlaedaVerifyRequiredRunV1(
+  raw: ExecuteGlaedaVerifyRequiredInputV1,
+): Promise<ExecuteGlaedaVerifyRequiredResultV1> {
+  return executeGlaedaVerificationRunV1(raw, GLAEDA_VERIFY_REQUIRED_PROFILE_V1);
+}
+
+async function executeGlaedaVerificationRunV1(
+  raw: ExecuteGlaedaVerifyFocusedInputV1,
+  profile: GlaedaVerificationProfileContractV1,
 ): Promise<ExecuteGlaedaVerifyFocusedResultV1> {
   const input = normalizeInput(raw);
   const actor = input.actor;
   const claimed = await input.runner.call<ClaimedRunEnvelope | null>("claim_runner_work", {
     actor,
     runnerType: "glaeda-workstation",
-    runnerProfile: PROFILE_ID,
+    runnerProfile: profile.id,
     runnerProfileVersion: input.profileGeneration,
     project: input.project,
     runId: input.runId,
@@ -96,8 +111,8 @@ export async function executeGlaedaVerifyFocusedRunV1(
     idempotencyKey: `claim-glaeda:${input.node.id}:${shortDigest(input.runId)}`,
   });
   if (claimed === null) return { outcome: "idle" };
-  admitClaimedRun(claimed, input, actor);
-  const { request, capability } = await admitBeforePhysicalDispatch(input, claimed).catch(
+  admitClaimedRun(claimed, input, actor, profile);
+  const { request, capability } = await admitBeforePhysicalDispatch(input, claimed, profile).catch(
     async (error: unknown) => {
       try {
         await input.runner.call("transition_runner_run", {
@@ -106,11 +121,11 @@ export async function executeGlaedaVerifyFocusedRunV1(
           command: "block",
           expectedGeneration: claimed.run.generation,
           expectedLeaseGeneration: claimed.run.leaseGeneration,
-          checkpoint: "Credentialless verify-focused admission refused before physical dispatch.",
-          idempotencyKey: `block-glaeda-focused-admission:${shortDigest(claimed.run.id)}`,
+          checkpoint: `Credentialless ${profile.id} admission refused before physical dispatch.`,
+          idempotencyKey: `block-glaeda-verification-admission:${shortDigest(claimed.run.id)}`,
         });
       } catch {
-        throw new Error("Verify-focused admission refused and its claim could not be released");
+        throw new Error("Glaeda verification admission refused and its claim could not be released");
       }
       throw error;
     },
@@ -123,7 +138,7 @@ export async function executeGlaedaVerifyFocusedRunV1(
     expectedGeneration: claimed.run.generation,
     expectedLeaseGeneration: claimed.run.leaseGeneration,
     leaseSeconds: input.leaseSeconds,
-    checkpoint: `Admitted exact credentialless verify-focused request ${request.requestId}.`,
+    checkpoint: `Admitted exact credentialless ${profile.id} request ${request.requestId}.`,
     usage: { toolCalls: 2 },
     idempotencyKey: `run-glaeda:${shortDigest(claimed.run.id)}`,
   });
@@ -139,11 +154,20 @@ export async function executeGlaedaVerifyFocusedRunV1(
     rustupRoot: input.rustupRoot,
     node: { ...input.node, capabilitySnapshotSha256: capability.snapshotSha256 },
     request: profileRequest(request),
+    profile,
     ...(input.process ? { process: input.process } : {}),
   });
   const ledger = new HttpWorkstationCommandLedgerV1(input.runner);
   const adapter = new GlaedaWorkstationAdapterV1({ ledger, client, actor });
-  const command = commandFor(input, claimed, running, request, capability.snapshotSha256, actor);
+  const command = commandFor(
+    input,
+    claimed,
+    running,
+    request,
+    capability.snapshotSha256,
+    actor,
+    profile,
+  );
   const prepared = await adapter.prepare(command);
   let dispatched = await adapter.dispatch(prepared);
 
@@ -171,16 +195,17 @@ export async function executeGlaedaVerifyFocusedRunV1(
       commandFingerprint: dispatched.commandFingerprint,
     };
   }
-  return finish(input.runner, actor, running, command, dispatched, client);
+  return finish(input.runner, actor, running, command, dispatched, client, profile);
 }
 
 async function admitBeforePhysicalDispatch(
   input: NormalizedInput,
   claimed: ClaimedRunEnvelope,
+  profile: GlaedaVerificationProfileContractV1,
 ) {
-  const request = admitRequestArtifact(claimed.context.artifacts);
+  const request = admitRequestArtifact(claimed.context.artifacts, profile);
   if (request.profileVersionSha256 !== input.profileGeneration) {
-    throw new Error("Glaeda verify-focused artifact profile generation changed");
+    throw new Error("Glaeda verification artifact profile generation changed");
   }
   assertGlaedaCapabilitySourceIdentityV1({
     commitOid: request.commitOid,
@@ -190,8 +215,8 @@ async function admitBeforePhysicalDispatch(
   const capability = admitGlaedaCapabilityArtifactV1(claimed.context.artifacts, {
     node: input.node,
     profile: {
-      id: PROFILE_ID,
-      class: "verify_focused",
+      id: profile.id,
+      class: profile.class,
       versionSha256: request.profileVersionSha256,
     },
     source: {
@@ -212,10 +237,11 @@ async function finish(
   command: GlaedaWorkstationCommandV1,
   dispatched: GlaedaWorkstationAdapterResultV1,
   client: GlaedaVerifyFocusedWorkstationClientV1,
+  profile: GlaedaVerificationProfileContractV1,
 ): Promise<ExecuteGlaedaVerifyFocusedResultV1> {
-  if (!dispatched.receipt) throw new Error("Settled verify-focused run has no local receipt");
+  if (!dispatched.receipt) throw new Error("Settled Glaeda verification run has no local receipt");
   const terminal = client.lastResult();
-  if (!terminal) throw new Error("Glaeda verify-focused returned no bounded terminal receipt");
+  if (!terminal) throw new Error("Glaeda verification returned no bounded terminal receipt");
   const succeeded = dispatched.receipt.terminalClass === "succeeded";
   const transitioned = await runner.call<RunnerRecord>("transition_runner_run", {
     id: running.id,
@@ -223,7 +249,7 @@ async function finish(
     command: succeeded ? "succeed" : "fail",
     expectedGeneration: running.generation,
     expectedLeaseGeneration: running.leaseGeneration,
-    outcome: `Glaeda verify-focused/v1 ${dispatched.receipt.terminalClass} with receipt ${terminal.resultSha256}.`,
+    outcome: `Glaeda ${profile.id} ${dispatched.receipt.terminalClass} with receipt ${terminal.resultSha256}.`,
     usage: { toolCalls: 5 },
     executionActual: { toolCalls: 5, filesChanged: 0 },
     idempotencyKey: `terminal-glaeda:${shortDigest(running.id)}`,
@@ -267,7 +293,7 @@ interface RunnerRecord {
   leaseExpiresAt?: string | null;
 }
 
-interface ExactRequest extends GlaedaVerifyFocusedRequestV1 { requestId: string }
+interface ExactRequest extends GlaedaVerificationRequestV1 { requestId: string }
 
 interface NormalizedInput extends Omit<ExecuteGlaedaVerifyFocusedInputV1,
   "actor" | "inspectPythonInterpreter" | "leaseSeconds" | "now"
@@ -303,37 +329,45 @@ function normalizeInput(input: ExecuteGlaedaVerifyFocusedInputV1): NormalizedInp
   };
 }
 
-function admitClaimedRun(claimed: ClaimedRunEnvelope, input: NormalizedInput, actor: ActorInput) {
+function admitClaimedRun(
+  claimed: ClaimedRunEnvelope,
+  input: NormalizedInput,
+  actor: ActorInput,
+  profile: GlaedaVerificationProfileContractV1,
+) {
   if (
     claimed.run.id !== input.runId
     || claimed.run.itemId !== claimed.item.id
     || claimed.item.project !== input.project
     || claimed.run.runnerType !== "glaeda-workstation"
-    || claimed.run.runnerProfile !== PROFILE_ID
+    || claimed.run.runnerProfile !== profile.id
     || claimed.run.runnerProfileVersion !== input.profileGeneration
     || claimed.authorityFence.holderId !== actor.id
     || claimed.item.claimedBy !== actor.id
     || claimed.item.claimGeneration < 1
-  ) throw new Error("Claimed run does not match exact verify-focused target");
+  ) throw new Error("Claimed run does not match exact Glaeda verification target");
 }
 
 function admitRunningRun(run: RunnerRecord, runId: string, actorId: string) {
   if (
     run.id !== runId || run.status !== "running" || run.leaseOwnerId !== actorId
     || !run.leaseExpiresAt
-  ) throw new Error("Verify-focused run did not enter exact running authority");
+  ) throw new Error("Glaeda verification run did not enter exact running authority");
 }
 
-function admitRequestArtifact(artifacts: unknown[]): ExactRequest {
+function admitRequestArtifact(
+  artifacts: unknown[],
+  profile: GlaedaVerificationProfileContractV1,
+): ExactRequest {
   const admitted = artifacts.map((value) => {
     if (!isRecord(value) || value.kind !== "commit" || !isRecord(value.metadata)) return null;
     const artifact = value;
     const metadata = value.metadata;
-    if (metadata.schema !== ARTIFACT_SCHEMA) return null;
+    if (metadata.schema !== profile.requestArtifactSchema) return null;
     if (Object.keys(metadata).sort().join("\0") !== [
       "commitOid", "deadlineSeconds", "executionIdentityClass", "profileVersionSha256",
       "repository", "requestId", "requestSha256", "resourceClass", "schema", "treeOid",
-    ].sort().join("\0")) throw new Error("Verify-focused request metadata has unexpected fields");
+    ].sort().join("\0")) throw new Error("Glaeda verification request metadata has unexpected fields");
     const request: ExactRequest = {
       version: 1,
       requestId: requestId(metadata.requestId),
@@ -341,21 +375,24 @@ function admitRequestArtifact(artifacts: unknown[]): ExactRequest {
       commitOid: oid(metadata.commitOid, "commit"),
       treeOid: oid(metadata.treeOid, "tree"),
       profileVersionSha256: sha256(metadata.profileVersionSha256, "profile generation"),
-      resourceClass: RESOURCE_CLASS,
-      deadlineSeconds: DEADLINE_SECONDS,
+      resourceClass: profile.resourceClass,
+      deadlineSeconds: profile.deadlineSeconds,
       executionIdentityClass: "credentialless_project",
     };
     if (
-      metadata.resourceClass !== RESOURCE_CLASS
-      || metadata.deadlineSeconds !== DEADLINE_SECONDS
+      metadata.resourceClass !== profile.resourceClass
+      || metadata.deadlineSeconds !== profile.deadlineSeconds
       || metadata.executionIdentityClass !== "credentialless_project"
-      || metadata.requestSha256 !== fingerprintGlaedaVerifyFocusedRequestV1(profileRequest(request))
+      || metadata.requestSha256 !== fingerprintGlaedaVerificationRequestV1(
+        profileRequest(request),
+        profile,
+      )
       || artifact.uri !== `https://github.com/${request.repository}/commit/${request.commitOid}`
-    ) throw new Error("Verify-focused request artifact changed exact identity");
+    ) throw new Error("Glaeda verification request artifact changed exact identity");
     return request;
   }).filter((value): value is ExactRequest => value !== null);
   if (admitted.length !== 1) {
-    throw new Error("Runner context must contain exactly one verify-focused request artifact");
+    throw new Error("Runner context must contain exactly one Glaeda verification request artifact");
   }
   return admitted[0]!;
 }
@@ -367,8 +404,12 @@ function commandFor(
   request: ExactRequest,
   capabilitySnapshotSha256: string,
   actor: ActorInput,
+  profile: GlaedaVerificationProfileContractV1,
 ): GlaedaWorkstationCommandV1 {
-  const requestSha256 = fingerprintGlaedaVerifyFocusedRequestV1(profileRequest(request));
+  const requestSha256 = fingerprintGlaedaVerificationRequestV1(
+    profileRequest(request),
+    profile,
+  );
   const identity = shortDigest(canonicalJsonString({
     runId: running.id,
     runGeneration: running.generation,
@@ -396,11 +437,11 @@ function commandFor(
       logicalChangeRef: `github:${request.commitOid}`,
     },
     profile: {
-      id: PROFILE_ID,
+      id: profile.id,
       versionSha256: request.profileVersionSha256,
-      class: "verify_focused",
-      resourceClass: RESOURCE_CLASS,
-      deadlineSeconds: DEADLINE_SECONDS,
+      class: profile.class,
+      resourceClass: profile.resourceClass,
+      deadlineSeconds: profile.deadlineSeconds,
     },
     profileRequestSha256: requestSha256,
   };
@@ -414,15 +455,15 @@ function record(value: unknown): Record<string, unknown> {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-function profileRequest(request: ExactRequest): GlaedaVerifyFocusedRequestV1 {
+function profileRequest(request: ExactRequest): GlaedaVerificationRequestV1 {
   return {
     version: 1,
     repository: request.repository,
     commitOid: request.commitOid,
     treeOid: request.treeOid,
     profileVersionSha256: request.profileVersionSha256,
-    resourceClass: RESOURCE_CLASS,
-    deadlineSeconds: DEADLINE_SECONDS,
+    resourceClass: request.resourceClass,
+    deadlineSeconds: request.deadlineSeconds,
     executionIdentityClass: "credentialless_project",
   };
 }
