@@ -72,6 +72,7 @@ bun run glaeda:workstation -- \
   --project stensibly \
   --run-id '<exact-run-id>' \
   --token-file '<owner-only-token-file>' \
+  --python-interpreter '/usr/bin/python3.14' \
   --canary-script '<glaeda-dispatch-checkout>/big_red_canary.py' \
   --profile-generation 'sha256:...' \
   --node-id big-red \
@@ -83,7 +84,10 @@ bun run glaeda:workstation -- \
 ```
 
 For Air Blue, use the same run/profile semantics with `--node-id air-blue --os-class macos
---architecture arm64` and that node's own exact generations.
+--architecture arm64`, `--python-interpreter /opt/homebrew/opt/python@3.14/bin/python3.14`, and
+that node's own exact generations. The launcher resolves the configured absolute path, probes it
+before touching the request, and refuses every runtime except Python 3.14.x. Interpreter selection
+is a node mechanic and belongs in the capability generation; it does not alter project semantics.
 
 ## Authority and restart behavior
 

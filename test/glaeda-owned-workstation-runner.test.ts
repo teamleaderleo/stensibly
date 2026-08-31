@@ -35,6 +35,7 @@ describe("owned Glaeda workstation runner", () => {
       project: "stensibly",
       runId: "run-owned-workstation-1",
       profileGeneration,
+      pythonInterpreterPath: "/usr/bin/python3.14",
       canaryScriptPath: "/home/leo/Projects/glaeda-dispatch/big_red_canary.py",
       node: {
         id: "big-red",
@@ -162,6 +163,7 @@ describe("owned Glaeda workstation runner", () => {
       project: "stensibly",
       runId: "run-owned-workstation-1",
       profileGeneration,
+      pythonInterpreterPath: "/usr/bin/python3.14",
       canaryScriptPath: "/home/leo/Projects/glaeda-dispatch/big_red_canary.py",
       node: {
         id: "big-red",
