@@ -15,6 +15,7 @@
     "callsign-catalog": "bun src/callsign-catalog-cli.ts",
     "sol-luna:worker": "bun scripts/sol-luna-worker.ts",
     "worker:glance": "bun scripts/worker-glance.ts",
+    "pi-luna:worker": "bun scripts/pi-luna-worker.ts",
     "codex-roots:probe": "bun scripts/codex-root-harness-probe.ts",
     "codex-roots:memory-probe": "bun scripts/codex-root-memory-probe.ts",
     "glaeda:workstation": "bun scripts/glaeda-owned-workstation-runner.ts",

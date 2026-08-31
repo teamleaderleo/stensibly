@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 export const WORKER_GLANCE_SCHEMA_VERSION = "worker-glance/1" as const;
 export const SOL_LUNA_RECEIPT_SCHEMA_VERSION = "sol-luna-worker-receipt/3" as const;
+export const PI_LUNA_RECEIPT_SCHEMA_VERSION = "pi-luna-worker-receipt/1" as const;
 export const WORKER_GLANCE_MAX_ARTIFACT_BYTES = 64 * 1024;
 export const WORKER_GLANCE_MAX_ROWS = 32;
 export const WORKER_GLANCE_MAX_PATHS = 4;
@@ -137,6 +138,7 @@ interface ArtifactReadFailure {
 type ArtifactRead = ArtifactReadSuccess | ArtifactReadFailure;
 
 interface CurrentReceipt {
+  readonly backend: Exclude<WorkerGlanceBackend, "unknown">;
   readonly runId: string | null;
   readonly role: string | null;
   readonly idOrRoleOversized: boolean;
@@ -457,19 +459,36 @@ function validUsageRecord(value: unknown): boolean {
   return Object.values(value).every((entry) => typeof entry === "number" && Number.isFinite(entry));
 }
 
+function validPiUsageRecord(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  return ["input", "cacheRead", "output", "reasoning"].every((key) =>
+    !Object.prototype.hasOwnProperty.call(value, key) || finiteNonNegativeInteger(value[key]),
+  );
+}
+
 function adaptCurrentReceipt(value: JsonObject, resultPath: string): CurrentReceipt | null {
-  if (property(value, "schemaVersion") !== SOL_LUNA_RECEIPT_SCHEMA_VERSION) return null;
+  const schemaVersion = property(value, "schemaVersion");
+  const backend = schemaVersion === SOL_LUNA_RECEIPT_SCHEMA_VERSION
+    ? "sol-luna"
+    : schemaVersion === PI_LUNA_RECEIPT_SCHEMA_VERSION
+      ? "pi"
+      : null;
+  if (backend === null) return null;
 
   let structuralInvalid = false;
   const run = property(value, "run");
   const git = property(value, "git");
   const child = property(value, "child");
   const codex = property(value, "codex");
+  const pi = property(value, "pi");
+  const invocation = property(value, "invocation");
   const artifacts = property(value, "artifacts");
   const integration = property(value, "integration");
-  if (!isObject(run) || !isObject(git) || !isObject(child) || !isObject(codex) || !isObject(artifacts) || !isObject(integration)) {
+  if (!isObject(run) || !isObject(git) || !isObject(child) || !isObject(artifacts) || !isObject(integration)) {
     structuralInvalid = true;
   }
+  if (backend === "sol-luna" && !isObject(codex)) structuralInvalid = true;
+  if (backend === "pi" && (!isObject(pi) || !isObject(invocation))) structuralInvalid = true;
 
   const runIdValue = isObject(run) ? property(run, "id") : null;
   const roleValue = isObject(run) ? property(run, "assignedRole") : null;
@@ -497,9 +516,13 @@ function adaptCurrentReceipt(value: JsonObject, resultPath: string): CurrentRece
     : null;
   const timedOut = typeof timedOutValue === "boolean" ? timedOutValue : null;
 
-  const tokenUsage = isObject(codex) ? property(codex, "tokenUsage") : null;
-  if (tokenUsage !== null && !validUsageRecord(tokenUsage)) structuralInvalid = true;
-  const usage = tokenUsage === null || validUsageRecord(tokenUsage) ? tokenUsage : null;
+  const tokenUsage = backend === "sol-luna"
+    ? (isObject(codex) ? property(codex, "tokenUsage") : null)
+    : property(value, "usage");
+  const usageValid = tokenUsage === null
+    || (backend === "sol-luna" ? validUsageRecord(tokenUsage) : validPiUsageRecord(tokenUsage));
+  if (!usageValid) structuralInvalid = true;
+  const usage = usageValid ? tokenUsage : null;
 
   const workerSuccessIsProvisional = isObject(integration) ? property(integration, "workerSuccessIsProvisional") : null;
   const integrationStatus = isObject(integration) ? property(integration, "status") : null;
@@ -544,6 +567,7 @@ function adaptCurrentReceipt(value: JsonObject, resultPath: string): CurrentRece
   if (success === true && harnessError) structuralInvalid = true;
 
   return {
+    backend,
     runId: runId.value,
     role: role.value,
     idOrRoleOversized,
@@ -591,10 +615,10 @@ function roundPercentage(value: number): number {
 function projectUsage(value: unknown): UsageProjection {
   if (value === null) return { usage: unknownUsage(), issue: null };
   if (!isObject(value)) return { usage: unknownUsage(), issue: "usage_invalid" };
-  const input = usageNumber(value, ["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"]);
-  const cached = usageNumber(value, ["cached_input_tokens", "cachedInputTokens", "cached_tokens", "cachedTokens"]);
-  const output = usageNumber(value, ["output_tokens", "outputTokens", "completion_tokens", "completionTokens"]);
-  const reasoning = usageNumber(value, ["reasoning_tokens", "reasoningTokens"]);
+  const input = usageNumber(value, ["input_tokens", "inputTokens", "prompt_tokens", "promptTokens", "input"]);
+  const cached = usageNumber(value, ["cached_input_tokens", "cachedInputTokens", "cached_tokens", "cachedTokens", "cacheRead"]);
+  const output = usageNumber(value, ["output_tokens", "outputTokens", "completion_tokens", "completionTokens", "output"]);
+  const reasoning = usageNumber(value, ["reasoning_tokens", "reasoningTokens", "reasoning"]);
   const issue = input.issue || cached.issue || output.issue || reasoning.issue;
   const recognized = input.found || cached.found || output.found || reasoning.found;
   const uncached = input.value !== null && cached.value !== null && cached.value <= input.value
@@ -782,7 +806,8 @@ async function projectRun(input: PreparedRun, options: NormalizedWorkerGlanceOpt
   if (receiptRead.kind !== "ok") {
     return emptyRow(input, artifactBlocker(receiptRead.kind, "receipt"), receiptRead.kind === "missing" ? "missing" : "unknown");
   }
-  if (property(receiptRead.value, "schemaVersion") !== SOL_LUNA_RECEIPT_SCHEMA_VERSION) {
+  const schemaVersion = property(receiptRead.value, "schemaVersion");
+  if (schemaVersion !== SOL_LUNA_RECEIPT_SCHEMA_VERSION && schemaVersion !== PI_LUNA_RECEIPT_SCHEMA_VERSION) {
     return emptyRow(input, "unknown_schema");
   }
   const resultPath = resolve(input.absoluteDirectory, RESULT_NAME);
@@ -791,7 +816,7 @@ async function projectRun(input: PreparedRun, options: NormalizedWorkerGlanceOpt
   if (receipt.structuralInvalid) {
     return {
       ...emptyRow(input, receipt.idOrRoleOversized ? "id_oversized" : "receipt_invalid"),
-      backend: "sol-luna",
+      backend: receipt.backend,
       state: "unknown",
     };
   }
@@ -822,7 +847,7 @@ async function projectRun(input: PreparedRun, options: NormalizedWorkerGlanceOpt
   return {
     runId: receipt.runId,
     role: receipt.role,
-    backend: "sol-luna",
+    backend: receipt.backend,
     state: "terminal",
     success: receipt.success,
     provisional: receipt.provisional,
