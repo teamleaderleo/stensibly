@@ -18,8 +18,9 @@ canonical pointers. Rows are sorted by their relative run directory. A missing
 receipt is reported as `state: "missing"`, `success: null`, and
 `blocker: "receipt_missing"`; it never becomes a guessed success or running
 state. A receipt is the terminal boundary for the current
-`sol-luna-worker-receipt/3` contract. Unrecognized future or Pi schemas use
-explicit `unknown` fields and `unknown_schema`.
+`sol-luna-worker-receipt/3` and `pi-luna-worker-receipt/1` contracts.
+Unrecognized future schemas use explicit `unknown` fields and
+`unknown_schema`.
 
 Each row contains only bounded run identity/role, backend and state, receipt
 success/provisional state, Git path and commit counts, a few changed paths,
@@ -29,6 +30,12 @@ short blocker code, and relative evidence pointers. `changedPathsOmitted`,
 default output ceiling is 4,000 characters; `--max-rows`, `--max-paths`, and
 `--max-output-chars` can make a commander’s local view smaller but cannot raise
 the safety ceilings.
+
+Pi reports uncached input, cache reads, and cache writes as separate additive
+fields. The glance normalizes them to total prompt input (`input + cacheRead +
+cacheWrite`), cached input (`cacheRead`), and uncached input (`input +
+cacheWrite`). It rejects a Pi receipt whose declared `totalTokens` does not
+equal prompt input plus output; missing usage remains unknown rather than zero.
 
 The intended loop is:
 

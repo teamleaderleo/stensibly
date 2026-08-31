@@ -147,7 +147,19 @@ async function createRun(root: string, name: string, options: RunOptions = {}): 
   return directory;
 }
 
-async function createPiRun(root: string, name: string): Promise<string> {
+async function createPiRun(
+  root: string,
+  name: string,
+  usage: Record<string, unknown> = {
+    input: 100,
+    cacheRead: 80,
+    cacheWrite: 5,
+    output: 20,
+    reasoning: 10,
+    totalTokens: 205,
+    cost: { total: 0.01 },
+  },
+): Promise<string> {
   const directory = join(root, name);
   await mkdir(directory, { recursive: true });
   await json(join(directory, "receipt.json"), {
@@ -158,14 +170,7 @@ async function createPiRun(root: string, name: string): Promise<string> {
     }),
     pi: {},
     invocation: {},
-    usage: {
-      input: 100,
-      cacheRead: 80,
-      output: 20,
-      reasoning: 10,
-      totalTokens: 210,
-      cost: { total: 0.01 },
-    },
+    usage,
   });
   await json(join(directory, "worker-result.json"), {
     status: "complete",
@@ -192,13 +197,35 @@ describe("worker glance", () => {
       changedPathCount: 1,
       changedPaths: ["src/pi.ts"],
       commitCount: 1,
-      usage: { input: 100, cached: 80, uncached: 20, cachePercentage: 80, output: 20, reasoning: 10 },
+      usage: { input: 185, cached: 80, uncached: 105, cachePercentage: 43.2, output: 20, reasoning: 10 },
       resultStatus: "success",
       verificationCount: 1,
       verificationPass: "passed",
       blocker: "none",
     });
     expect(JSON.stringify(projection)).not.toContain("COLD");
+  });
+
+  test("rejects inconsistent Pi usage algebra instead of inventing token fields", async () => {
+    const root = await mkdtemp(join(tmpdir(), "worker-glance-pi-usage-"));
+    temporaryRoots.push(root);
+    const run = await createPiRun(root, "pi-invalid", {
+      input: 100,
+      cacheRead: 80,
+      cacheWrite: 5,
+      output: 20,
+      reasoning: 10,
+      totalTokens: 204,
+    });
+
+    const projection = await buildWorkerGlance([run]);
+    expect(projection.rows[0]).toMatchObject({
+      backend: "pi",
+      state: "unknown",
+      success: null,
+      usage: { input: null, cached: null, uncached: null, output: null, reasoning: null },
+      blocker: "receipt_invalid",
+    });
   });
 
   test("shares one root, uses relative evidence pointers, and sorts deterministically", async () => {
