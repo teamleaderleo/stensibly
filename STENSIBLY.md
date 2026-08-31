@@ -100,8 +100,7 @@ instead of stopping at a proposal or pull request.
 
 ## Escalation
 
-Escalate when the next necessary effect crosses the standing internal-dogfood grant,
-when a destructive or irreversible consequence lacks recovery, when protected
+Escalate only when the next necessary effect crosses the standing internal-dogfood grant, when a destructive or irreversible consequence lacks recovery, when protected
 credentials cannot remain inside their execution surface, or when an operator choice
 would materially change product direction. Diagnose concrete failures inside the grant
 and fix forward or roll back with durable evidence.
@@ -169,9 +168,7 @@ the better recovery path.
 
 When progress genuinely requires a human-only action, put the `Operator action
 required` block first in the owning record and follow
-[`docs/operator-action-required.md`](docs/operator-action-required.md). Request the
-minimum protected action and observable clearing evidence. Never ask the operator to
-paste a token, key, secret, recovery code, session value, or other private credential
+[`docs/operator-action-required.md`](docs/operator-action-required.md). Do not use this banner for work agents can complete. Request the minimum protected action and observable clearing evidence. Never ask the operator to paste a token, key, secret, recovery code, session value, or other private credential
 into GitHub, chat, logs, screenshots, tests, or artifacts.
 
 ## Visual direction
