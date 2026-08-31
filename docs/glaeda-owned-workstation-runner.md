@@ -141,6 +141,12 @@ one-day artifact containing ciphertext plus non-secret token metadata. Decrypt o
 the final owner-only token path. The same workflow revokes one exact `tok_` ID without handling a
 raw token.
 
+When a connected client cannot yet call the hosted control surface directly, the same workflow can
+mint `ephemeral_control`: one `glaeda`-project `read,write` token sealed to a separate one-time key.
+Use it only in controller/publication logic, never the source-running process, and revoke its exact
+token ID as soon as the bounded dispatch/attachment operation is complete. This is a temporary
+client credential, not runner identity or physical execution authority.
+
 List token records in the protected operator environment with `bun run tokens list`; the token ID,
 grant, creation time, and revocation time are safe control metadata, while the raw token is never
 recoverable from Stensibly. To rotate, create a new credential at a fresh owner-only path, verify one
