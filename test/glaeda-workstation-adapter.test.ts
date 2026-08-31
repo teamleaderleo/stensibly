@@ -24,7 +24,7 @@ const runner = {
   name: "Glaeda workstation",
   kind: "service" as const,
 };
-const profileId = "repo-query-v1";
+const profileId = "repo-query/v1";
 const profileVersion = `sha256:${"a".repeat(64)}`;
 const initialNow = new Date("2026-08-31T05:00:00.000Z");
 
@@ -249,6 +249,7 @@ function createFixture(nodeId: "big-red" | "m5-air") {
       resourceClass: "interactive-small",
       deadlineSeconds: 60,
     },
+    profileRequestSha256: `sha256:${"e".repeat(64)}`,
   };
   return { store, client, adapter, clock, command };
 }

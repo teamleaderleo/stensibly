@@ -7,6 +7,7 @@ export const GLAEDA_WORKSTATION_RECEIPT_SCHEMA = "glaeda-workstation-receipt/v1"
 
 const PROJECT_PATTERN = /^[a-z0-9][a-z0-9_-]{0,79}$/u;
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
+const PROFILE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}\/v[1-9][0-9]{0,5}$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const GIT_OID_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
@@ -72,6 +73,8 @@ export interface GlaedaWorkstationCommandV1 {
   node: GlaedaWorkstationNodeV1;
   source: GlaedaWorkstationSourceV1;
   profile: GlaedaWorkstationProfileV1;
+  /** Exact digest of the profile-specific request consumed by the physical adapter. */
+  profileRequestSha256: string;
 }
 
 export interface GlaedaWorkstationCheckV1 {
@@ -124,6 +127,7 @@ export function normalizeGlaedaWorkstationCommandV1(
     "node",
     "source",
     "profile",
+    "profileRequestSha256",
   ]);
   if (input.version !== GLAEDA_WORKSTATION_CONTRACT_V1) {
     throw new RangeError("Glaeda workstation command version is invalid");
@@ -149,6 +153,10 @@ export function normalizeGlaedaWorkstationCommandV1(
     node,
     source,
     profile,
+    profileRequestSha256: sha256(
+      input.profileRequestSha256,
+      "Glaeda workstation profile request digest",
+    ),
   });
 }
 
@@ -380,7 +388,7 @@ function normalizeProfile(value: unknown): GlaedaWorkstationProfileV1 {
     "deadlineSeconds",
   ]);
   return deepFreeze({
-    id: patternText(input.id, "Glaeda workstation profile ID", SAFE_ID_PATTERN, 128),
+    id: patternText(input.id, "Glaeda workstation profile ID", PROFILE_ID_PATTERN, 72),
     versionSha256: sha256(input.versionSha256, "Glaeda workstation profile version"),
     class: profileClass(input.class),
     resourceClass: patternText(
@@ -407,7 +415,7 @@ function normalizeReceiptProfile(
     "class",
   ]);
   return deepFreeze({
-    id: patternText(input.id, "Glaeda workstation profile ID", SAFE_ID_PATTERN, 128),
+    id: patternText(input.id, "Glaeda workstation profile ID", PROFILE_ID_PATTERN, 72),
     versionSha256: sha256(input.versionSha256, "Glaeda workstation profile version"),
     class: profileClass(input.class),
   });

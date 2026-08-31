@@ -44,12 +44,13 @@ function command(overrides: Partial<GlaedaWorkstationCommandV1> = {}): GlaedaWor
       logicalChangeRef: "stensibly:change:glaeda-hot-loop",
     },
     profile: {
-      id: "repo-query-v1",
+      id: "repo-query/v1",
       versionSha256: sha("e"),
       class: "repo_query",
       resourceClass: "interactive-small",
       deadlineSeconds: 60,
     },
+    profileRequestSha256: sha("6"),
     ...overrides,
   };
 }
@@ -218,7 +219,7 @@ describe("pure Glaeda workstation contracts", () => {
     }
   });
 
-  test("run, lease, authority, and logical change continuity all participate in command identity", () => {
+  test("run, lease, authority, logical change, and profile request all participate in identity", () => {
     const input = command();
     const baseline = fingerprintGlaedaWorkstationCommandV1(input);
     const variants = [
@@ -230,6 +231,7 @@ describe("pure Glaeda workstation contracts", () => {
       command({
         source: { ...input.source, logicalChangeRef: "stensibly:change:successor" },
       }),
+      command({ profileRequestSha256: sha("7") }),
     ];
     for (const variant of variants) {
       expect(fingerprintGlaedaWorkstationCommandV1(variant)).not.toBe(baseline);
@@ -244,7 +246,7 @@ describe("pure Glaeda workstation contracts", () => {
 
     const verify = command({
       profile: {
-        id: "verify-focused-v1",
+        id: "verify-focused/v1",
         versionSha256: sha("e"),
         class: "verify_focused",
         resourceClass: "interactive-medium",
@@ -260,6 +262,10 @@ describe("pure Glaeda workstation contracts", () => {
       ...command(),
       profile: { ...command().profile, class: "arbitrary_shell" },
     })).toThrow(/profile class/);
+    expect(() => normalizeGlaedaWorkstationCommandV1({
+      ...command(),
+      profile: { ...command().profile, id: "repo-query-v1" },
+    })).toThrow(/profile ID/);
     expect(() => normalizeGlaedaWorkstationCommandV1({
       ...command(),
       node: { ...command().node, capabilitySnapshotSha256: "latest" },
