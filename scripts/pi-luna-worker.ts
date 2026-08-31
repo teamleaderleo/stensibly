@@ -128,6 +128,8 @@ export interface PiLunaWorkerOptions {
   readonly verificationPath?: string;
   readonly verificationExecutableDirs?: readonly string[];
   readonly assignedRole?: string;
+  /** Optional durable session directory; otherwise the session is attempt-local. */
+  readonly sessionDir?: string;
   /** Optional UUID override; otherwise a deterministic UUID is derived from runId. */
   readonly sessionId?: string;
 }
@@ -311,6 +313,8 @@ interface NormalizedOptions {
   readonly verificationPath: string;
   readonly verificationExecutableDirs: readonly string[];
   readonly assignedRole: string;
+  readonly sessionDir: string;
+  readonly sessionDirExplicit: boolean;
   readonly sessionId: string;
 }
 
@@ -488,6 +492,10 @@ function normalizeOptions(input: PiLunaWorkerOptions): NormalizedOptions {
   const repository = resolve(requireText(input.repository, "repository", 4_096));
   const brief = resolve(requireText(input.brief, "brief", 4_096));
   const outputDir = resolve(requireText(input.outputDir, "output directory", 4_096));
+  const sessionDirExplicit = input.sessionDir !== undefined;
+  const sessionDir = sessionDirExplicit
+    ? resolve(requireText(input.sessionDir, "session directory", 4_096))
+    : join(outputDir, PI_LUNA_SESSION_DIR_NAME);
   const runId = requireText(input.runId, "run ID");
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(runId)) {
     throw new Error("run ID may contain only letters, digits, dot, underscore, and hyphen");
@@ -548,6 +556,8 @@ function normalizeOptions(input: PiLunaWorkerOptions): NormalizedOptions {
     verificationPath,
     verificationExecutableDirs,
     assignedRole: requireText(input.assignedRole ?? "pi-luna-worker", "assigned role", 200),
+    sessionDir,
+    sessionDirExplicit,
     sessionId: suppliedSessionId ?? deterministicSessionId(runId),
   };
 }
@@ -1441,13 +1451,67 @@ function artifact(path: string, bytes: Uint8Array): PiLunaArtifact {
   return { path, bytes: bytes.byteLength, sha256: sha256(bytes) };
 }
 
-async function validatePaths(repository: string, outputDir: string): Promise<void> {
+async function rejectSymlinkComponents(pathValue: string): Promise<void> {
+  const target = resolve(pathValue);
+  let current = target;
+  while (true) {
+    try {
+      const information = await lstat(current);
+      if (information.isSymbolicLink()) {
+        throw new Error(current === target
+          ? "session directory must not be a symlink"
+          : "session directory path must not contain symlink components");
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+    const parent = dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
+}
+
+async function assertSessionDirectory(pathValue: string): Promise<boolean> {
+  try {
+    const information = await lstat(pathValue);
+    if (information.isSymbolicLink()) throw new Error("session directory must not be a symlink");
+    if (!information.isDirectory()) throw new Error("session directory must be a real directory");
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function ensureSessionDirectory(pathValue: string, explicit: boolean): Promise<void> {
+  if (explicit) await rejectSymlinkComponents(pathValue);
+  if (await assertSessionDirectory(pathValue)) return;
+  await mkdir(pathValue, { recursive: true, mode: 0o700 });
+  if (explicit) await rejectSymlinkComponents(pathValue);
+  if (!(await assertSessionDirectory(pathValue))) throw new Error("session directory was not created");
+}
+
+async function validatePaths(
+  repository: string,
+  outputDir: string,
+  sessionDir: string,
+  explicitSessionDir: boolean,
+): Promise<void> {
   const repositoryRoot = await realpath(repository);
   const repositoryInformation = await lstat(repositoryRoot);
   if (!repositoryInformation.isDirectory()) throw new Error("configured repository is not a directory");
   const outputCanonical = await canonicalizeProspectivePath(outputDir);
   if (pathIsWithin(outputCanonical, repositoryRoot) || pathIsWithin(repositoryRoot, outputCanonical)) {
     throw new Error("output directory must not overlap the repository");
+  }
+  if (explicitSessionDir) await rejectSymlinkComponents(sessionDir);
+  await assertSessionDirectory(sessionDir);
+  const sessionCanonical = await canonicalizeProspectivePath(sessionDir);
+  if (explicitSessionDir && (pathIsWithin(sessionCanonical, outputCanonical) || pathIsWithin(outputCanonical, sessionCanonical))) {
+    throw new Error("explicit session directory must not overlap attempt output");
+  }
+  if (pathIsWithin(sessionCanonical, repositoryRoot) || pathIsWithin(repositoryRoot, sessionCanonical)) {
+    throw new Error("session directory must not overlap the repository");
   }
 }
 
@@ -1490,7 +1554,7 @@ function emptyCapture(): ProcessCapture {
 
 export async function runPiLunaWorker(input: PiLunaWorkerOptions): Promise<PiLunaWorkerRun> {
   const options = normalizeOptions(input);
-  await validatePaths(options.repository, options.outputDir);
+  await validatePaths(options.repository, options.outputDir, options.sessionDir, options.sessionDirExplicit);
   const repository = await realpath(options.repository);
   const briefBytes = await readFile(options.brief);
   if (briefBytes.byteLength === 0) throw new Error("brief is empty");
@@ -1498,7 +1562,7 @@ export async function runPiLunaWorker(input: PiLunaWorkerOptions): Promise<PiLun
 
   const markerPath = await claimOutputDirectory(options.outputDir, options.runId, repository);
   void markerPath;
-  const sessionDir = join(options.outputDir, PI_LUNA_SESSION_DIR_NAME);
+  const sessionDir = options.sessionDir;
   const sessionId = options.sessionId;
   const workerArgs = buildPiWorkerArgs(sessionDir, sessionId);
   const workerCommand = [options.piBin, ...workerArgs];
@@ -1573,7 +1637,7 @@ export async function runPiLunaWorker(input: PiLunaWorkerOptions): Promise<PiLun
     }
 
     if (harnessError === null && runtime !== null) {
-      await mkdir(sessionDir, { recursive: true, mode: 0o700 });
+      await ensureSessionDirectory(sessionDir, options.sessionDirExplicit);
       await writeExtensionConfig(runtime, repository, options, effectiveReadOnlyMounts);
       workerCapture = await captureProcess(workerCommand, {
         cwd: repository,
@@ -1851,7 +1915,7 @@ function usage(): string {
     "  --edit-authority read-only|workspace-write --os-boundary bwrap|none",
     "  [--bwrap-bin PATH] [--read-only-mount DIR]...",
     "  [--verification-command ID=JSON_ARRAY]... [--verification-path PATH]",
-    "  [--assigned-role ROLE] [--session-id UUID]",
+    "  [--assigned-role ROLE] [--session-dir DIR] [--session-id UUID]",
   ].join("\n");
 }
 
@@ -1887,7 +1951,7 @@ function parseCli(argv: readonly string[]): PiLunaWorkerOptions {
   }
   const required = ["repository", "brief", "output-dir", "run-id", "pi-bin", "pi-agent-dir", "timeout-ms", "capture-cap-bytes", "edit-authority", "os-boundary"];
   for (const key of required) if (!values.has(key)) throw new Error(`missing required argument --${key}`);
-  const known = new Set([...required, "bwrap-bin", "verification-path", "assigned-role", "session-id"]);
+  const known = new Set([...required, "bwrap-bin", "verification-path", "assigned-role", "session-dir", "session-id"]);
   for (const key of values.keys()) if (!known.has(key)) throw new Error(`unknown argument --${key}`);
   const editAuthority = values.get("edit-authority");
   if (editAuthority !== "read-only" && editAuthority !== "workspace-write") {
@@ -1921,6 +1985,7 @@ function parseCli(argv: readonly string[]): PiLunaWorkerOptions {
     verificationExecutableDirs: readOnlyMounts,
     ...(values.get("verification-path") === undefined ? {} : { verificationPath: values.get("verification-path") }),
     ...(values.get("assigned-role") === undefined ? {} : { assignedRole: values.get("assigned-role") }),
+    ...(values.get("session-dir") === undefined ? {} : { sessionDir: values.get("session-dir") }),
     ...(sessionId === undefined ? {} : { sessionId }),
   };
 }

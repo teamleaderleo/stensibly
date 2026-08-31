@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { executeVerification } from "../scripts/pi-luna-worker-extension.ts";
@@ -279,6 +279,8 @@ describe("fake Pi Luna worker", () => {
         sessionDir.requestedId as string,
       );
 
+      expect(sessionDir.directory).toBe(join(setup.options.outputDir, ".pi-session"));
+      expect((await lstat(sessionDir.directory as string)).isDirectory()).toBe(true);
       expect(result.exitCode).toBe(0);
       expect(receipt.success).toBe(true);
       expect(args).toEqual([...expectedArgs]);
@@ -386,6 +388,98 @@ describe("fake Pi Luna worker", () => {
     expect((receipt.child as Record<string, unknown>).outcome).toBe("timeout");
     expect((receipt.child as Record<string, unknown>).timedOut).toBe(true);
     expect(await waitFor(() => !pidAlive(descendantPid), 5_000)).toBe(true);
+  });
+
+  test("reuses an explicit session directory across distinct immutable attempts", async () => {
+    const setup = await setupFakePi();
+    const sessionDir = join(setup.root, "task-state", "pi-session");
+    const sessionId = "11111111-1111-4111-8111-111111111111";
+    const first = await runPiLunaWorker({
+      ...setup.options,
+      outputDir: join(setup.root, "attempt-1"),
+      runId: "pi-luna-test-attempt-1",
+      sessionDir,
+      sessionId,
+    });
+    const firstReceiptBytes = await readFile(first.receiptPath, "utf8");
+    const firstReceipt = await readJson(first.receiptPath);
+    const second = await runPiLunaWorker({
+      ...setup.options,
+      outputDir: join(setup.root, "attempt-2"),
+      runId: "pi-luna-test-attempt-2",
+      sessionDir,
+      sessionId,
+    });
+    const secondReceipt = await readJson(second.receiptPath);
+    const secondArgs = JSON.parse(await readFile(setup.argsPath, "utf8")) as string[];
+    const firstPi = firstReceipt.pi as Record<string, unknown>;
+    const secondPi = secondReceipt.pi as Record<string, unknown>;
+
+    expect(first.exitCode).toBe(0);
+    expect(second.exitCode).toBe(0);
+    expect(secondArgs[secondArgs.indexOf("--session-dir") + 1]).toBe(sessionDir);
+    expect(secondArgs[secondArgs.indexOf("--session-id") + 1]).toBe(sessionId);
+    expect(first.receiptPath).not.toBe(second.receiptPath);
+    expect((firstPi.session as Record<string, unknown>).directory).toBe(sessionDir);
+    expect(secondPi.session).toMatchObject({
+      directory: sessionDir,
+      requestedId: sessionId,
+      observedId: sessionId,
+      identityMatches: true,
+    });
+    expect(secondPi.resume).toMatchObject({
+      identity: { directory: sessionDir, sessionId },
+      command: buildPiResumeCommand(setup.executable, sessionDir, sessionId),
+    });
+    expect(await readFile(first.receiptPath, "utf8")).toBe(firstReceiptBytes);
+    expect((await lstat(sessionDir)).isDirectory()).toBe(true);
+    expect(await readdir(join(setup.root, "attempt-1"))).toContain("receipt.json");
+    expect(await readdir(join(setup.root, "attempt-1"))).not.toContain(".pi-session");
+    expect(await readdir(join(setup.root, "attempt-2"))).toContain("receipt.json");
+    expect(await readdir(join(setup.root, "attempt-2"))).not.toContain(".pi-session");
+  });
+
+  test("rejects explicit session directories that overlap the repository before launch", async () => {
+    const setup = await setupFakePi();
+    const sessionDir = join(setup.repository, "durable-session");
+
+    await expect(runPiLunaWorker({ ...setup.options, sessionDir })).rejects.toThrow("session directory must not overlap");
+    await expect(lstat(setup.argsPath)).rejects.toThrow();
+    await expect(lstat(sessionDir)).rejects.toThrow();
+  });
+
+  test("rejects explicit session directories that overlap immutable attempt evidence", async () => {
+    const setup = await setupFakePi();
+    const sessionDir = join(setup.options.outputDir, "durable-session");
+
+    await expect(runPiLunaWorker({ ...setup.options, sessionDir })).rejects.toThrow("must not overlap attempt output");
+    await expect(lstat(setup.argsPath)).rejects.toThrow();
+    await expect(lstat(sessionDir)).rejects.toThrow();
+  });
+
+  test("rejects explicit symlink session directories before launch", async () => {
+    const setup = await setupFakePi();
+    const target = join(setup.root, "session-target");
+    const sessionDir = join(setup.root, "session-link");
+    await mkdir(target, { mode: 0o700 });
+    await symlink(target, sessionDir);
+
+    await expect(runPiLunaWorker({ ...setup.options, sessionDir })).rejects.toThrow(/symlink/iu);
+    await expect(lstat(setup.argsPath)).rejects.toThrow();
+    expect((await lstat(sessionDir)).isSymbolicLink()).toBe(true);
+  });
+
+  test("rejects explicit session directories beneath a symlink component", async () => {
+    const setup = await setupFakePi();
+    const target = join(setup.root, "session-parent-target");
+    const linkedParent = join(setup.root, "session-parent-link");
+    const sessionDir = join(linkedParent, "durable-session");
+    await mkdir(target, { mode: 0o700 });
+    await symlink(target, linkedParent);
+
+    await expect(runPiLunaWorker({ ...setup.options, sessionDir })).rejects.toThrow(/symlink component/iu);
+    await expect(lstat(setup.argsPath)).rejects.toThrow();
+    await expect(lstat(join(target, "durable-session"))).rejects.toThrow();
   });
 
   test("refuses an immutable attempt directory and preserves its prior receipt", async () => {
