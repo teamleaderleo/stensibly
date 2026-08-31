@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  admitPython314VersionV1,
   GlaedaGitHubCanaryClientV1,
   loseFirstSuccessfulConsumeResponseV1,
   type GlaedaCanaryProcessV1,
@@ -20,6 +21,22 @@ const target = {
 };
 
 describe("Glaeda GitHub canary workstation client", () => {
+  test("admits exactly Python 3.14 and refuses another runtime generation", () => {
+    expect(() => admitPython314VersionV1("Python 3.14.6\n")).not.toThrow();
+    expect(() => admitPython314VersionV1("Python 3.14.0rc2\n")).not.toThrow();
+    expect(() => admitPython314VersionV1("Python 3.9.6\n")).toThrow(/requires Python 3\.14/);
+    expect(() => admitPython314VersionV1("Python 3.15.0\n")).toThrow(/requires Python 3\.14/);
+  });
+
+  test("requires an explicit absolute node-local interpreter path", () => {
+    expect(() => new GlaedaGitHubCanaryClientV1({
+      pythonInterpreterPath: "python3",
+      scriptPath: "/opt/glaeda-dispatch/big_red_canary.py",
+      target,
+      process: async () => ({ exitCode: 0, stdout: "{}", stderr: "" }),
+    })).toThrow(/must be absolute/);
+  });
+
   test("checks one exact request, executes it once, and emits a content-free bounded receipt", async () => {
     const calls: Array<{ action: string; requestId: string; requestCommitOid: string }> = [];
     const process: GlaedaCanaryProcessV1 = async (input) => {
@@ -37,6 +54,7 @@ describe("Glaeda GitHub canary workstation client", () => {
       new Date("2026-08-31T05:00:02.000Z"),
     ];
     const client = new GlaedaGitHubCanaryClientV1({
+      pythonInterpreterPath: "/usr/bin/python3.14",
       scriptPath: "/opt/glaeda-dispatch/big_red_canary.py",
       target,
       process,
@@ -46,8 +64,18 @@ describe("Glaeda GitHub canary workstation client", () => {
     const receipt = await client.execute({ command: command(), check: checked });
 
     expect(calls).toEqual([
-      expect.objectContaining({ action: "observe-one", requestId, requestCommitOid }),
-      expect.objectContaining({ action: "consume-one", requestId, requestCommitOid }),
+      expect.objectContaining({
+        action: "observe-one",
+        pythonInterpreterPath: "/usr/bin/python3.14",
+        requestId,
+        requestCommitOid,
+      }),
+      expect.objectContaining({
+        action: "consume-one",
+        pythonInterpreterPath: "/usr/bin/python3.14",
+        requestId,
+        requestCommitOid,
+      }),
     ]);
     expect(checked.profile).toEqual({
       id: "repo-query/v1",
@@ -79,6 +107,7 @@ describe("Glaeda GitHub canary workstation client", () => {
   test("reconciles an exact published result without invoking physical execution", async () => {
     const actions: string[] = [];
     const client = new GlaedaGitHubCanaryClientV1({
+      pythonInterpreterPath: "/usr/bin/python3.14",
       scriptPath: "/opt/glaeda-dispatch/big_red_canary.py",
       target,
       process: async (input) => {
@@ -109,6 +138,7 @@ describe("Glaeda GitHub canary workstation client", () => {
   test("refuses profile input drift before touching the physical transport", async () => {
     let calls = 0;
     const client = new GlaedaGitHubCanaryClientV1({
+      pythonInterpreterPath: "/usr/bin/python3.14",
       scriptPath: "/opt/glaeda-dispatch/big_red_canary.py",
       target,
       process: async () => {
@@ -124,6 +154,7 @@ describe("Glaeda GitHub canary workstation client", () => {
 
   test("refuses a request observation whose exact binary or source identity drifted", async () => {
     const client = new GlaedaGitHubCanaryClientV1({
+      pythonInterpreterPath: "/usr/bin/python3.14",
       scriptPath: "/opt/glaeda-dispatch/big_red_canary.py",
       target,
       process: async () => ({
@@ -143,6 +174,7 @@ describe("Glaeda GitHub canary workstation client", () => {
     };
     const fault = loseFirstSuccessfulConsumeResponseV1(base);
     const input = {
+      pythonInterpreterPath: "/usr/bin/python3.14",
       scriptPath: "/opt/glaeda-dispatch/big_red_canary.py",
       action: "consume-one" as const,
       requestId,

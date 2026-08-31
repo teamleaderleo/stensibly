@@ -32,6 +32,7 @@ export interface ExecuteGlaedaOwnedWorkstationInputV1 {
   project: string;
   runId: string;
   profileGeneration: string;
+  pythonInterpreterPath: string;
   canaryScriptPath: string;
   node: GlaedaOwnedWorkstationNodeV1;
   actor?: ActorInput;
@@ -98,6 +99,7 @@ export async function executeGlaedaOwnedWorkstationRunV1(
   admitRunningRun(running, claimed.run.id, actor.id);
 
   const canary = new GlaedaGitHubCanaryClientV1({
+    pythonInterpreterPath: input.pythonInterpreterPath,
     scriptPath: input.canaryScriptPath,
     target: {
       requestId: request.requestId,
@@ -248,6 +250,7 @@ function normalizeInput(input: ExecuteGlaedaOwnedWorkstationInputV1): Normalized
     project: slug(input.project, "project"),
     runId: text(input.runId, "run ID"),
     profileGeneration: sha256(input.profileGeneration, "profile generation"),
+    pythonInterpreterPath: text(input.pythonInterpreterPath, "Python interpreter path"),
     canaryScriptPath: text(input.canaryScriptPath, "canary script path"),
     node: {
       id: text(node.id, "node ID"),

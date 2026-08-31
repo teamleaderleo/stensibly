@@ -12,6 +12,7 @@ const { values } = parseArgs({
     project: { type: "string" },
     "run-id": { type: "string" },
     "token-file": { type: "string" },
+    "python-interpreter": { type: "string" },
     "canary-script": { type: "string" },
     "profile-generation": { type: "string" },
     "node-id": { type: "string", default: "big-red" },
@@ -35,6 +36,7 @@ Required:
   --project SLUG
   --run-id RUN_ID
   --token-file PATH
+  --python-interpreter ABSOLUTE_PATH
   --canary-script PATH
   --profile-generation sha256:...
   --node-generation INTEGER
@@ -64,6 +66,7 @@ try {
     project: required(values.project, "--project"),
     runId: required(values["run-id"], "--run-id"),
     profileGeneration: required(values["profile-generation"], "--profile-generation"),
+    pythonInterpreterPath: required(values["python-interpreter"], "--python-interpreter"),
     canaryScriptPath: required(values["canary-script"], "--canary-script"),
     node: {
       id: required(values["node-id"], "--node-id"),

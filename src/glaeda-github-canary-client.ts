@@ -1,4 +1,5 @@
-import { dirname } from "node:path";
+import { realpath, stat } from "node:fs/promises";
+import { dirname, isAbsolute } from "node:path";
 import {
   fingerprintGlaedaWorkstationCommandV1,
   normalizeGlaedaWorkstationCommandV1,
@@ -40,6 +41,7 @@ export interface GlaedaCanaryProcessResultV1 {
 }
 
 export type GlaedaCanaryProcessV1 = (input: {
+  pythonInterpreterPath: string;
   scriptPath: string;
   action: "observe-one" | "consume-one" | "reconcile-one";
   requestId: string;
@@ -70,6 +72,7 @@ export function loseFirstSuccessfulConsumeResponseV1(
 }
 
 export class GlaedaGitHubCanaryClientV1 implements GlaedaWorkstationClientV1 {
+  readonly #pythonInterpreterPath: string;
   readonly #scriptPath: string;
   readonly #target: GlaedaGitHubCanaryTargetV1;
   readonly #process: GlaedaCanaryProcessV1;
@@ -78,11 +81,16 @@ export class GlaedaGitHubCanaryClientV1 implements GlaedaWorkstationClientV1 {
   #terminal: GlaedaGitHubCanaryTerminalV1 | null = null;
 
   constructor(input: {
+    pythonInterpreterPath: string;
     scriptPath: string;
     target: GlaedaGitHubCanaryTargetV1;
     process?: GlaedaCanaryProcessV1;
     now?: () => Date;
   }) {
+    this.#pythonInterpreterPath = absolutePath(
+      input.pythonInterpreterPath,
+      "Python interpreter path",
+    );
     this.#scriptPath = required(input.scriptPath, "Glaeda canary script path");
     this.#target = normalizeTarget(input.target);
     this.#process = input.process ?? runGlaedaCanaryProcessV1;
@@ -158,6 +166,7 @@ export class GlaedaGitHubCanaryClientV1 implements GlaedaWorkstationClientV1 {
     timeoutSeconds: number,
   ): Promise<unknown> {
     const completed = await this.#process({
+      pythonInterpreterPath: this.#pythonInterpreterPath,
       scriptPath: this.#scriptPath,
       action,
       requestId: this.#target.requestId,
@@ -208,6 +217,9 @@ function receiptFor(
 export async function runGlaedaCanaryProcessV1(
   input: Parameters<GlaedaCanaryProcessV1>[0],
 ): Promise<GlaedaCanaryProcessResultV1> {
+  const pythonInterpreterPath = await admitPython314InterpreterV1(
+    input.pythonInterpreterPath,
+  );
   const environment: Record<string, string> = {
     HOME: required(process.env.HOME, "HOME"),
     LC_ALL: "C",
@@ -218,7 +230,7 @@ export async function runGlaedaCanaryProcessV1(
     if (value) environment[name] = value;
   }
   const child = Bun.spawn([
-    "/usr/bin/python3",
+    pythonInterpreterPath,
     input.scriptPath,
     input.action,
     "--request-id",
@@ -242,6 +254,46 @@ export async function runGlaedaCanaryProcessV1(
     return { exitCode, stdout, stderr };
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+/** Resolve and fail closed on the node-local runtime before touching a Glaeda request. */
+export async function admitPython314InterpreterV1(path: string): Promise<string> {
+  const configured = absolutePath(path, "Python interpreter path");
+  let resolved: string;
+  try {
+    resolved = await realpath(configured);
+    const metadata = await stat(resolved);
+    if (!metadata.isFile()) throw new Error("not a regular file");
+  } catch {
+    throw new Error("Python interpreter path must resolve to a regular file");
+  }
+
+  const probe = Bun.spawn([resolved, "--version"], {
+    env: { LC_ALL: "C", PATH: "/usr/bin:/bin" },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const timeout = setTimeout(() => probe.kill("SIGKILL"), 5_000);
+  try {
+    const [exitCode, stdout, stderr] = await Promise.all([
+      probe.exited,
+      new Response(probe.stdout).text(),
+      new Response(probe.stderr).text(),
+    ]);
+    if (exitCode !== 0) throw new Error("Python interpreter version probe failed");
+    admitPython314VersionV1(`${stdout}\n${stderr}`);
+    return resolved;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export function admitPython314VersionV1(raw: string): void {
+  const match = /^Python (\d+)\.(\d+)\.(\d+)(?:[+a-z0-9.-]*)?$/iu.exec(raw.trim());
+  if (match === null || match[1] !== "3" || match[2] !== "14") {
+    throw new Error("Glaeda workstation execution requires Python 3.14.x");
   }
 }
 
@@ -426,6 +478,12 @@ function text(value: unknown, label: string): string {
 
 function required(value: unknown, label: string): string {
   return text(value, label);
+}
+
+function absolutePath(value: unknown, label: string): string {
+  const path = required(value, label);
+  if (!isAbsolute(path)) throw new Error(`${label} must be absolute`);
+  return path;
 }
 
 function timestamp(value: Date, label: string): string {
