@@ -24,6 +24,7 @@ describe("Worker request IDs", () => {
 
   test("classifies public routes without logging path parameters", () => {
     expect(classifyRoute("/health")).toBe("health");
+    expect(classifyRoute("/ready")).toBe("readiness");
     expect(classifyRoute("/api/v1/items/item_secret")).toBe("rest_v1");
     expect(classifyRoute("/mcp")).toBe("mcp");
     expect(classifyRoute("/other/private/path")).toBe("other");

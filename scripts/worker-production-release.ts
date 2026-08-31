@@ -418,7 +418,7 @@ async function verifyCandidate(
   options: ProductionReleaseOptions,
   dependencies: ReleaseDependencies,
 ): Promise<void> {
-  await retry("exact candidate preview health verification", dependencies, () => verifyHealthVersion(
+  await retry("exact candidate preview readiness verification", dependencies, () => verifyReadinessVersion(
     previewUrl,
     [candidateVersionId],
     dependencies,
@@ -442,9 +442,9 @@ async function verifyProduction(
 ): Promise<void> {
   for (const endpoint of [FALLBACK_ENDPOINT, OFFICIAL_ENDPOINT]) {
     await retry(
-      `exact health verification at ${endpoint}`,
+      `exact readiness verification at ${endpoint}`,
       dependencies,
-      () => verifyHealthVersion(endpoint, [candidateVersionId], dependencies),
+      () => verifyReadinessVersion(endpoint, [candidateVersionId], dependencies),
       edgeConvergenceRetryPolicy(),
     );
     await retry(`bearer verification at ${endpoint}`, dependencies, () => runHostedVerifier(
@@ -487,16 +487,34 @@ function edgeConvergenceRetryPolicy(): {
   };
 }
 
+async function verifyReadinessVersion(
+  endpoint: string,
+  expectedVersionIds: readonly string[],
+  dependencies: ReleaseDependencies,
+): Promise<void> {
+  await verifyVersionEndpoint(endpoint, "/ready", "Readiness", expectedVersionIds, dependencies);
+}
+
 async function verifyHealthVersion(
   endpoint: string,
   expectedVersionIds: readonly string[],
   dependencies: ReleaseDependencies,
 ): Promise<void> {
-  const response = await dependencies.fetch(`${endpoint}/health`, {
+  await verifyVersionEndpoint(endpoint, "/health", "Health", expectedVersionIds, dependencies);
+}
+
+async function verifyVersionEndpoint(
+  endpoint: string,
+  path: "/health" | "/ready",
+  label: "Health" | "Readiness",
+  expectedVersionIds: readonly string[],
+  dependencies: ReleaseDependencies,
+): Promise<void> {
+  const response = await dependencies.fetch(`${endpoint}${path}`, {
     headers: { "cache-control": "no-store" },
     signal: AbortSignal.timeout(10_000),
   });
-  if (response.status !== 200) throw new Error(`Health returned ${response.status}`);
+  if (response.status !== 200) throw new Error(`${label} returned ${response.status}`);
   const versionId = response.headers.get("x-stensibly-worker-version-id")?.trim();
   if (!versionId || !expectedVersionIds.includes(versionId)) {
     throw new WorkerVersionMismatchError(versionId || null, expectedVersionIds);

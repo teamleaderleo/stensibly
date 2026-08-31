@@ -14,7 +14,7 @@ export type FailureCategory =
   | "gateway_failure"
   | "request_failure";
 
-export type RouteClass = "health" | "rest_v1" | "mcp" | "other";
+export type RouteClass = "health" | "readiness" | "rest_v1" | "mcp" | "other";
 
 export interface WorkerVersionReceipt {
   id: string;
@@ -140,6 +140,7 @@ export function acceptedRequestId(value: string | null): string | null {
 
 export function classifyRoute(pathname: string): RouteClass {
   if (pathname === "/health") return "health";
+  if (pathname === "/ready") return "readiness";
   if (pathname === "/mcp") return "mcp";
   if (pathname === "/api/v1" || pathname.startsWith("/api/v1/")) return "rest_v1";
   return "other";

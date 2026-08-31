@@ -48,7 +48,10 @@ Keep credentials out of issue comments, pull requests, repository files, command
 
 The production path has previously demonstrated:
 
-- `/health` returns `200` and reports the Convex backend
+- `/health` returns `200`, reports the configured Convex backend, and marks its
+  backend probe as separate
+- `/ready` returns `200` only after a service-secret-authenticated Convex
+  capability query succeeds
 - unauthenticated `/api/v1/items` returns `401`
 - authenticated `/api/v1/items` returns `200`
 - dashboard CORS preflight succeeds
@@ -130,7 +133,8 @@ The workflow performs these stages:
 9. uploads an inert tagged Worker version without changing traffic
 10. checks the uploaded version's real binding inventory against
     `config/worker-production-bindings.json`
-11. verifies bearer and OAuth behavior against that exact version's preview URL
+11. requires deep `/ready` proof, then verifies bearer and OAuth behavior against
+    that exact version's preview URL
 12. re-checks `origin/main`, the active deployment, and the candidate bindings
 13. promotes only the verified version to 100% traffic
 14. verifies the exact version ID, bearer behavior, and OAuth behavior on both origins
@@ -254,7 +258,7 @@ Each completed request emits one JSON record containing:
 - event name
 - request ID
 - method
-- route class: `health`, `rest_v1`, `mcp`, or `other`
+- route class: `health`, `readiness`, `rest_v1`, `mcp`, or `other`
 - response status
 - duration in milliseconds
 - success or failure outcome
@@ -272,7 +276,16 @@ When the verifier reports `requestId=...`, search the Worker tail output for the
 
 Inspect Worker logs and encrypted bindings. Confirm the Worker is deployed and the `CONVEX_URL` and `STENSIBLY_SERVICE_SECRET` bindings are present. Check Convex availability and service-secret agreement.
 
-### Health passes; unauthenticated REST misses its `401` result
+### Health passes but readiness returns `503`
+
+`/health` proves that the Worker process and route are reachable; it deliberately
+does not claim that Convex accepted a query. `/ready` performs the bounded backend
+probe. Inspect recent Convex function logs for the request interval. A disabled
+deployment, exhausted plan limit, unavailable deployment, or service-secret mismatch
+must be repaired at Convex before retrying the Worker release. Do not promote or
+roll back Worker code merely to hide a failed backend readiness probe.
+
+### Health and readiness pass; unauthenticated REST misses its `401` result
 
 Treat this as an authentication regression or route mismatch. Inspect recent gateway and middleware changes before testing writes.
 
