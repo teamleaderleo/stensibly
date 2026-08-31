@@ -19,16 +19,15 @@ bun run pi-luna:worker -- \
   --os-boundary bwrap \
   --bwrap-bin /usr/bin/bwrap \
   --verification-path /usr/bin:/bin \
-  --read-only-mount /absolute/main-checkout/.git \
   --verification-command 'tests=["/usr/bin/python3","-m","unittest","path/to/test.py"]' \
   --verification-command 'diff-check=["/usr/bin/git","diff","--check"]'
 ```
 
-The output directory is an immutable attempt identity and must not already contain managed artifacts. A retry gets `attempt-2`; it never clears `attempt-1`. `receipt.json` records the exact Pi version/provider/model/effort, OAuth class, session/resume identity, tool allowlist, OS boundary and mounts, bounded streams, incremental provider usage, tool counts, Git before/after evidence, timeout outcome, and provisional structured result.
+The output directory is an immutable attempt identity and must not already contain managed artifacts. A retry gets `attempt-2`; it never clears `attempt-1`. `receipt.json` records the exact Pi version/provider/model/effort, OAuth class, session/resume identity, tool allowlist, OS boundary and effective mounts, bounded streams, incremental provider usage, tool counts, Git before/after evidence, timeout outcome, and provisional structured result.
 
-On Linux, `bwrap` is the admitted unattended mode. It gives model-visible child processes an empty home, no network, a writable admitted repository, read-only system/tool mounts, and only coordinator-declared verification argv. Linked worktrees need their main repository `.git` directory mounted read-only so typed Git observations and `git diff --check` can follow the worktree `gitdir`/`commondir` pointers. Do not mount Pi agent/auth state.
+On Linux, `bwrap` is the admitted unattended mode. It gives model-visible child processes an empty home, no network, a writable admitted repository, read-only system/tool mounts, and only coordinator-declared verification argv. The runner resolves the admitted repository's Git common directory before Pi starts and automatically adds it as a read-only mount, including for linked worktrees. Retain `--read-only-mount` for other coordinator-declared dependencies. Do not mount Pi agent/auth state.
 
-`--os-boundary none` is explicit rather than a silent fallback. It keeps the no-generic-shell and fixed-command contract, but repository code executed by verification retains the Pi user's filesystem authority; record that residual limitation and use it only where the repository trust decision permits.
+`--os-boundary none` is explicit rather than a silent fallback. It keeps the no-generic-shell and fixed-command contract, applies no OS containment or read-only mounts, and leaves repository code executed by verification with the Pi user's filesystem authority; record that residual limitation and use it only where the repository trust decision permits.
 
 Pi sessions live under the attempt directory and use a deterministic UUID unless `--session-id` is supplied. The receipt contains the exact resume command and identity. External process/background state is not claimed to survive; Git and the session transcript are the durable boundary.
 
