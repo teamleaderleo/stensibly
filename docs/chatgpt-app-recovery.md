@@ -22,10 +22,11 @@ Stensibly dogfood supports the **latest reviewed metadata only**. The Plugins Di
 Before a dogfood run:
 
 1. update `docs/chatgpt-app-actions.json` from the exact candidate contract;
-2. create or update the directory draft version and run **Scan Tools**;
-3. review the metadata diff and publish the approved version;
-4. start a fresh conversation using that action snapshot;
-5. compare the visible action count and contract identity with the release receipt.
+2. run `bun run plugin:preflight` and clear every blocker; treat warnings as explicit candidate-quality decisions;
+3. create or update the directory draft version and run **Scan Tools**;
+4. review the metadata diff and publish the approved version;
+5. start a fresh conversation using that action snapshot;
+6. compare the visible action count and contract identity with the release receipt.
 
 ## Normal agent workflow
 
