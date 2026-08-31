@@ -15,7 +15,6 @@ import {
 } from "./mcp-oauth-crypto.js";
 import { isAllowedMcpConsentRequest } from "./mcp-consent-security.js";
 import {
-  MCP_OAUTH_CONSENT_SCRIPT,
   MAX_REGISTRATION_BODY_BYTES,
   authorizationInputError,
   authorizationServerMetadata,
@@ -51,7 +50,7 @@ export function createMcpOAuth(options: McpOAuthOptions): Hono<StensiblyEnv> {
     context.header("X-Frame-Options", "DENY");
     context.header(
       "Content-Security-Policy",
-      "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     );
     await next();
   });
@@ -62,11 +61,6 @@ export function createMcpOAuth(options: McpOAuthOptions): Hono<StensiblyEnv> {
     context.json(protectedResourceMetadata(normalized)));
   app.get("/.well-known/oauth-authorization-server", (context) =>
     context.json(authorizationServerMetadata(normalized)));
-  app.get("/oauth/consent.js", (context) => {
-    context.header("Content-Type", "text/javascript; charset=utf-8");
-    return context.body(MCP_OAUTH_CONSENT_SCRIPT);
-  });
-
   app.post("/oauth/register", async (context) => {
     const contentLength = Number(context.req.header("content-length") ?? "0");
     if (Number.isFinite(contentLength) && contentLength > MAX_REGISTRATION_BODY_BYTES) {
