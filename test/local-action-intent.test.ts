@@ -75,10 +75,29 @@ describe("local action intent", () => {
       ...base,
       command: { ...base.command, cwd: { kind: "repository_subdir", relativePath: "../outside" } },
     })).toThrow("relative cwd is invalid");
+    expect(() => compileLocalActionIntentV1({
+      ...base,
+      command: { ...base.command, cwd: { kind: "repository_subdir", relativePath: "dir\\child" } },
+    })).toThrow("must use / separators");
     expect(compileLocalActionIntentV1({
       ...base,
       command: { ...base.command, argv: ["python3", "script.py", "*.ts", "; rm -rf /"] },
     }).command?.argv.at(-1)).toBe("; rm -rf /");
+  });
+
+  test("preserves exact argv and repository-relative cwd bytes instead of trimming them", () => {
+    const base = commandIntent();
+    const argv = ["python3", "script.py", "", " leading ", "trailing "];
+    const compiled = compileLocalActionIntentV1({
+      ...base,
+      command: {
+        ...base.command,
+        argv,
+        cwd: { kind: "repository_subdir", relativePath: " dir " },
+      },
+    });
+    expect(compiled.command?.argv).toEqual(argv);
+    expect(compiled.command?.cwd.relativePath).toBe(" dir ");
   });
 
   test("refuses direct inline shell command-string modes", () => {
