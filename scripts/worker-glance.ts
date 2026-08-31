@@ -459,11 +459,27 @@ function validUsageRecord(value: unknown): boolean {
   return Object.values(value).every((entry) => typeof entry === "number" && Number.isFinite(entry));
 }
 
-function validPiUsageRecord(value: unknown): boolean {
-  if (!isObject(value)) return false;
-  return ["input", "cacheRead", "output", "reasoning"].every((key) =>
-    !Object.prototype.hasOwnProperty.call(value, key) || finiteNonNegativeInteger(value[key]),
-  );
+function normalizePiUsageRecord(value: unknown): JsonObject | null {
+  if (!isObject(value)) return null;
+  const keys = ["input", "cacheRead", "cacheWrite", "output", "reasoning", "totalTokens"] as const;
+  if (!keys.every((key) => finiteNonNegativeInteger(value[key]))) return null;
+  const input = value.input as number;
+  const cacheRead = value.cacheRead as number;
+  const cacheWrite = value.cacheWrite as number;
+  const output = value.output as number;
+  const reasoning = value.reasoning as number;
+  const totalTokens = value.totalTokens as number;
+  const promptInput = input + cacheRead + cacheWrite;
+  const expectedTotal = promptInput + output;
+  if (!Number.isSafeInteger(promptInput) || !Number.isSafeInteger(expectedTotal) || totalTokens !== expectedTotal) {
+    return null;
+  }
+  return {
+    input_tokens: promptInput,
+    cached_input_tokens: cacheRead,
+    output_tokens: output,
+    reasoning_tokens: reasoning,
+  };
 }
 
 function adaptCurrentReceipt(value: JsonObject, resultPath: string): CurrentReceipt | null {
@@ -516,13 +532,18 @@ function adaptCurrentReceipt(value: JsonObject, resultPath: string): CurrentRece
     : null;
   const timedOut = typeof timedOutValue === "boolean" ? timedOutValue : null;
 
-  const tokenUsage = backend === "sol-luna"
+  const rawTokenUsage = backend === "sol-luna"
     ? (isObject(codex) ? property(codex, "tokenUsage") : null)
     : property(value, "usage");
-  const usageValid = tokenUsage === null
-    || (backend === "sol-luna" ? validUsageRecord(tokenUsage) : validPiUsageRecord(tokenUsage));
+  const normalizedPiUsage = backend === "pi" && rawTokenUsage !== null
+    ? normalizePiUsageRecord(rawTokenUsage)
+    : null;
+  const usageValid = rawTokenUsage === null
+    || (backend === "sol-luna" ? validUsageRecord(rawTokenUsage) : normalizedPiUsage !== null);
   if (!usageValid) structuralInvalid = true;
-  const usage = usageValid ? tokenUsage : null;
+  const usage = usageValid
+    ? backend === "pi" ? normalizedPiUsage : rawTokenUsage
+    : null;
 
   const workerSuccessIsProvisional = isObject(integration) ? property(integration, "workerSuccessIsProvisional") : null;
   const integrationStatus = isObject(integration) ? property(integration, "status") : null;
