@@ -25,7 +25,7 @@ import {
   runnerProfileClaimMatchesV1,
   runnerProfileProvenanceV1,
 } from "./runner-profile-provenance.js";
-import { runStatuses } from "./runs.js";
+import { runStatuses } from "./run-statuses.js";
 import { actorSchema } from "./schemas.js";
 import type { WorkstationCommandLedgerV1 } from "./workstation-command-adapter.js";
 

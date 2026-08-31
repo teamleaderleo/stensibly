@@ -1,7 +1,10 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
+import { ConflictError, NotFoundError } from "./errors.js";
 import { createItemRequestFingerprint } from "./idempotency-request-fingerprint.js";
 import type { ActorInput, CreateItemInput } from "./schemas.js";
+
+export { ConflictError, NotFoundError } from "./errors.js";
 
 export type ItemStatus = "ready" | "active" | "blocked" | "done" | "archived";
 export type ItemKind =
@@ -70,20 +73,6 @@ interface ExpectedReplayEvent {
   actorId: string | null;
   type: string;
   request: Record<string, unknown>;
-}
-
-export class ConflictError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ConflictError";
-  }
-}
-
-export class NotFoundError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "NotFoundError";
-  }
 }
 
 export class StensiblyStore {
