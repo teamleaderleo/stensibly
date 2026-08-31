@@ -54,7 +54,8 @@ describe("hosted MCP reconnect lifecycle", () => {
     const initialTools = await listTools(initialApp);
     expect(initialTools).toContain("create_item");
     expect(initialTools).toContain("claim_work");
-    expect(initialTools).toContain("get_item");
+    expect(initialTools).toContain("get_runner_context");
+    expect(initialTools).not.toContain("get_item");
     expect(initialTools).toContain("complete_work");
     expect(initialTools).not.toContain("record_event");
     expect(initialTools).toContain("attach_artifact");
@@ -93,7 +94,7 @@ describe("hosted MCP reconnect lifecycle", () => {
 
     const active = await callTool<{
       item: { id: string; status: string; claimGeneration: number };
-    }>(initialApp, "get_item", { id: created.id });
+    }>(initialApp, "get_runner_context", { id: created.id });
     expect(active.item).toMatchObject({
       id: created.id,
       status: "active",
@@ -103,12 +104,12 @@ describe("hosted MCP reconnect lifecycle", () => {
     const reconnectedApp = createApp();
     await initialize(reconnectedApp);
     const reconnectedTools = await listTools(reconnectedApp);
-    expect(reconnectedTools).toContain("get_item");
+    expect(reconnectedTools).toContain("get_runner_context");
     expect(reconnectedTools).not.toContain("record_event");
 
     const reconnected = await callTool<{
       item: { id: string; status: string; claimGeneration: number };
-    }>(reconnectedApp, "get_item", { id: created.id });
+    }>(reconnectedApp, "get_runner_context", { id: created.id });
     expect(reconnected.item).toMatchObject({
       id: created.id,
       status: "active",
@@ -127,7 +128,7 @@ describe("hosted MCP reconnect lifecycle", () => {
     await initialize(finalApp);
     const completed = await callTool<{
       item: { id: string; status: string; claimGeneration: number; summary: string };
-    }>(finalApp, "get_item", { id: created.id });
+    }>(finalApp, "get_runner_context", { id: created.id });
     expect(completed.item).toMatchObject({
       id: created.id,
       status: "done",

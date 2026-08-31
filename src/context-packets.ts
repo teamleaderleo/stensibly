@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Artifact } from "./artifacts.js";
 import type { ItemDetail, WorkLedger } from "./ledger.js";
 import type { Item, ItemEvent } from "./store.js";
@@ -38,6 +39,7 @@ export interface RunnerContextRecord {
 export interface RunnerContextPacket {
   version: 1;
   generatedAt: string;
+  packetFingerprint?: string;
   item: Item;
   intent: {
     objective: string;
@@ -64,7 +66,7 @@ interface NormalizedOptions {
   maxRuns: number;
   maxDependencies: number;
   maxCharacters: number;
-  now: Date;
+  now: Date | null;
 }
 
 const protectedEventPattern = /(approval|block|constraint|decision|escalat|human|policy|question|risk|security)/i;
@@ -105,7 +107,7 @@ export function buildRunnerContextPacket(
     .sort(compareCreatedNewest)
     .slice(0, options.maxArtifacts)
     .map(normalizeArtifact);
-  let runs = normalizeRecords(detail.runs, options.maxRuns);
+  let runs = normalizeRuns(detail.runs, options.maxRuns);
   let dependencies = normalizeRecords(detail.dependencies, options.maxDependencies);
   const omitted = {
     events: Math.max(0, detail.events.length - events.length),
@@ -116,7 +118,15 @@ export function buildRunnerContextPacket(
 
   const item = normalizeItem(detail.item);
   while (true) {
-    const packet = assemblePacket(item, events, artifacts, runs, dependencies, omitted, options.now);
+    const packet = assemblePacket(
+      item,
+      events,
+      artifacts,
+      runs,
+      dependencies,
+      omitted,
+      options.now ?? canonicalAsOf(detail),
+    );
     if (packet.characterCount <= options.maxCharacters) return packet;
 
     const overflow = packet.characterCount - options.maxCharacters;
@@ -135,9 +145,9 @@ export function buildRunnerContextPacket(
       omitted.events += 1;
       continue;
     }
-    if (runs.length > 0) {
-      runs.pop();
-      omitted.runs += 1;
+    if (dependencies.length > 0) {
+      dependencies.pop();
+      omitted.dependencies += 1;
       continue;
     }
     if (artifacts.length > 0) {
@@ -145,9 +155,9 @@ export function buildRunnerContextPacket(
       omitted.artifacts += 1;
       continue;
     }
-    if (dependencies.length > 0) {
-      dependencies.pop();
-      omitted.dependencies += 1;
+    if (runs.length > 0) {
+      runs.pop();
+      omitted.runs += 1;
       continue;
     }
     if (events.length > 0) {
@@ -190,10 +200,13 @@ function assemblePacket(
     ],
     omitted: { ...omitted },
   };
+  const packetFingerprint = `sha256:${createHash("sha256")
+    .update(JSON.stringify(base))
+    .digest("hex")}`;
   let characterCount = 0;
   while (true) {
-    const next = JSON.stringify({ ...base, characterCount }).length;
-    if (next === characterCount) return { ...base, characterCount };
+    const next = JSON.stringify({ ...base, packetFingerprint, characterCount }).length;
+    if (next === characterCount) return { ...base, packetFingerprint, characterCount };
     characterCount = next;
   }
 }
@@ -205,7 +218,7 @@ function normalizeOptions(options: RunnerContextPacketOptions): NormalizedOption
     maxRuns: boundedInteger(options.maxRuns, 5, 0, 25, "Context run limit"),
     maxDependencies: boundedInteger(options.maxDependencies, 20, 0, 100, "Context dependency limit"),
     maxCharacters: boundedInteger(options.maxCharacters, 12_000, 2_000, 50_000, "Context character limit"),
-    now: options.now ?? new Date(),
+    now: options.now ?? null,
   };
 }
 
@@ -276,6 +289,69 @@ function normalizeRecords(records: unknown[] | undefined, limit: number): Runner
           : String(index + 1);
       return { ...sanitized, id };
     });
+}
+
+const runnerContextRunKeys = [
+  "id",
+  "itemId",
+  "actorId",
+  "runnerType",
+  "runnerProfile",
+  "runnerProfileVersion",
+  "externalRunId",
+  "status",
+  "generation",
+  "leaseGeneration",
+  "leaseOwnerId",
+  "leaseExpiresAt",
+  "checkpoint",
+  "outcome",
+  "continuationRef",
+  "usage",
+  "executionRecords",
+  "createdAt",
+  "updatedAt",
+  "startedAt",
+  "endedAt",
+] as const;
+
+function normalizeRuns(records: unknown[] | undefined, limit: number): RunnerContextRecord[] {
+  if (!records || limit === 0) return [];
+  return records
+    .filter(isRecord)
+    .slice()
+    .sort(compareUnknownCreatedNewest)
+    .slice(0, limit)
+    .map((record, index) => {
+      const selected = Object.fromEntries(
+        runnerContextRunKeys
+          .filter((key) => key in record)
+          .map((key) => [key, record[key]]),
+      );
+      const sanitized = sanitizeRecord(selected);
+      return {
+        ...sanitized,
+        id: typeof sanitized.id === "string" ? sanitized.id : String(index + 1),
+      };
+    });
+}
+
+function canonicalAsOf(detail: ItemDetail): Date {
+  const candidates = [
+    detail.item.createdAt,
+    detail.item.updatedAt,
+    ...detail.events.map((event) => event.createdAt),
+    ...detail.artifacts.map((artifact) => artifact.createdAt),
+    ...(detail.runs ?? []).filter(isRecord).flatMap(recordTimestamps),
+    ...(detail.dependencies ?? []).filter(isRecord).flatMap(recordTimestamps),
+  ].filter((value): value is string => typeof value === "string" && !Number.isNaN(Date.parse(value)));
+  return new Date(candidates.sort().at(-1) ?? detail.item.updatedAt);
+}
+
+function recordTimestamps(record: Record<string, unknown>): string[] {
+  return ["createdAt", "updatedAt", "startedAt", "endedAt"]
+    .map((key) => record[key])
+    .filter((value): value is string => typeof value === "string");
 }
 
 function sanitizeRecord(record: Record<string, unknown>, maximumDepth = 4): Record<string, unknown> {

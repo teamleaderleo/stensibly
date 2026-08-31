@@ -10,8 +10,8 @@ const publishedDefault = [
   "create_item",
   "dispatch_work",
   "get_brief",
-  "get_item",
   "get_project_attachment",
+  "get_runner_context",
   "github_add_issue_comment",
   "github_ci_diagnose",
   "github_create_issue",
@@ -29,6 +29,7 @@ const publishedDefault = [
 const deferredDiscovery = [
   "get_continuation",
   "get_github_project_context",
+  "get_item",
   "github_branch_tidy",
   "github_call_tool",
   "github_get_tool",
@@ -48,7 +49,6 @@ const internalOrRunner = [
   "get_github_repository_write_receipt",
   "get_operation_receipt",
   "get_operation_workflow",
-  "get_runner_context",
   "github_create_branch",
   "github_create_file",
   "github_create_pull_request",
@@ -78,7 +78,7 @@ test("curated ChatGPT exposure stays explicit without changing full capability c
   expect(core).toEqual(publishedDefault);
   expect(searchable).toEqual(deferredDiscovery);
   expect(hidden).toEqual(internalOrRunner);
-  expect([core.length, searchable.length, hidden.length]).toEqual([21, 12, 20]);
+  expect([core.length, searchable.length, hidden.length]).toEqual([21, 13, 19]);
   expect(mcpCapabilityPolicyRegistry.policies).toHaveLength(53);
 
   const published = compileMcpCapabilityExposureSelection(

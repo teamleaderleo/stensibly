@@ -74,6 +74,7 @@ describe("runner context packets", () => {
     });
 
     expect(packet.generatedAt).toBe(generatedAt.toISOString());
+    expect(packet.packetFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(packet.events).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: decision.id, protected: true }),
     ]));
@@ -129,7 +130,79 @@ describe("runner context packets", () => {
     const first = buildRunnerContextPacket(detail, { now: generatedAt });
     const second = buildRunnerContextPacket(detail, { now: generatedAt });
     expect(second).toEqual(first);
+    expect(second.packetFingerprint).toBe(first.packetFingerprint);
     expect(first.sourceReferences).toContain("dependency:item_dependency");
+  });
+
+  test("derives a stable canonical timestamp and compacts runner receipts", () => {
+    const item = store.createItem({
+      project: "glaeda",
+      kind: "task",
+      title: "Read one exact owned-workstation result",
+      priority: 50,
+      actor: leo,
+    });
+    const receiptDigest = `sha256:${"3".repeat(64)}`;
+    const run = {
+      id: "run_air_blue",
+      itemId: item.id,
+      actorId: "service:air-blue-glaeda",
+      runnerType: "glaeda-workstation",
+      runnerProfile: "repo-query/v1",
+      runnerProfileVersion: `sha256:${"4".repeat(64)}`,
+      externalRunId: "glaeda:air-blue:request",
+      status: "succeeded",
+      generation: 4,
+      leaseGeneration: 2,
+      leaseOwnerId: null,
+      leaseExpiresAt: null,
+      checkpoint: "Admitted exact request.",
+      outcome: `Glaeda repo-query/v1 succeeded with bounded result ${receiptDigest}.`,
+      continuationRef: `https://github.com/teamleaderleo/glaeda-dispatch/commit/${"5".repeat(40)}`,
+      usage: { toolCalls: 7 },
+      executionEnvelope: { objective: "This verbose envelope is not needed in a receipt read." },
+      executionRecords: [{ transition: "succeed", actual: { filesChanged: 0, toolCalls: 7 } }],
+      createdAt: "2026-09-01T05:26:26.210Z",
+      updatedAt: "2026-09-01T05:26:47.551Z",
+      startedAt: "2026-09-01T05:26:40.293Z",
+      endedAt: "2026-09-01T05:26:47.551Z",
+    };
+    const detail = {
+      item,
+      control: projectItemControl({ item, now: generatedAt }),
+      events: store.listEvents(item.id),
+      artifacts: [{
+        id: "artifact_verbose_history",
+        itemId: item.id,
+        actorId: runner.id,
+        kind: "log" as const,
+        label: "Verbose historical log",
+        uri: "urn:test:verbose-log",
+        mimeType: "text/plain",
+        metadata: { note: "historical ".repeat(400) },
+        createdAt: "2026-08-31T05:26:30.000Z",
+      }],
+      runs: [run],
+      dependencies: [],
+    };
+
+    const first = buildRunnerContextPacket(detail, { maxCharacters: 2_500 });
+    const second = buildRunnerContextPacket(detail, { maxCharacters: 2_500 });
+    expect(second).toEqual(first);
+    expect(first.generatedAt).toBe(run.endedAt);
+    expect(first.runs[0]).toEqual(expect.objectContaining({
+      id: run.id,
+      actorId: run.actorId,
+      runnerProfile: run.runnerProfile,
+      runnerProfileVersion: run.runnerProfileVersion,
+      outcome: run.outcome,
+      continuationRef: run.continuationRef,
+    }));
+    expect(first.runs[0]).not.toHaveProperty("executionEnvelope");
+    expect(JSON.stringify(first)).toContain(receiptDigest);
+    expect(first.characterCount).toBeLessThanOrEqual(2_500);
+    expect(first.omitted.artifacts).toBe(1);
+    expect(first.omitted.runs).toBe(0);
   });
 
   test("preserves one bounded Glaeda capability artifact without depth truncation", () => {
