@@ -4,11 +4,11 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 
 ## Current published profile
 
-Normal hosted ChatGPT publication uses the reviewed **`published_default`** profile with **20** outcome-level MCP tools. The complete current list lives in [`docs/chatgpt-app-actions.json`](chatgpt-app-actions.json), which is the release receipt and canonical owner for the published action set.
+Normal hosted ChatGPT publication uses the reviewed **`published_default`** profile with **21** outcome-level MCP tools. The complete current list lives in [`docs/chatgpt-app-actions.json`](chatgpt-app-actions.json), which is the release receipt and canonical owner for the published action set.
 
 ```text
-published ChatGPT tool contract: sha256:5bc3fa65faf1531b2fd5ab4f3d3a8683d14d17bf7a84c56e072345085fba79ba
-names-only diagnostic:            sha256:aad109a726c780e3cf891f9d3a5d5ad53754a6beb768b826a08a01934079d3bf
+published ChatGPT tool contract: sha256:63d7ebf73071e4bcc17e2a8c1767e7cac8f8006cd37b526280b1bd45dbef1007
+names-only diagnostic:            sha256:56203aa95b362fccb5429f3861f5db8593dc835a62007642ada2872aa9226190
 ```
 
 The public profile keeps frequent work coordination, exact runner-neutral dispatch, project context, bounded GitHub issue work, repository health/CI diagnosis, reviewed publication, and PR landing immediately visible. Each visible tool carries canonical `readOnlyHint`, `destructiveHint`, and `openWorldHint` metadata derived from the capability policy.
@@ -85,7 +85,7 @@ Record the first transition where discovery, executable binding, network dispatc
 
 ### Stale ChatGPT action snapshot
 
-Evidence: the visible action count/names differ from the current 20-action release receipt, or recently changed definitions are absent.
+Evidence: the visible action count/names differ from the current 21-action release receipt, or recently changed definitions are absent.
 
 Action: refresh, rescan, or recreate the app and start a fresh conversation.
 

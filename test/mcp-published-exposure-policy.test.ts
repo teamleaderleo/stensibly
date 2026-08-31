@@ -3,6 +3,7 @@ import { mcpCapabilityPolicyRegistry } from "../src/mcp-capability-policy.ts";
 import { compileMcpCapabilityExposureSelection } from "../src/mcp-exposure-selection.ts";
 
 const publishedDefault = [
+  "attach_artifact",
   "block_work",
   "claim_work",
   "complete_work",
@@ -41,7 +42,6 @@ const deferredDiscovery = [
 ];
 
 const internalOrRunner = [
-  "attach_artifact",
   "edit_continuation",
   "enrol_worker",
   "get_github_provider_receipt",
@@ -78,7 +78,7 @@ test("curated ChatGPT exposure stays explicit without changing full capability c
   expect(core).toEqual(publishedDefault);
   expect(searchable).toEqual(deferredDiscovery);
   expect(hidden).toEqual(internalOrRunner);
-  expect([core.length, searchable.length, hidden.length]).toEqual([20, 12, 21]);
+  expect([core.length, searchable.length, hidden.length]).toEqual([21, 12, 20]);
   expect(mcpCapabilityPolicyRegistry.policies).toHaveLength(53);
 
   const published = compileMcpCapabilityExposureSelection(
