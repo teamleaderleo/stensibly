@@ -30,6 +30,7 @@ export interface GitHubPrMaterialityV1 {
   readonly routingLevel: GitHubPrRoutingLevel;
   readonly revision: string | null;
   readonly invalidatesExactHeadEvidence: boolean;
+  readonly invalidatesReviewEvidence: boolean;
   readonly makesReviewEligible: boolean;
   readonly makesRepairEligible: boolean;
   readonly makesIntegrationEligible: boolean;
@@ -75,7 +76,8 @@ export function classifyGitHubPrMaterialityV1(
     actionClass: classification.actionClass,
     routingLevel: classification.routingLevel,
     revision: observation.relationships.revision,
-    invalidatesExactHeadEvidence: classification.actionClass === "exact_head_changed"
+    invalidatesExactHeadEvidence: classification.actionClass === "exact_head_changed",
+    invalidatesReviewEvidence: classification.actionClass === "exact_head_changed"
       || classification.actionClass === "review_invalidated",
     makesReviewEligible: classification.actionClass === "review_eligible",
     makesRepairEligible: classification.actionClass === "repair_requested",
