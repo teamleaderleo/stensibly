@@ -41,6 +41,9 @@ async function installConsentCapture(page: Page): Promise<void> {
   await page.setContent(html);
   await page.locator("form").evaluateAll((forms) => {
     for (const form of forms) {
+      if (!(form instanceof HTMLFormElement)) {
+        continue;
+      }
       form.addEventListener("submit", (event) => {
         event.preventDefault();
         const data = new FormData(form);
