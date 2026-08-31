@@ -112,6 +112,7 @@ describe("MCP published contract", () => {
       readOnlyHint: false,
     });
     expect(contract.publishedContractFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(contract.serverInstructionsFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(contract.fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(contract.grantsAuthority).toBe(false);
     expect(contract.authorizesToolRegistration).toBe(false);
@@ -120,6 +121,30 @@ describe("MCP published contract", () => {
     expect(Object.isFrozen(contract.publishedManifest)).toBe(true);
     expect(Object.isFrozen(contract.publishedManifest.tools)).toBe(true);
     expect(Object.isFrozen(contract.publishedManifest.tools[0])).toBe(true);
+  });
+
+  test("rotates the reviewed contract when server instructions change", () => {
+    const original = compileMcpPublishedContract(
+      fixtureTools(),
+      fixtureRegistry(),
+      "published_default",
+      "Use the reviewed public tools.",
+    );
+    const changed = compileMcpPublishedContract(
+      fixtureTools(),
+      fixtureRegistry(),
+      "published_default",
+      "Use the reviewed public tools and bounded receipts.",
+    );
+
+    expect(changed.publishedManifest.digest).toBe(original.publishedManifest.digest);
+    expect(changed.serverInstructionsFingerprint).not.toBe(
+      original.serverInstructionsFingerprint,
+    );
+    expect(changed.publishedContractFingerprint).not.toBe(
+      original.publishedContractFingerprint,
+    );
+    expect(changed.fingerprint).not.toBe(original.fingerprint);
   });
 
   test("includes searchable tools only when that publication profile is selected", () => {

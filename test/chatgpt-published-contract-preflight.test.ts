@@ -16,6 +16,8 @@ import { withHostedMcpProviders } from "./support/hosted-mcp-ledger.ts";
 interface ChatGptAppContractSnapshot {
   toolCount: number;
   toolContractFingerprint: string;
+  serverInstructionsFingerprint: string;
+  reviewedMetadataFingerprint: string;
 }
 
 const snapshotPath = new URL("../docs/chatgpt-app-actions.json", import.meta.url);
@@ -71,6 +73,7 @@ describe("ChatGPT curated publication preflight", () => {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
       const listed = await client.listTools();
+      const serverInstructions = client.getInstructions() ?? "";
 
       expect(listed.tools).toHaveLength(21);
       expect(snapshot.toolCount).toBe(21);
@@ -124,6 +127,7 @@ describe("ChatGPT curated publication preflight", () => {
         })),
         mcpCapabilityPolicyRegistry,
         "published_default",
+        serverInstructions,
       );
 
       expect(contract.sourceManifestDigest).toBe(snapshot.toolContractFingerprint);
@@ -132,7 +136,12 @@ describe("ChatGPT curated publication preflight", () => {
       );
       expect(contract.publishedManifest.tools).toHaveLength(21);
       expect(contract.publishedManifest.digest).toBe(snapshot.toolContractFingerprint);
-      expect(contract.publishedContractFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
+      expect(contract.serverInstructionsFingerprint).toBe(
+        snapshot.serverInstructionsFingerprint,
+      );
+      expect(contract.publishedContractFingerprint).toBe(
+        snapshot.reviewedMetadataFingerprint,
+      );
       expect(contract.grantsAuthority).toBe(false);
       expect(contract.authorizesToolRegistration).toBe(false);
       expect(contract.authorizesPublication).toBe(false);

@@ -7,7 +7,9 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 Normal hosted ChatGPT publication uses the reviewed **`published_default`** profile with **21** outcome-level MCP tools. The complete current list lives in [`docs/chatgpt-app-actions.json`](chatgpt-app-actions.json), which is the release receipt and canonical owner for the published action set.
 
 ```text
-published ChatGPT tool contract: sha256:e7b8d61bb4339b1b45dc5bb244291555b18eb0e2240996dea12f8a8c1c76589a
+reviewed metadata:                sha256:1cb721e6259f91c04bee0726a732af72c40bd0d982b680309baa8f865c3ad3b1
+published ChatGPT tool contract:  sha256:e7b8d61bb4339b1b45dc5bb244291555b18eb0e2240996dea12f8a8c1c76589a
+server instructions:              sha256:4bf979bbccbc647d41e5272cfb48890b62e27f12aeefbe060dec9ca213174832
 names-only diagnostic:            sha256:91919251f55e23b57292b2eb470bedfb8d86080da8a56c1df97641de9aec18b4
 ```
 
@@ -15,13 +17,13 @@ The public profile keeps frequent work coordination, exact runner-neutral dispat
 
 The broader **`full_internal`** profile remains available to explicit internal/admin clients. It retains long-tail provider discovery, receipts, worker enrolment, continuation machinery, low-level repository primitives, and recovery operations. Public visibility and backend capability stay separate.
 
-Stensibly dogfood supports the **latest manifest only**. ChatGPT keeps approved custom-app actions as a frozen snapshot, so every change to a published tool name, description, annotation, or input schema requires a refresh, rescan, or app recreation.
+Stensibly dogfood supports the **latest reviewed metadata only**. The Plugins Directory keeps approved MCP metadata as a frozen version, so every change to a published tool name, description, annotation, input schema, or server instruction requires a new draft version, tool scan, review, approval, and publication. Compatible server-only result changes can deploy without a new directory version.
 
 Before a dogfood run:
 
 1. update `docs/chatgpt-app-actions.json` from the exact candidate contract;
-2. refresh, rescan, or recreate the ChatGPT app;
-3. review and enable the current actions;
+2. create or update the directory draft version and run **Scan Tools**;
+3. review the metadata diff and publish the approved version;
 4. start a fresh conversation using that action snapshot;
 5. compare the visible action count and contract identity with the release receipt.
 

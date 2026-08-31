@@ -15,7 +15,7 @@ import {
   type McpToolContract,
 } from "./mcp-release-manifest.js";
 
-export const MCP_PUBLISHED_CONTRACT_VERSION = 1;
+export const MCP_PUBLISHED_CONTRACT_VERSION = 2;
 
 export interface McpPublishedContract {
   readonly version: typeof MCP_PUBLISHED_CONTRACT_VERSION;
@@ -23,6 +23,7 @@ export interface McpPublishedContract {
   readonly sourceManifestDigest: string;
   readonly policyRegistryFingerprint: string;
   readonly exposureSelectionFingerprint: string;
+  readonly serverInstructionsFingerprint: string;
   readonly publishedManifest: McpReleaseManifest;
   readonly publishedContractFingerprint: string;
   readonly grantsAuthority: false;
@@ -41,6 +42,7 @@ export function compileMcpPublishedContract(
   tools: readonly McpToolContract[],
   registry: McpCapabilityPolicyRegistry,
   profile: McpCapabilityExposureProfile,
+  serverInstructions = "",
 ): McpPublishedContract {
   const canonicalRegistry = compileMcpCapabilityPolicyRegistry(registry.policies);
   if (
@@ -77,10 +79,12 @@ export function compileMcpPublishedContract(
   });
 
   const publishedManifest = createMcpReleaseManifest(publishedTools);
+  const serverInstructionsFingerprint = sha256(serverInstructions);
   const publicIdentity = {
     version: MCP_PUBLISHED_CONTRACT_VERSION,
     profile,
     publishedManifestDigest: publishedManifest.digest,
+    serverInstructionsFingerprint,
   } as const;
   const publishedContractFingerprint = sha256(stableJson(publicIdentity));
   const canonical = {
@@ -89,6 +93,7 @@ export function compileMcpPublishedContract(
     sourceManifestDigest: sourceManifest.digest,
     policyRegistryFingerprint: canonicalRegistry.fingerprint,
     exposureSelectionFingerprint: selection.fingerprint,
+    serverInstructionsFingerprint,
     publishedManifest,
     publishedContractFingerprint,
     grantsAuthority: false as const,
