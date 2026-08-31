@@ -130,6 +130,13 @@ or arbitrary process output. The result commit is the separately inspectable bou
 
 ## Rotation, revocation, and recovery
 
+For Big Red, `.github/workflows/provision-owned-workstation-runner.yml` is the protected delivery
+surface. Mint accepts only a non-secret one-time RSA public key and its DER SHA-256 fingerprint,
+creates the exact runner grant inside the `production` environment, and uploads an immutable
+one-day artifact containing ciphertext plus non-secret token metadata. Decrypt only on Big Red into
+the final owner-only token path. The same workflow revokes one exact `tok_` ID without handling a
+raw token.
+
 List token records in the protected operator environment with `bun run tokens list`; the token ID,
 grant, creation time, and revocation time are safe control metadata, while the raw token is never
 recoverable from Stensibly. To rotate, create a new credential at a fresh owner-only path, verify one
