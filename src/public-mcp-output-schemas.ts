@@ -1,7 +1,19 @@
 import { z } from "zod";
-import { artifactKinds } from "./artifacts.js";
 import { runStatuses } from "./run-statuses.js";
 import { itemKinds, itemStatuses } from "./schemas.js";
+
+// Keep this Worker-safe: importing artifacts.ts pulls the SQLite implementation.
+export const publicMcpArtifactKinds = [
+  "file",
+  "url",
+  "commit",
+  "issue",
+  "document",
+  "image",
+  "log",
+  "dataset",
+  "other",
+] as const;
 
 const jsonRecordSchema = z.record(z.string(), z.unknown());
 const nullableStringSchema = z.string().nullable();
@@ -27,7 +39,7 @@ const artifactSchema = z.object({
   id: z.string(),
   itemId: z.string(),
   actorId: z.string(),
-  kind: z.enum(artifactKinds),
+  kind: z.enum(publicMcpArtifactKinds),
   label: z.string(),
   uri: z.string(),
   mimeType: nullableStringSchema,
@@ -53,7 +65,7 @@ const briefArtifactSchema = z.object({
   itemId: z.string(),
   itemTitle: z.string(),
   actorId: z.string(),
-  kind: z.enum(artifactKinds),
+  kind: z.enum(publicMcpArtifactKinds),
   label: z.string(),
   uri: z.string(),
   createdAt: z.string(),

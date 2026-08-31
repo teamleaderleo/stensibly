@@ -2,12 +2,18 @@ import { describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createChatGptMcpServer } from "../src/chatgpt-mcp.ts";
+import { artifactKinds } from "../src/artifacts.ts";
+import { publicMcpArtifactKinds } from "../src/public-mcp-output-schemas.ts";
 import { SqliteWorkLedger } from "../src/sqlite-ledger.ts";
 import { StensiblyStore } from "../src/store.ts";
 
 const actor = { id: "schema-agent", name: "Schema Agent", kind: "agent" } as const;
 
 describe("precise public coordination output schemas", () => {
+  test("keeps the Worker-safe artifact enum aligned with the ledger contract", () => {
+    expect(publicMcpArtifactKinds).toEqual(artifactKinds);
+  });
+
   test("validate the exact task-to-dispatch-to-context result loop", async () => {
     const store = new StensiblyStore(":memory:");
     const server = createChatGptMcpServer(new SqliteWorkLedger(store));
