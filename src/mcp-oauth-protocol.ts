@@ -283,6 +283,11 @@ export function parseScopeArray(values: unknown[]): McpOAuthScope[] {
   return OAUTH_SCOPES.filter((scope) => scopes.includes(scope));
 }
 
+export function oauthConsentSecurityPolicy(redirectUri: string): string {
+  const redirectOrigin = new URL(normalizeRedirectUri(redirectUri)).origin;
+  return `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${redirectOrigin}; frame-ancestors 'none'; base-uri 'none'`;
+}
+
 export function consentPage(input: {
   clientName: string;
   accountName: string;

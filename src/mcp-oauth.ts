@@ -22,6 +22,7 @@ import {
   message,
   normalizeOptions,
   normalizeRedirectUri,
+  oauthConsentSecurityPolicy,
   oauthBackendError,
   oauthJsonError,
   parseAuthorizationRequest,
@@ -170,6 +171,10 @@ export function createMcpOAuth(options: McpOAuthOptions): Hono<StensiblyEnv> {
     const signature = await signDetached(
       `consent:${payload}`,
       normalized.signingSecret,
+    );
+    context.header(
+      "Content-Security-Policy",
+      oauthConsentSecurityPolicy(request.redirectUri),
     );
     return context.html(consentPage({
       clientName: client.clientName,

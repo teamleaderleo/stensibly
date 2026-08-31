@@ -276,6 +276,20 @@ describe("MCP OAuth HTTP flow", () => {
       .toBe("login_required");
   });
 
+  test("allows the validated OAuth callback origin through the consent form redirect", async () => {
+    const app = createApp();
+    const client = await registerClient(app);
+    const consent = await app.request(
+      (await authorizationUrl(client.client_id)).toString(),
+      { headers: { cookie: sessionCookie } },
+    );
+
+    expect(consent.status).toBe(200);
+    const policy = consent.headers.get("content-security-policy");
+    expect(policy).toContain("form-action 'self' https://chatgpt.com");
+    expect(policy).not.toContain("https://example.com");
+  });
+
   test("enforces consent origin and denial without issuing a code", async () => {
     const app = createApp();
     const client = await registerClient(app);
