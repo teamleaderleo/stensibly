@@ -132,6 +132,7 @@ export class ConvexWorkLedger implements
   GitHubProjectContextLedger,
   RunnerLedger,
   RunnerAdapterCommandLedger,
+  WorkstationCommandLedgerV1,
   RunnerAdapterCommandRecoveryLedger,
   ExactDispatchLedgerV1,
   WorkerEnrolmentProvider,

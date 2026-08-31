@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -33,7 +33,7 @@ describe("physical Glaeda repo-query workstation client", () => {
   });
 
   test("binds tree on the fixed CLI and returns a compact correlated receipt", async () => {
-    const root = mkdtempSync(join(tmpdir(), "stensibly-glaeda-client-"));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "stensibly-glaeda-client-")));
     try {
       const binary = join(root, "glaeda-repo-query");
       const checkout = join(root, "checkout");
