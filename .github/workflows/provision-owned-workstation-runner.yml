@@ -4,13 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Mint a sealed runner credential or revoke one exact token ID
+        description: Mint a sealed workstation credential or revoke one exact token ID
         required: true
         default: mint
         type: choice
         options:
           - mint
           - revoke
+      credential_class:
+        description: Exact credential class to mint
+        required: true
+        default: runner
+        type: choice
+        options:
+          - runner
+          - ephemeral_control
       recipient_public_key_base64:
         description: Base64 PEM RSA public key for mint (non-secret)
         required: false
@@ -33,7 +41,7 @@ concurrency:
 
 jobs:
   credential:
-    name: Mint or revoke exact runner credential
+    name: Mint or revoke exact workstation credential
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -58,6 +66,7 @@ jobs:
       - name: Validate protected request
         env:
           OPERATION: ${{ inputs.operation }}
+          CREDENTIAL_CLASS: ${{ inputs.credential_class }}
           RECIPIENT_PUBLIC_KEY_BASE64: ${{ inputs.recipient_public_key_base64 }}
           RECIPIENT_PUBLIC_KEY_SHA256: ${{ inputs.recipient_public_key_sha256 }}
           TOKEN_ID: ${{ inputs.token_id }}
@@ -67,6 +76,8 @@ jobs:
           test -n "$CONVEX_DEPLOY_KEY" || { echo "Missing protected Convex deploy key" >&2; exit 1; }
           case "$OPERATION" in
             mint)
+              [[ "$CREDENTIAL_CLASS" == runner || "$CREDENTIAL_CLASS" == ephemeral_control ]] \
+                || { echo "Mint requires an exact credential class" >&2; exit 1; }
               test -n "$RECIPIENT_PUBLIC_KEY_BASE64" || { echo "Mint requires a recipient public key" >&2; exit 1; }
               [[ "$RECIPIENT_PUBLIC_KEY_SHA256" =~ ^[a-f0-9]{64}$ ]] \
                 || { echo "Mint requires an exact lowercase SHA-256 public-key fingerprint" >&2; exit 1; }
@@ -89,6 +100,7 @@ jobs:
         id: mint
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          CREDENTIAL_CLASS: ${{ inputs.credential_class }}
           RECIPIENT_PUBLIC_KEY_BASE64: ${{ inputs.recipient_public_key_base64 }}
           RECIPIENT_PUBLIC_KEY_SHA256: ${{ inputs.recipient_public_key_sha256 }}
           STENSIBLY_SERVICE_SECRET: ${{ secrets.STENSIBLY_SERVICE_SECRET }}
@@ -130,33 +142,46 @@ jobs:
           }
           trap revoke_on_failure EXIT
 
-          STENSIBLY_BACKEND=convex bun src/tokens.ts create-runner \
-            --name big-red-glaeda \
-            --project glaeda \
-            --actor-id service:big-red-glaeda \
-            --runner-type glaeda-workstation \
-            --adapter-id glaeda-workstation \
-            --profiles repo-query/v1 \
-            --output-file "$credential_root/runner.token" \
-            > "$credential_root/metadata.json"
+          if [[ "$CREDENTIAL_CLASS" == runner ]]; then
+            STENSIBLY_BACKEND=convex bun src/tokens.ts create-runner \
+              --name big-red-glaeda \
+              --project glaeda \
+              --actor-id service:big-red-glaeda \
+              --runner-type glaeda-workstation \
+              --adapter-id glaeda-workstation \
+              --profiles repo-query/v1 \
+              --output-file "$credential_root/credential.token" \
+              > "$credential_root/metadata.json"
+          else
+            STENSIBLY_BACKEND=convex bun src/tokens.ts create \
+              --name "big-red-glaeda-control-${GITHUB_RUN_ID}" \
+              --scopes read,write \
+              --projects glaeda \
+              > "$credential_root/created.json"
+            jq -er '.token | select(test("^stn\\.tok_[a-f0-9]{32}\\.[A-Za-z0-9_-]{40,100}$"))' \
+              "$credential_root/created.json" > "$credential_root/credential.token"
+            jq -e 'del(.token) + {purpose: "ephemeral_control"}' \
+              "$credential_root/created.json" > "$credential_root/metadata.json"
+            shred --remove "$credential_root/created.json"
+          fi
           minted_id="$(jq -er '.id | select(test("^tok_[a-f0-9]{32}$"))' "$credential_root/metadata.json")"
           printf 'token_id=%s\n' "$minted_id" >> "$GITHUB_OUTPUT"
 
           openssl pkeyutl -encrypt -pubin \
             -inkey "$credential_root/recipient.pem" \
-            -in "$credential_root/runner.token" \
+            -in "$credential_root/credential.token" \
             -out "$credential_root/runner-token.oaep-sha256.bin" \
             -pkeyopt rsa_padding_mode:oaep \
             -pkeyopt rsa_oaep_md:sha256
           printf '%s\n' "$actual_fingerprint" > "$credential_root/recipient-public-key.sha256"
-          shred --remove "$credential_root/runner.token" "$credential_root/recipient.pem"
+          shred --remove "$credential_root/credential.token" "$credential_root/recipient.pem"
           trap - EXIT
 
       - name: Upload immutable sealed credential
         if: ${{ inputs.operation == 'mint' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: big-red-runner-credential-${{ github.run_id }}-${{ github.run_attempt }}
+          name: big-red-stensibly-credential-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/owned-workstation-runner/metadata.json
             ${{ runner.temp }}/owned-workstation-runner/recipient-public-key.sha256
@@ -184,7 +209,7 @@ jobs:
           echo "::add-mask::$STENSIBLY_SERVICE_SECRET"
           STENSIBLY_BACKEND=convex bun src/tokens.ts revoke "$TOKEN_ID" >/dev/null
 
-      - name: Revoke exact runner credential
+      - name: Revoke exact workstation credential
         if: ${{ inputs.operation == 'revoke' }}
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
@@ -209,12 +234,14 @@ jobs:
         if: ${{ inputs.operation == 'mint' }}
         env:
           TOKEN_ID: ${{ steps.mint.outputs.token_id }}
+          CREDENTIAL_CLASS: ${{ inputs.credential_class }}
           RECIPIENT_PUBLIC_KEY_SHA256: ${{ inputs.recipient_public_key_sha256 }}
         run: |
           {
             echo "### Owned workstation runner credential sealed"
             echo
             echo "- Token ID: \`$TOKEN_ID\`"
+            echo "- Credential class: \`$CREDENTIAL_CLASS\`"
             echo "- Recipient public-key SHA-256: \`$RECIPIENT_PUBLIC_KEY_SHA256\`"
             echo "- Raw token printed or uploaded: \`false\`"
             echo "- Artifact retention: \`1 day\`"
