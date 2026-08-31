@@ -2,6 +2,10 @@ import type { Artifact, ArtifactKind } from "./artifacts.js";
 import type { ItemControlView } from "./item-control.js";
 import type { ActorInput } from "./schemas.js";
 import type {
+  DispatchWorkInputV1,
+  DispatchWorkResultV1,
+} from "./exact-dispatch-contracts.js";
+import type {
   Item,
   ItemEvent,
   ItemKind,
@@ -144,4 +148,5 @@ export interface WorkLedger {
   releaseWork(input: ClaimActionInput): Promise<Item>;
   recordEvent(input: RecordWorkEventInput): Promise<ItemEvent>;
   completeWork(input: CompleteWorkInput): Promise<Item>;
+  dispatchWork(input: DispatchWorkInputV1): Promise<DispatchWorkResultV1>;
 }

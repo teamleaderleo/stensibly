@@ -133,6 +133,7 @@ const policyInputs: readonly McpCapabilityPolicyInput[] = [
   readPolicy("list_continuation_inbox", optionalProject, "searchable"),
   writePolicy("attach_artifact", itemId, "additive", "bounded_write", "none", "hidden"),
   writePolicy("create_item", directProject, "additive"),
+  writePolicy("dispatch_work", directProject, "destructive"),
   writePolicy("claim_work", itemId, "destructive"),
   writePolicy("renew_claim", itemId, "destructive", "bounded_write", "none", "hidden"),
   writePolicy("handoff_work", itemId, "destructive"),

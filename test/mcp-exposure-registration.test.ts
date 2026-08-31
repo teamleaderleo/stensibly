@@ -18,6 +18,7 @@ const publishedDefaultNames = [
   "claim_work",
   "complete_work",
   "create_item",
+  "dispatch_work",
   "get_brief",
   "get_item",
   "get_project_attachment",
@@ -53,19 +54,19 @@ describe("trusted MCP exposure registration", () => {
       const explicitNames = await listToolNames(ledger, "full_internal");
       expect(canonicalNames(defaultNames)).toEqual([...fullManifest.tools]);
       expect(explicitNames).toEqual(defaultNames);
-      expect(defaultNames).toHaveLength(52);
+      expect(defaultNames).toHaveLength(53);
     } finally {
       store.close();
     }
   });
 
-  test("registers the reviewed 19-tool published_default surface only when explicitly requested", async () => {
+  test("registers the reviewed 20-tool published_default surface only when explicitly requested", async () => {
     const store = new StensiblyStore(":memory:");
     const ledger = withHostedMcpProviders(new SqliteWorkLedger(store));
     try {
       const plan = compileMcpExposureRegistrationPlan(ledger, "published_default");
       expect(plan.manifest.tools).toEqual([...publishedDefaultNames]);
-      expect(plan.manifest.tools).toHaveLength(19);
+      expect(plan.manifest.tools).toHaveLength(20);
       expect(plan.manifest.fingerprint).not.toBe(
         mcpToolManifestForLedger(ledger).fingerprint,
       );
@@ -102,7 +103,7 @@ describe("trusted MCP exposure registration", () => {
       expect(names).not.toContain("survey_workspace");
       expect(names).not.toContain("enrol_worker");
       expect(names.length).toBeGreaterThan(publishedDefaultNames.length);
-      expect(names.length).toBeLessThan(52);
+      expect(names.length).toBeLessThan(53);
     } finally {
       store.close();
     }

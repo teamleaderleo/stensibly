@@ -10,6 +10,7 @@ import { registerContinuationTools } from "./continuation-mcp.js";
 import { registerContextPacketTools } from "./context-mcp.js";
 import { registerGitHubIssueProviderTools } from "./github-issue-provider-mcp.js";
 import type { WorkLedger } from "./ledger.js";
+import { executionEnvelopeSchema } from "./execution-envelope-contracts.js";
 import {
   createMcpCapabilityRegistrationGuard,
 } from "./mcp-capability-policy.js";
@@ -223,6 +224,29 @@ function configureMcpServer(
       annotations: { destructiveHint: false, idempotentHint: false },
     },
     async (input) => asToolResult(() => ledger.createItem(input)),
+  );
+
+  server.registerTool(
+    "dispatch_work",
+    {
+      description: "Atomically claim one exact ready work generation and queue one runner-neutral run. Attach or record exact source/evidence references before dispatch; the selected runner profile owns machine-specific execution.",
+      inputSchema: {
+        project: projectSchema(),
+        itemId: idSchema(),
+        expectedClaimGeneration: z.number().int().min(0),
+        actor: actorSchema,
+        runnerType: z.string().trim().min(1).max(80),
+        runnerProfile: z.string().trim().min(1).max(240),
+        runnerProfileVersion: z.string().trim().min(1).max(240).nullable(),
+        executionEnvelope: executionEnvelopeSchema,
+        leaseSeconds: z.number().int().min(30).max(86_400).default(900),
+        maxAttempts: z.number().int().min(1).max(20).default(3),
+        retryBackoffSeconds: z.number().int().min(0).max(86_400).default(60),
+        idempotencyKey: z.string().trim().min(1).max(240),
+      },
+      annotations: { destructiveHint: true, idempotentHint: true },
+    },
+    async (input) => asToolResult(() => ledger.dispatchWork(input)),
   );
 
   server.registerTool(

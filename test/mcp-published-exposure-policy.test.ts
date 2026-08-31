@@ -7,6 +7,7 @@ const publishedDefault = [
   "claim_work",
   "complete_work",
   "create_item",
+  "dispatch_work",
   "get_brief",
   "get_item",
   "get_project_attachment",
@@ -77,8 +78,8 @@ test("curated ChatGPT exposure stays explicit without changing full capability c
   expect(core).toEqual(publishedDefault);
   expect(searchable).toEqual(deferredDiscovery);
   expect(hidden).toEqual(internalOrRunner);
-  expect([core.length, searchable.length, hidden.length]).toEqual([19, 12, 21]);
-  expect(mcpCapabilityPolicyRegistry.policies).toHaveLength(52);
+  expect([core.length, searchable.length, hidden.length]).toEqual([20, 12, 21]);
+  expect(mcpCapabilityPolicyRegistry.policies).toHaveLength(53);
 
   const published = compileMcpCapabilityExposureSelection(
     mcpCapabilityPolicyRegistry,
@@ -97,7 +98,7 @@ test("curated ChatGPT exposure stays explicit without changing full capability c
   expect(discoverable.toolNames).toEqual(
     [...publishedDefault, ...deferredDiscovery].sort(),
   );
-  expect(full.toolNames).toHaveLength(52);
+  expect(full.toolNames).toHaveLength(53);
   expect(full.toolNames).toEqual(
     [...publishedDefault, ...deferredDiscovery, ...internalOrRunner].sort(),
   );

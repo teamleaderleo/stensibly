@@ -45,7 +45,7 @@ describe("ChatGPT app published contract snapshot", () => {
         inputSchema: tool.inputSchema as Record<string, unknown>,
       })));
 
-      expect(listed.tools).toHaveLength(19);
+      expect(listed.tools).toHaveLength(20);
       expect(manifest.digest).toBe(snapshot.toolContractFingerprint);
     } finally {
       await client.close();

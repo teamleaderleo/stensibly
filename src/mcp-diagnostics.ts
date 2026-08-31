@@ -19,6 +19,7 @@ export const MCP_CORE_TOOL_NAMES = [
   "claim_work",
   "complete_work",
   "create_item",
+  "dispatch_work",
   "edit_continuation",
   "get_brief",
   "get_continuation",
@@ -67,23 +68,23 @@ export const MCP_CORE_TOOL_NAMES = [
 ] as const;
 
 export const MCP_GITHUB_TOOL_NAMES = [
-  ...MCP_CORE_TOOL_NAMES.slice(0, 18),
+  ...MCP_CORE_TOOL_NAMES.slice(0, 19),
   "github_call_tool",
-  ...MCP_CORE_TOOL_NAMES.slice(18),
+  ...MCP_CORE_TOOL_NAMES.slice(19),
 ] as const;
 
 export const MCP_ENROLMENT_TOOL_NAMES = [
-  ...MCP_CORE_TOOL_NAMES.slice(0, 6),
+  ...MCP_CORE_TOOL_NAMES.slice(0, 7),
   "enrol_worker",
-  ...MCP_CORE_TOOL_NAMES.slice(6),
+  ...MCP_CORE_TOOL_NAMES.slice(7),
 ] as const;
 
 export const MCP_TOOL_NAMES = [
-  ...MCP_CORE_TOOL_NAMES.slice(0, 6),
+  ...MCP_CORE_TOOL_NAMES.slice(0, 7),
   "enrol_worker",
-  ...MCP_CORE_TOOL_NAMES.slice(6, 18),
+  ...MCP_CORE_TOOL_NAMES.slice(7, 19),
   "github_call_tool",
-  ...MCP_CORE_TOOL_NAMES.slice(18),
+  ...MCP_CORE_TOOL_NAMES.slice(19),
 ] as const;
 
 export interface McpToolManifestIdentity {

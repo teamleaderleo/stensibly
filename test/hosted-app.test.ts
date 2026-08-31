@@ -83,7 +83,7 @@ describe("hosted gateway", () => {
       new SqliteWorkLedger(store),
       "published_default",
     );
-    expect(published.manifest.tools).toHaveLength(19);
+    expect(published.manifest.tools).toHaveLength(20);
 
     const initialized = await app.request("/mcp", {
       method: "POST",
@@ -117,7 +117,7 @@ describe("hosted gateway", () => {
     };
     const names = discovery.result?.tools?.map((tool) => tool.name) ?? [];
     expect([...names].sort()).toEqual([...published.manifest.tools].sort());
-    expect(names).toHaveLength(19);
+    expect(names).toHaveLength(20);
     expect(names).toContain("get_brief");
     expect(names).toContain("github_create_issue");
     expect(names).toContain("github_publish_change");
@@ -127,7 +127,7 @@ describe("hosted gateway", () => {
     expect(discovered.headers.get(MCP_TOOL_MANIFEST_FINGERPRINT_HEADER)).toBe(
       published.manifest.fingerprint,
     );
-    expect(discovered.headers.get(MCP_TOOL_COUNT_HEADER)).toBe("19");
+    expect(discovered.headers.get(MCP_TOOL_COUNT_HEADER)).toBe("20");
 
     const listed = await app.request("/mcp", {
       method: "POST",

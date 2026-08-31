@@ -9,6 +9,7 @@ import {
 } from "./completion-continuations.js";
 import { completeWork as completeFencedWork } from "./completion.js";
 import { installSqliteCompletionParity } from "./completion-parity.js";
+import { dispatchNextWork, ensureDispatchSchema } from "./dispatcher.js";
 import { getProjectBrief } from "./briefs.js";
 import {
   editContinuation,
@@ -32,6 +33,11 @@ import {
   type ProposeContinuationInput,
   type ResolveContinuationInput,
 } from "./continuations.js";
+import type {
+  DispatchWorkInputV1,
+  DispatchWorkResultV1,
+  ExactDispatchLedgerV1,
+} from "./exact-dispatch-contracts.js";
 import {
   readBoundedItemArtifacts,
   readBoundedItemEvents,
@@ -118,7 +124,8 @@ export class SqliteWorkLedger implements
   RunnerAdapterCommandLedger,
   RunnerAdapterCommandRecoveryLedger,
   ProjectAttachmentLedger,
-  OperationReceiptLedger
+  OperationReceiptLedger,
+  ExactDispatchLedgerV1
 {
   constructor(readonly store: StensiblyStore) {
     installSqliteCompletionParity(store);
@@ -390,6 +397,56 @@ export class SqliteWorkLedger implements
   async claimRunnerWork(input: ClaimRunnerWorkInput) {
     reconcileStaleRunItems(this.store);
     return claimRunnerWork(this.store, input);
+  }
+
+  async dispatchWork(input: DispatchWorkInputV1): Promise<DispatchWorkResultV1> {
+    reconcileStaleRunItems(this.store);
+    ensureDispatchSchema(this.store);
+    const replay = this.store.db.query<{ exists_flag: number }, [string]>(`
+      SELECT 1 AS exists_flag
+      FROM dispatch_commands
+      WHERE idempotency_key = ?1
+      LIMIT 1
+    `).get(input.idempotencyKey) !== null;
+    if (!replay) {
+      const current = this.store.getItem(input.itemId);
+      if (
+        current.project !== input.project
+        || current.status !== "ready"
+        || current.claimGeneration !== input.expectedClaimGeneration
+      ) {
+        throw new Error("Exact dispatch item generation is not currently eligible");
+      }
+    }
+    const dispatched = dispatchNextWork(this.store, {
+      actor: input.actor,
+      runnerType: input.runnerType,
+      runnerProfile: input.runnerProfile,
+      runnerProfileVersion: input.runnerProfileVersion,
+      project: input.project,
+      itemId: input.itemId,
+      leaseSeconds: input.leaseSeconds,
+      maxAttempts: input.maxAttempts,
+      retryBackoffSeconds: input.retryBackoffSeconds,
+      idempotencyKey: input.idempotencyKey,
+      executionEnvelope: input.executionEnvelope,
+    });
+    if (
+      !dispatched
+      || dispatched.item.id !== input.itemId
+      || dispatched.item.project !== input.project
+      || dispatched.item.claimGeneration !== input.expectedClaimGeneration + 1
+    ) {
+      throw new Error("Exact dispatch result changed requested work identity");
+    }
+    return {
+      status: "dispatched",
+      replay,
+      expectedClaimGeneration: input.expectedClaimGeneration,
+      claimedGeneration: dispatched.item.claimGeneration,
+      item: dispatched.item,
+      run: dispatched.run,
+    };
   }
 
   async getRunnerAdapterCommand(input: GetRunnerAdapterCommandInput) {
