@@ -15,7 +15,7 @@ import {
   type McpToolContract,
 } from "./mcp-release-manifest.js";
 
-export const MCP_PUBLISHED_CONTRACT_VERSION = 2;
+export const MCP_PUBLISHED_CONTRACT_VERSION = 3;
 
 export interface McpPublishedContract {
   readonly version: typeof MCP_PUBLISHED_CONTRACT_VERSION;
@@ -72,9 +72,17 @@ export function compileMcpPublishedContract(
     }
     return {
       name: sourceTool.name,
+      ...(sourceTool.title === undefined ? {} : { title: sourceTool.title }),
       description: sourceTool.description,
       annotations: compilePublishedAnnotations(sourceTool.annotations, policy),
       inputSchema: sourceTool.inputSchema,
+      ...(sourceTool.outputSchema === undefined
+        ? {}
+        : { outputSchema: sourceTool.outputSchema }),
+      ...(sourceTool.execution === undefined
+        ? {}
+        : { execution: sourceTool.execution }),
+      ...(sourceTool._meta === undefined ? {} : { _meta: sourceTool._meta }),
     };
   });
 

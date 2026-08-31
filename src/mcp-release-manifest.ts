@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { compareCodeUnits } from "./canonical-json.js";
 
-export const MCP_RELEASE_MANIFEST_SCHEMA_VERSION = 1;
+export const MCP_RELEASE_MANIFEST_SCHEMA_VERSION = 2;
 
 const lowerBoundKeywords = [
   "minimum",
@@ -21,16 +21,24 @@ type NumericBoundDirection = "lower" | "upper";
 
 export interface McpToolContract {
   name: string;
+  title?: string;
   description?: string;
   annotations?: Record<string, unknown>;
   inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  execution?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
 }
 
 export interface CanonicalMcpToolContract {
   name: string;
+  title?: string;
   description: string;
   annotations: Record<string, unknown>;
   inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  execution?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
 }
 
 export interface McpReleaseManifest {
@@ -77,11 +85,28 @@ export function createMcpReleaseManifest(
     if (!isRecord(tool.inputSchema)) {
       throw new Error(`MCP tool ${name} has no object input schema`);
     }
+    for (const [label, value] of [
+      ["output schema", tool.outputSchema],
+      ["execution metadata", tool.execution],
+      ["_meta", tool._meta],
+    ] as const) {
+      if (value !== undefined && !isRecord(value)) {
+        throw new Error(`MCP tool ${name} has invalid ${label}`);
+      }
+    }
     return {
       name,
+      ...(tool.title === undefined ? {} : { title: normalizeTitle(tool.title) }),
       description: normalizeDescription(tool.description),
       annotations: canonicalRecord(tool.annotations ?? {}),
       inputSchema: canonicalSchema(tool.inputSchema),
+      ...(tool.outputSchema === undefined
+        ? {}
+        : { outputSchema: canonicalSchema(tool.outputSchema) }),
+      ...(tool.execution === undefined
+        ? {}
+        : { execution: canonicalRecord(tool.execution) }),
+      ...(tool._meta === undefined ? {} : { _meta: canonicalRecord(tool._meta) }),
     };
   }).sort((left, right) => compareCodeUnits(left.name, right.name));
 
@@ -128,6 +153,7 @@ export function diffMcpReleaseManifests(
 
     const reasons: string[] = [];
     let breaking = false;
+    if (prior.title !== next.title) reasons.push("title changed");
     if (prior.description !== next.description) reasons.push("description changed");
     if (canonicalJson(prior.annotations) !== canonicalJson(next.annotations)) {
       reasons.push("annotations changed");
@@ -136,6 +162,15 @@ export function diffMcpReleaseManifests(
       const compatibility = compareInputSchemas(prior.inputSchema, next.inputSchema);
       reasons.push(...compatibility.reasons);
       breaking ||= !compatibility.compatible;
+    }
+    if (canonicalJson(prior.outputSchema) !== canonicalJson(next.outputSchema)) {
+      reasons.push("output schema changed");
+    }
+    if (canonicalJson(prior.execution) !== canonicalJson(next.execution)) {
+      reasons.push("execution metadata changed");
+    }
+    if (canonicalJson(prior._meta) !== canonicalJson(next._meta)) {
+      reasons.push("_meta changed");
     }
     changes.push({
       name,
@@ -414,6 +449,12 @@ function normalizeToolName(value: string): string {
 
 function normalizeDescription(value: string | undefined): string {
   return (value ?? "").replace(/\r\n?/g, "\n").trim();
+}
+
+function normalizeTitle(value: string): string {
+  const title = value.replace(/\s+/g, " ").trim();
+  if (!title) throw new Error("MCP tool title cannot be empty");
+  return title;
 }
 
 function schemaTypes(value: unknown): Set<string> | undefined {

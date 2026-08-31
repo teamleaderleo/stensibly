@@ -4,10 +4,14 @@ import { describe, expect, test } from "bun:test";
 import { mcpCapabilityPolicyRegistry } from "../src/mcp-capability-policy.ts";
 import { compileMcpCapabilityExposureSelection } from "../src/mcp-exposure-selection.ts";
 import { MCP_TOOL_MANIFEST_VERSION } from "../src/mcp-diagnostics.ts";
+import { MCP_RELEASE_MANIFEST_SCHEMA_VERSION } from "../src/mcp-release-manifest.ts";
+import { MCP_PUBLISHED_CONTRACT_VERSION } from "../src/mcp-published-contract.ts";
 
 interface ChatGptAppActionSnapshot {
   snapshotVersion: number;
   manifestVersion: number;
+  toolContractVersion: number;
+  reviewedMetadataVersion: number;
   toolCount: number;
   toolManifestFingerprint: string;
   toolContractFingerprint: string;
@@ -41,8 +45,10 @@ describe("ChatGPT app action snapshot", () => {
       }))
       .digest("hex")}`;
 
-    expect(snapshot.snapshotVersion).toBe(23);
+    expect(snapshot.snapshotVersion).toBe(24);
     expect(snapshot.manifestVersion).toBe(MCP_TOOL_MANIFEST_VERSION);
+    expect(snapshot.toolContractVersion).toBe(MCP_RELEASE_MANIFEST_SCHEMA_VERSION);
+    expect(snapshot.reviewedMetadataVersion).toBe(MCP_PUBLISHED_CONTRACT_VERSION);
     expect(snapshot.toolCount).toBe(21);
     expect(snapshot.toolCount).toBe(selection.toolNames.length);
     expect(snapshot.toolManifestFingerprint).toBe(expectedManifestFingerprint);

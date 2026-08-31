@@ -84,7 +84,7 @@ export function createMcpExposureRegistrationFilter(
           ...registrationArgs: unknown[]
         ) => unknown;
         const registrationArgs = canonicalizeSubmissionAnnotations
-          ? withCanonicalSubmissionAnnotations(toolName, policy, args)
+          ? withCanonicalSubmissionMetadata(toolName, policy, args)
           : args;
         return Reflect.apply(registerTool, target, [toolName, ...registrationArgs]);
       };
@@ -109,7 +109,7 @@ export function createMcpExposureRegistrationFilter(
   };
 }
 
-function withCanonicalSubmissionAnnotations(
+function withCanonicalSubmissionMetadata(
   toolName: string,
   policy: ReturnType<typeof requireMcpCapabilityPolicy>,
   args: readonly unknown[],
@@ -134,9 +134,14 @@ function withCanonicalSubmissionAnnotations(
       );
     }
   }
+  const title = publicToolTitles[toolName];
+  if (!title) {
+    throw new RangeError(`MCP publication title is missing for ${toolName}`);
+  }
   return [
     {
       ...config,
+      title,
       annotations: {
         ...existing,
         ...canonical,
@@ -145,6 +150,30 @@ function withCanonicalSubmissionAnnotations(
     ...args.slice(1),
   ];
 }
+
+const publicToolTitles: Readonly<Record<string, string>> = Object.freeze({
+  attach_artifact: "Attach Artifact",
+  block_work: "Block Work",
+  claim_work: "Claim Work",
+  complete_work: "Complete Work",
+  create_item: "Create Item",
+  dispatch_work: "Dispatch Work",
+  get_brief: "Get Project Brief",
+  get_project_attachment: "Get Project Attachment",
+  get_runner_context: "Get Runner Context",
+  github_add_issue_comment: "Add GitHub Issue Comment",
+  github_ci_diagnose: "Diagnose GitHub CI",
+  github_create_issue: "Create GitHub Issue",
+  github_get_issue: "Get GitHub Issue",
+  github_land_pr: "Land GitHub Pull Request",
+  github_publish_change: "Publish GitHub Change",
+  github_repo_health: "Check GitHub Repository Health",
+  github_search_issues: "Search GitHub Issues",
+  github_update_issue: "Update GitHub Issue",
+  handoff_work: "Hand Off Work",
+  list_work: "List Work",
+  unblock_work: "Unblock Work",
+});
 
 function toolManifestIdentity(tools: readonly string[]): McpToolManifestIdentity {
   const canonicalTools = Object.freeze([...tools]);
