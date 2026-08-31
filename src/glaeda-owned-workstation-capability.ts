@@ -10,7 +10,8 @@ const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const OID_PATTERN = /^[a-f0-9]{40}$/u;
 const NODE_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/u;
 const MAX_SNAPSHOT_BYTES = 4_096;
-const MAX_VALIDITY_MS = 300_000;
+const DEFAULT_MAX_VALIDITY_MS = 300_000;
+const VERIFY_REQUIRED_MAX_VALIDITY_MS = 1_800_000;
 const MAX_FUTURE_SKEW_MS = 30_000;
 
 export interface GlaedaPythonRuntimeEvidenceV1 {
@@ -113,12 +114,15 @@ export function admitGlaedaCapabilityArtifactV1(
   const observedAt = timestamp(snapshot.observedAt, "capability observation");
   const expiresAt = timestamp(snapshot.expiresAt, "capability expiry");
   const now = target.now.getTime();
+  const maxValidity = target.profile.id === "verify-required/v1"
+    ? VERIFY_REQUIRED_MAX_VALIDITY_MS
+    : DEFAULT_MAX_VALIDITY_MS;
   if (!Number.isFinite(now)) throw new Error("Glaeda capability admission time is invalid");
   if (
     observedAt.ms > now + MAX_FUTURE_SKEW_MS
     || expiresAt.ms <= now
     || expiresAt.ms <= observedAt.ms
-    || expiresAt.ms - observedAt.ms > MAX_VALIDITY_MS
+    || expiresAt.ms - observedAt.ms > maxValidity
   ) throw new Error("Glaeda capability snapshot is stale or has an invalid validity window");
 
   const admission = exactRecord(snapshot.admission, [

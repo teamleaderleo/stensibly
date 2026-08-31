@@ -63,7 +63,36 @@ describe("Glaeda verify-focused one-shot runner", () => {
       runnerProfileVersion: sha("a"),
       project: "glaeda",
       runId: "run-required-1",
+      leaseSeconds: 1500,
     });
+  });
+
+  test("refuses a verify-required lease that cannot cover execution and settlement", async () => {
+    const fixture = files();
+    const runtime = fingerprintGlaedaVerifyFocusedRuntimeV1(fixture.script, fixture.implementation);
+    const client = new RunnerMcpHttpClient({
+      endpoint: "http://localhost/runner/mcp",
+      token: `stn.tok_${"1".repeat(32)}.${"A".repeat(43)}`,
+      fetch: async () => { throw new Error("runner must not be called"); },
+    });
+    await expect(executeGlaedaVerifyRequiredRunV1({
+      runner: client,
+      project: "glaeda",
+      runId: "run-required-short-lease",
+      profileGeneration: sha("a"),
+      pythonInterpreterPath: fixture.python,
+      verifyScriptPath: fixture.script,
+      verifyImplementationPath: fixture.implementation,
+      repositoryRoot: fixture.repository,
+      stateRoot: fixture.state,
+      cargoRoot: fixture.cargo,
+      rustupRoot: fixture.rustup,
+      node: {
+        id: "big-red", generation: 1, osClass: "linux", architectureClass: "x86_64",
+        glaedaRuntimeSha256: runtime,
+      },
+      leaseSeconds: 1200,
+    })).rejects.toThrow(/outlive its physical deadline/);
   });
 
   test("recovers a lost settlement response from the Glaeda receipt without reexecution", async () => {

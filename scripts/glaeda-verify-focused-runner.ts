@@ -26,7 +26,7 @@ const { values } = parseArgs({
     "node-id": { type: "string", default: "big-red" },
     "node-generation": { type: "string" },
     "glaeda-runtime": { type: "string" },
-    "lease-seconds": { type: "string", default: "900" },
+    "lease-seconds": { type: "string" },
     help: { type: "boolean", short: "h" },
   },
   strict: true,
@@ -67,7 +67,9 @@ try {
       architectureClass: "x86_64",
       glaedaRuntimeSha256: required(values["glaeda-runtime"], "--glaeda-runtime"),
     },
-    leaseSeconds: positiveInteger(values["lease-seconds"], "--lease-seconds"),
+    ...(values["lease-seconds"] === undefined
+      ? {}
+      : { leaseSeconds: positiveInteger(values["lease-seconds"], "--lease-seconds") }),
   });
   console.log(JSON.stringify({ schema: "glaeda-verify-focused-run/v1", ...result }));
 } catch (error) {
