@@ -7,7 +7,7 @@ import type {
   McpOAuthService,
 } from "../src/mcp-oauth-service.ts";
 import { createMcpOAuth } from "../src/mcp-oauth.ts";
-import { consentPage } from "../src/mcp-oauth-protocol.ts";
+import { consentPage, oauthConsentSecurityPolicy } from "../src/mcp-oauth-protocol.ts";
 
 const issuer = "https://api.stensibly.com";
 const resource = `${issuer}/mcp`;
@@ -96,7 +96,10 @@ describe("MCP OAuth hardening", () => {
 
     const script = await app.request("/oauth/consent.js");
     expect(script.status).toBe(404);
-    expect(script.headers.get("content-security-policy")).not.toContain("script-src");
+    expect(oauthConsentSecurityPolicy("http://127.0.0.1:54321/callback"))
+      .toContain("form-action 'self' http://127.0.0.1:54321");
+    expect(oauthConsentSecurityPolicy("https://chatgpt.com/connector/oauth/callback"))
+      .toContain("form-action 'self' https://chatgpt.com");
   });
 
   test("redirects scope errors only after validating the client redirect", async () => {
