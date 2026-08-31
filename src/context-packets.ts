@@ -74,6 +74,9 @@ const sensitiveValuePatterns = [
   /\b(?:ghp|github_pat|sk|xox[baprs])[-_][A-Za-z0-9_-]{12,}\b/g,
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g,
 ];
+const exactRunnerArtifactMetadataDepth = new Map([
+  ["glaeda-owned-workstation-capability-artifact/v1", 8],
+]);
 
 export async function getRunnerContextPacket(
   ledger: WorkLedger,
@@ -247,9 +250,14 @@ function normalizeArtifact(artifact: Artifact): RunnerContextArtifact {
     label: redactText(clip(artifact.label, 240)),
     uri: redactText(clip(artifact.uri, 2_000)),
     mimeType: artifact.mimeType,
-    metadata: sanitizeRecord(artifact.metadata),
+    metadata: sanitizeArtifactMetadata(artifact.metadata),
     createdAt: artifact.createdAt,
   };
+}
+
+function sanitizeArtifactMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  const schema = typeof metadata.schema === "string" ? metadata.schema : "";
+  return sanitizeRecord(metadata, exactRunnerArtifactMetadataDepth.get(schema) ?? 4);
 }
 
 function normalizeRecords(records: unknown[] | undefined, limit: number): RunnerContextRecord[] {
@@ -270,25 +278,29 @@ function normalizeRecords(records: unknown[] | undefined, limit: number): Runner
     });
 }
 
-function sanitizeRecord(record: Record<string, unknown>): Record<string, unknown> {
+function sanitizeRecord(record: Record<string, unknown>, maximumDepth = 4): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(record).map(([key, value]) => [
       key,
-      sensitiveKeyPattern.test(key) ? "[REDACTED]" : sanitizeValue(value, 0),
+      sensitiveKeyPattern.test(key) ? "[REDACTED]" : sanitizeValue(value, 0, maximumDepth),
     ]),
   );
 }
 
-function sanitizeValue(value: unknown, depth: number): unknown {
-  if (depth >= 4) return "[TRUNCATED]";
+function sanitizeValue(value: unknown, depth: number, maximumDepth: number): unknown {
+  if (depth >= maximumDepth) return "[TRUNCATED]";
   if (typeof value === "string") return redactText(clip(value, 1_000));
   if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
-  if (Array.isArray(value)) return value.slice(0, 20).map((entry) => sanitizeValue(entry, depth + 1));
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((entry) => sanitizeValue(entry, depth + 1, maximumDepth));
+  }
   if (isRecord(value)) {
     return Object.fromEntries(
       Object.entries(value).slice(0, 50).map(([key, entry]) => [
         key,
-        sensitiveKeyPattern.test(key) ? "[REDACTED]" : sanitizeValue(entry, depth + 1),
+        sensitiveKeyPattern.test(key)
+          ? "[REDACTED]"
+          : sanitizeValue(entry, depth + 1, maximumDepth),
       ]),
     );
   }
