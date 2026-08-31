@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { consentPage } from "../src/mcp-oauth-protocol.ts";
+import { MCP_OAUTH_CONSENT_SCRIPT, consentPage } from "../src/mcp-oauth-protocol.ts";
 
 const html = consentPage({
   clientName: "Codex",
@@ -10,16 +10,16 @@ const html = consentPage({
   signature: "signed-request-signature",
 });
 
-test("submits each OAuth consent decision with one native activation", async ({ page }) => {
+test("submits each OAuth consent decision with one link activation", async ({ page }) => {
   await installConsentCapture(page);
-  await page.getByRole("button", { name: "Authorise" }).click();
+  await page.getByRole("link", { name: "Connect Codex" }).click();
   await expect(page.locator("body")).toHaveAttribute(
     "data-consent-submission",
     "approve:signed-request-payload:signed-request-signature",
   );
 
   await installConsentCapture(page);
-  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("link", { name: "Not now" }).click();
   await expect(page.locator("body")).toHaveAttribute(
     "data-consent-submission",
     "deny:signed-request-payload:signed-request-signature",
@@ -29,7 +29,7 @@ test("submits each OAuth consent decision with one native activation", async ({ 
 test("submits OAuth approval from one keyboard activation", async ({ page }) => {
   await installConsentCapture(page);
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", { name: "Authorise" })).toBeFocused();
+  await expect(page.getByRole("link", { name: "Connect Codex" })).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.locator("body")).toHaveAttribute(
     "data-consent-submission",
@@ -55,4 +55,5 @@ async function installConsentCapture(page: Page): Promise<void> {
       });
     }
   });
+  await page.addScriptTag({ content: MCP_OAUTH_CONSENT_SCRIPT });
 }

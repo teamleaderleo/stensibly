@@ -283,6 +283,23 @@ export function parseScopeArray(values: unknown[]): McpOAuthScope[] {
   return OAUTH_SCOPES.filter((scope) => scopes.includes(scope));
 }
 
+export const MCP_OAUTH_CONSENT_SCRIPT = `(() => {
+  const controls = document.querySelectorAll("[data-consent-action]");
+  for (const control of controls) {
+    control.addEventListener("click", (event) => {
+      if (!(control instanceof HTMLAnchorElement)) return;
+      event.preventDefault();
+      if (control.getAttribute("aria-disabled") === "true") return;
+      const decision = control.dataset.consentAction;
+      const form = decision ? document.getElementById("consent-" + decision) : null;
+      if (!(form instanceof HTMLFormElement)) return;
+      for (const candidate of controls) candidate.setAttribute("aria-disabled", "true");
+      document.body.dataset.consentState = "submitting";
+      form.requestSubmit();
+    });
+  }
+})();`;
+
 export function consentPage(input: {
   clientName: string;
   accountName: string;
@@ -291,11 +308,13 @@ export function consentPage(input: {
   payload: string;
   signature: string;
 }): string {
+  const clientName = escapeHtml(input.clientName);
+  const accountName = escapeHtml(input.accountName);
   const scopeItems = input.scopes
     .filter((scope) => scope !== "offline_access")
-    .map((scope) => `<li>${scope === "write"
-      ? "Read and modify authorised Stensibly work"
-      : "Read authorised Stensibly work"}</li>`)
+    .map((scope) => `<li><span class="permission-mark" aria-hidden="true">✓</span><span>${scope === "write"
+      ? "Read and update authorised work"
+      : "Read authorised work"}</span></li>`)
     .join("");
   const projectText = input.projects === null
     ? "All projects in your current workspace"
@@ -303,7 +322,7 @@ export function consentPage(input: {
       ? `Projects: ${input.projects.map(escapeHtml).join(", ")}`
       : "No projects";
   const offlineText = input.scopes.includes("offline_access")
-    ? '<p class="muted">A refresh token keeps the connection active until it is revoked or expires.</p>'
+    ? '<div class="detail"><span>Session</span><strong>Stays connected until revoked or expired</strong></div>'
     : "";
   const consentFields = (decision: "approve" | "deny") =>
     `<input type="hidden" name="request" value="${escapeHtml(input.payload)}">`
@@ -311,10 +330,12 @@ export function consentPage(input: {
     + `<input type="hidden" name="decision" value="${decision}">`;
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Authorise Stensibly</title><style>
-body{font:16px/1.5 system-ui,sans-serif;max-width:620px;margin:48px auto;padding:0 20px;color:#171717}main{border:1px solid #ddd;border-radius:16px;padding:28px}.consent-control{font:inherit;min-height:44px;padding:10px 16px;border-radius:10px;border:1px solid #aaa;cursor:pointer;touch-action:manipulation}.approve{background:#171717;color:white;border-color:#171717}.actions{display:flex;gap:10px;margin-top:24px}.actions form{margin:0}.muted{color:#666}</style></head>
-<body><main><h1>Authorise ${escapeHtml(input.clientName)}</h1><p>Signed in as <strong>${escapeHtml(input.accountName)}</strong>.</p><p>This client is requesting:</p><ul>${scopeItems}</ul><p class="muted">${escapeHtml(projectText)}</p>${offlineText}
-<div class="actions"><form method="post" action="/oauth/consent">${consentFields("approve")}<input class="consent-control approve" type="submit" value="Authorise"></form><form method="post" action="/oauth/consent">${consentFields("deny")}<input class="consent-control" type="submit" value="Cancel"></form></div></main></body></html>`;
+<title>Connect ${clientName} · Stensibly</title><style>
+:root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0b0c0e;color:#f5f6f7}*{box-sizing:border-box}body{min-height:100vh;margin:0;display:grid;place-items:center;padding:24px;background:#0b0c0e}.shell{width:min(100%,600px);border:1px solid #2b2e31;border-top-color:rgba(216,255,95,.45);border-radius:24px;padding:32px;background:rgba(18,20,22,.97);box-shadow:0 24px 80px rgba(0,0,0,.38)}.brand{display:flex;align-items:center;gap:10px;margin-bottom:32px;color:#d8ff5f;font-size:.78rem;font-weight:800;letter-spacing:.13em;text-transform:uppercase}.brand-mark{display:grid;place-items:center;width:28px;height:28px;border:1px solid rgba(216,255,95,.45);border-radius:8px;background:rgba(216,255,95,.08);font-size:.8rem}h1{margin:0;font-size:clamp(2rem,7vw,3rem);line-height:1.02;letter-spacing:-.045em}#consent-summary{margin:14px 0 0;color:#a9adb2;font-size:1.04rem;line-height:1.55}.identity{color:#f5f6f7;font-weight:700}.section-label{margin:30px 0 10px;color:#777d84;font-size:.7rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.permissions{display:grid;gap:8px;margin:0;padding:0;list-style:none}.permissions li,.detail{display:flex;align-items:center;gap:12px;min-height:48px;padding:12px 14px;border:1px solid #2a2d31;border-radius:12px;background:#151719}.permission-mark{display:grid;place-items:center;flex:0 0 24px;height:24px;border-radius:50%;background:#d8ff5f;color:#111;font-size:.76rem;font-weight:900}.details{display:grid;gap:8px}.detail{justify-content:space-between;align-items:flex-start}.detail span{color:#7f858b;font-size:.82rem}.detail strong{max-width:68%;text-align:right;font-size:.87rem;font-weight:650}.actions{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;margin-top:28px}.consent-control{display:flex;align-items:center;justify-content:center;min-height:52px;padding:12px 18px;border:1px solid #34383c;border-radius:13px;color:#d7dadd;font:inherit;font-weight:750;text-decoration:none;cursor:pointer;touch-action:manipulation;transition:transform .12s ease,border-color .12s ease,background .12s ease}.consent-control:hover{border-color:#5b6168;background:#1c1f22}.consent-control:focus-visible{outline:3px solid rgba(216,255,95,.34);outline-offset:3px}.consent-control:active{transform:translateY(1px)}.consent-control[aria-disabled="true"]{pointer-events:none;opacity:.62}.approve{border-color:#d8ff5f;background:#d8ff5f;color:#10120d}.approve:hover{border-color:#e4ff91;background:#e4ff91}.fallback-form{display:none}.native-fallback{width:100%}.fine-print{margin:18px 0 0;color:#686e74;font-size:.78rem;line-height:1.45}@media(max-width:540px){body{padding:14px}.shell{padding:24px;border-radius:19px}.brand{margin-bottom:24px}.actions{grid-template-columns:1fr}.detail{display:grid}.detail strong{max-width:none;text-align:left}}
+</style><script src="/oauth/consent.js" defer></script></head>
+<body><main class="shell"><div class="brand"><span class="brand-mark" aria-hidden="true">S</span><span>Stensibly</span></div><h1>Connect ${clientName}</h1><p id="consent-summary">Continue as <span class="identity">${accountName}</span> and choose exactly what ${clientName} may do.</p><p class="section-label">Access requested</p><ul class="permissions">${scopeItems}</ul><p class="section-label">Boundary</p><div class="details"><div class="detail"><span>Workspace</span><strong>${escapeHtml(projectText)}</strong></div>${offlineText}</div>
+<div class="actions js-actions"><a class="consent-control approve" href="#consent-approve" data-consent-action="approve" aria-describedby="consent-summary">Connect ${clientName}</a><a class="consent-control" href="#consent-deny" data-consent-action="deny">Not now</a></div><p class="fine-print">Stensibly will return you to ${clientName} after this decision.</p>
+<form id="consent-approve" class="fallback-form" method="post" action="/oauth/consent">${consentFields("approve")}<input class="consent-control approve native-fallback" type="submit" value="Connect ${clientName}"></form><form id="consent-deny" class="fallback-form" method="post" action="/oauth/consent">${consentFields("deny")}<input class="consent-control native-fallback" type="submit" value="Not now"></form><noscript><style>.js-actions{display:none}.fallback-form{display:block;margin-top:10px}</style><p class="fine-print">JavaScript is off. Use a button below to continue.</p></noscript></main></body></html>`;
 }
 
 export function redirectAuthorizationError(
