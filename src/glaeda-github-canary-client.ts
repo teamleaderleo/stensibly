@@ -47,6 +47,28 @@ export type GlaedaCanaryProcessV1 = (input: {
   timeoutSeconds: number;
 }) => Promise<GlaedaCanaryProcessResultV1>;
 
+/**
+ * Dogfood-only fault boundary: allow the physical consume to finish, then hide its successful
+ * response once. A fresh runner process must reconcile the immutable result and may not redispatch.
+ */
+export function loseFirstSuccessfulConsumeResponseV1(
+  process: GlaedaCanaryProcessV1 = runGlaedaCanaryProcessV1,
+): GlaedaCanaryProcessV1 {
+  let lost = false;
+  return async (input) => {
+    const result = await process(input);
+    if (!lost && input.action === "consume-one" && result.exitCode === 0) {
+      lost = true;
+      return {
+        exitCode: 75,
+        stdout: "",
+        stderr: "simulated response loss after successful physical result publication",
+      };
+    }
+    return result;
+  };
+}
+
 export class GlaedaGitHubCanaryClientV1 implements GlaedaWorkstationClientV1 {
   readonly #scriptPath: string;
   readonly #target: GlaedaGitHubCanaryTargetV1;

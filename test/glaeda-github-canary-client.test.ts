@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   GlaedaGitHubCanaryClientV1,
+  loseFirstSuccessfulConsumeResponseV1,
   type GlaedaCanaryProcessV1,
 } from "../src/glaeda-github-canary-client.ts";
 import type { GlaedaWorkstationCommandV1 } from "../src/glaeda-workstation-contracts.ts";
@@ -132,6 +133,30 @@ describe("Glaeda GitHub canary workstation client", () => {
       }),
     });
     await expect(client.check(command())).rejects.toThrow(/exact workstation command/);
+  });
+
+  test("can hide one successful physical consume response for fresh-process recovery dogfood", async () => {
+    const calls: string[] = [];
+    const base: GlaedaCanaryProcessV1 = async (input) => {
+      calls.push(input.action);
+      return { exitCode: 0, stdout: "published", stderr: "" };
+    };
+    const fault = loseFirstSuccessfulConsumeResponseV1(base);
+    const input = {
+      scriptPath: "/opt/glaeda-dispatch/big_red_canary.py",
+      action: "consume-one" as const,
+      requestId,
+      requestCommitOid,
+      timeoutSeconds: 60,
+    };
+
+    expect(await fault(input)).toEqual({
+      exitCode: 75,
+      stdout: "",
+      stderr: "simulated response loss after successful physical result publication",
+    });
+    expect(await fault(input)).toEqual({ exitCode: 0, stdout: "published", stderr: "" });
+    expect(calls).toEqual(["consume-one", "consume-one"]);
   });
 });
 
