@@ -204,17 +204,39 @@ function readToolContract(value: unknown, index: number): McpToolContract {
   if (value.description !== undefined && typeof value.description !== "string") {
     throw new Error(`MCP tools/list tool ${index + 1} has an invalid description`);
   }
+  if (value.title !== undefined && typeof value.title !== "string") {
+    throw new Error(`MCP tools/list tool ${index + 1} has an invalid title`);
+  }
   if (value.annotations !== undefined && !isRecord(value.annotations)) {
     throw new Error(`MCP tools/list tool ${index + 1} has invalid annotations`);
+  }
+  for (const [label, metadata] of [
+    ["output schema", value.outputSchema],
+    ["execution metadata", value.execution],
+    ["_meta", value._meta],
+  ] as const) {
+    if (metadata !== undefined && !isRecord(metadata)) {
+      throw new Error(`MCP tools/list tool ${index + 1} has invalid ${label}`);
+    }
   }
 
   return {
     name: value.name,
+    ...(value.title === undefined ? {} : { title: value.title as string }),
     ...(value.description === undefined ? {} : { description: value.description as string }),
     ...(value.annotations === undefined
       ? {}
       : { annotations: value.annotations as Record<string, unknown> }),
     inputSchema: value.inputSchema,
+    ...(value.outputSchema === undefined
+      ? {}
+      : { outputSchema: value.outputSchema as Record<string, unknown> }),
+    ...(value.execution === undefined
+      ? {}
+      : { execution: value.execution as Record<string, unknown> }),
+    ...(value._meta === undefined
+      ? {}
+      : { _meta: value._meta as Record<string, unknown> }),
   };
 }
 

@@ -7,8 +7,8 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 Normal hosted ChatGPT publication uses the reviewed **`published_default`** profile with **21** outcome-level MCP tools. The complete current list lives in [`docs/chatgpt-app-actions.json`](chatgpt-app-actions.json), which is the release receipt and canonical owner for the published action set.
 
 ```text
-reviewed metadata:                sha256:1cb721e6259f91c04bee0726a732af72c40bd0d982b680309baa8f865c3ad3b1
-published ChatGPT tool contract:  sha256:e7b8d61bb4339b1b45dc5bb244291555b18eb0e2240996dea12f8a8c1c76589a
+reviewed metadata:                sha256:42869e8662788716cc7083481c187eed993804472fa5d5e8460ccdfdaa3b0793
+published ChatGPT tool contract:  sha256:05286477065988eea49d07e66b6513eea6df1daa1201d3b4e86c3505d8569a23
 server instructions:              sha256:4bf979bbccbc647d41e5272cfb48890b62e27f12aeefbe060dec9ca213174832
 names-only diagnostic:            sha256:91919251f55e23b57292b2eb470bedfb8d86080da8a56c1df97641de9aec18b4
 ```
@@ -17,7 +17,7 @@ The public profile keeps frequent work coordination, exact runner-neutral dispat
 
 The broader **`full_internal`** profile remains available to explicit internal/admin clients. It retains long-tail provider discovery, receipts, worker enrolment, continuation machinery, low-level repository primitives, and recovery operations. Public visibility and backend capability stay separate.
 
-Stensibly dogfood supports the **latest reviewed metadata only**. The Plugins Directory keeps approved MCP metadata as a frozen version, so every change to a published tool name, description, annotation, input schema, or server instruction requires a new draft version, tool scan, review, approval, and publication. Compatible server-only result changes can deploy without a new directory version.
+Stensibly dogfood supports the **latest reviewed metadata only**. The Plugins Directory keeps approved MCP metadata as a frozen version, so every change to a published tool name, title, description, annotation, input or output schema, execution metadata, `_meta`/security/UI binding, or server instruction requires a new draft version, tool scan, review, approval, and publication. Compatible server-only result changes can deploy without a new directory version.
 
 Before a dogfood run:
 
@@ -140,7 +140,8 @@ Remove credentials, cookies, OAuth codes, tokens, and private project payloads b
 - `published_default` is the normal ChatGPT profile;
 - `full_internal` stays available for explicit internal/admin use;
 - public visibility changes rotate the names-only manifest identity;
-- public name/description/annotation/input-schema changes rotate the full contract identity;
+- public name/title/description/annotation/input-schema/output-schema/execution/`_meta` changes rotate the full tool-contract identity;
+- server-instruction changes rotate the reviewed-metadata identity even when the tool contract is unchanged;
 - any public contract change enters the refresh/rescan/recreation flow before dogfood;
 - the representative fresh-connection proof passes before directory submission;
 - historical action snapshots remain available through Git history instead of becoming supported live modes.

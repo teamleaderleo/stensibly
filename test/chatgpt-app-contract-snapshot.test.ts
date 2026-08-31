@@ -38,11 +38,21 @@ describe("ChatGPT app published contract snapshot", () => {
       const listed = await client.listTools();
       const manifest = createMcpReleaseManifest(listed.tools.map((tool) => ({
         name: tool.name,
+        ...(tool.title === undefined ? {} : { title: tool.title }),
         ...(tool.description === undefined ? {} : { description: tool.description }),
         ...(tool.annotations === undefined
           ? {}
           : { annotations: tool.annotations as Record<string, unknown> }),
         inputSchema: tool.inputSchema as Record<string, unknown>,
+        ...(tool.outputSchema === undefined
+          ? {}
+          : { outputSchema: tool.outputSchema as Record<string, unknown> }),
+        ...(tool.execution === undefined
+          ? {}
+          : { execution: tool.execution as Record<string, unknown> }),
+        ...(tool._meta === undefined
+          ? {}
+          : { _meta: tool._meta as Record<string, unknown> }),
       })));
 
       expect(listed.tools).toHaveLength(21);

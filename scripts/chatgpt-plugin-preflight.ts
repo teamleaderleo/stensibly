@@ -22,6 +22,8 @@ const annotationKeys = [
 
 interface PublicationSnapshot {
   snapshotVersion: number;
+  toolContractVersion: number;
+  reviewedMetadataVersion: number;
   toolCount: number;
   tools: string[];
   toolContractFingerprint: string;
@@ -43,6 +45,8 @@ export interface ChatGptPluginPreflightReport {
   snapshotVersion: number;
   profile: "published_default";
   toolCount: number;
+  toolContractVersion: number;
+  reviewedMetadataVersion: number;
   outputSchemaCount: number;
   titleCount: number;
   positiveTestCaseCount: number;
@@ -123,16 +127,32 @@ export async function runChatGptPluginPreflight(): Promise<ChatGptPluginPrefligh
     const contract = compileMcpPublishedContract(
       listed.tools.map((tool) => ({
         name: tool.name,
+        ...(tool.title === undefined ? {} : { title: tool.title }),
         ...(tool.description === undefined ? {} : { description: tool.description }),
         ...(tool.annotations === undefined
           ? {}
           : { annotations: tool.annotations as Record<string, unknown> }),
         inputSchema: tool.inputSchema as Record<string, unknown>,
+        ...(tool.outputSchema === undefined
+          ? {}
+          : { outputSchema: tool.outputSchema as Record<string, unknown> }),
+        ...(tool.execution === undefined
+          ? {}
+          : { execution: tool.execution as Record<string, unknown> }),
+        ...(tool._meta === undefined
+          ? {}
+          : { _meta: tool._meta as Record<string, unknown> }),
       })),
       mcpCapabilityPolicyRegistry,
       "published_default",
       instructions,
     );
+    if (contract.publishedManifest.schemaVersion !== snapshot.toolContractVersion) {
+      blockers.push("Live tool-contract version does not match the checked-in snapshot.");
+    }
+    if (contract.version !== snapshot.reviewedMetadataVersion) {
+      blockers.push("Live reviewed-metadata version does not match the checked-in snapshot.");
+    }
     compareFingerprint(
       blockers,
       "tool contract",
@@ -179,6 +199,8 @@ export async function runChatGptPluginPreflight(): Promise<ChatGptPluginPrefligh
       snapshotVersion: snapshot.snapshotVersion,
       profile: "published_default",
       toolCount: listed.tools.length,
+      toolContractVersion: contract.publishedManifest.schemaVersion,
+      reviewedMetadataVersion: contract.version,
       outputSchemaCount,
       titleCount,
       positiveTestCaseCount: submission.test_cases.length,

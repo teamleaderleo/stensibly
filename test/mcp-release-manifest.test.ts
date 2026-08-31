@@ -5,24 +5,34 @@ import {
   type McpToolContract,
 } from "../src/mcp-release-manifest.ts";
 
-function tool(
-  name: string,
-  inputSchema: Record<string, unknown> = {
+const defaultToolInputSchema = {
     type: "object",
     properties: { project: { type: "string" } },
     required: ["project"],
     additionalProperties: false,
-  },
+} as const;
+
+function tool(
+  name: string,
+  inputSchema: Record<string, unknown> | undefined = defaultToolInputSchema,
   options: {
+    title?: string;
     description?: string;
     annotations?: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
+    execution?: Record<string, unknown>;
+    _meta?: Record<string, unknown>;
   } = {},
 ): McpToolContract {
   return {
     name,
+    ...(options.title === undefined ? {} : { title: options.title }),
     description: options.description ?? `${name} description`,
     annotations: options.annotations ?? { readOnlyHint: true },
-    inputSchema,
+    inputSchema: inputSchema ?? defaultToolInputSchema,
+    ...(options.outputSchema === undefined ? {} : { outputSchema: options.outputSchema }),
+    ...(options.execution === undefined ? {} : { execution: options.execution }),
+    ...(options._meta === undefined ? {} : { _meta: options._meta }),
   };
 }
 
@@ -113,6 +123,49 @@ describe("MCP release manifests", () => {
       "$.limit: optional property was added",
       "$.mode: enum values were broadened",
     ]));
+  });
+
+  test("tracks every tools/list metadata field reviewed by the plugin directory", () => {
+    const base = createMcpReleaseManifest([tool("get_brief", undefined, {
+      title: "Get Project Brief",
+      outputSchema: { type: "object", properties: { id: { type: "string" } } },
+      execution: { taskSupport: "optional" },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["read"] }] },
+    })]);
+    const mutations: Array<[McpToolContract, string]> = [
+      [tool("get_brief", undefined, {
+        title: "Read Project Brief",
+        outputSchema: { type: "object", properties: { id: { type: "string" } } },
+        execution: { taskSupport: "optional" },
+        _meta: { securitySchemes: [{ type: "oauth2", scopes: ["read"] }] },
+      }), "title changed"],
+      [tool("get_brief", undefined, {
+        title: "Get Project Brief",
+        outputSchema: { type: "object", properties: { id: { type: "number" } } },
+        execution: { taskSupport: "optional" },
+        _meta: { securitySchemes: [{ type: "oauth2", scopes: ["read"] }] },
+      }), "output schema changed"],
+      [tool("get_brief", undefined, {
+        title: "Get Project Brief",
+        outputSchema: { type: "object", properties: { id: { type: "string" } } },
+        execution: { taskSupport: "required" },
+        _meta: { securitySchemes: [{ type: "oauth2", scopes: ["read"] }] },
+      }), "execution metadata changed"],
+      [tool("get_brief", undefined, {
+        title: "Get Project Brief",
+        outputSchema: { type: "object", properties: { id: { type: "string" } } },
+        execution: { taskSupport: "optional" },
+        _meta: { securitySchemes: [{ type: "oauth2", scopes: ["read", "write"] }] },
+      }), "_meta changed"],
+    ];
+
+    for (const [candidateTool, expectedReason] of mutations) {
+      const candidate = createMcpReleaseManifest([candidateTool]);
+      const diff = diffMcpReleaseManifests(base, candidate);
+      expect(candidate.digest).not.toBe(base.digest);
+      expect(diff.classification).toBe("compatible-contract-change");
+      expect(diff.changes[0]?.reasons).toContain(expectedReason);
+    }
   });
 
   test("classifies added tools as new actions requiring approval", () => {
