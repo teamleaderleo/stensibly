@@ -75,6 +75,16 @@ const posixShellExecutables = new Set([
   "fish",
 ]);
 const powerShellExecutables = new Set(["pwsh", "powershell", "powershell.exe"]);
+const powerShellInlineCommandArguments = new Set([
+  "-c",
+  "-command",
+  "-cwa",
+  "-commandwithargs",
+  "-e",
+  "-ec",
+  "-enc",
+  "-encodedcommand",
+]);
 const cmdExecutables = new Set(["cmd", "cmd.exe"]);
 
 function containsInlineShellCommand(argv: readonly string[]): boolean {
@@ -89,9 +99,7 @@ function containsInlineShellCommand(argv: readonly string[]): boolean {
     );
   }
   if (powerShellExecutables.has(executable)) {
-    return args.some((argument) =>
-      ["-command", "-commandwithargs", "-encodedcommand"].includes(argument.toLowerCase())
-    );
+    return args.some((argument) => powerShellInlineCommandArguments.has(argument.toLowerCase()));
   }
   if (cmdExecutables.has(executable)) {
     return args.some((argument) => ["/c", "/k"].includes(argument.toLowerCase()));
