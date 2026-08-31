@@ -34,7 +34,7 @@ import {
 import { buildWorkspaceSurvey } from "./survey.js";
 import { registerWorkerEnrolmentTools } from "./worker-enrolment-mcp.js";
 
-const MCP_SERVER_INSTRUCTIONS = [
+const FULL_INTERNAL_MCP_SERVER_INSTRUCTIONS = [
   "Stensibly is a shared scrapbook for work in motion.",
   "Use survey_workspace for centralized triage and repeat polling across projects.",
   "Pass the previous survey fingerprint to distinguish material ledger changes from an unchanged check.",
@@ -53,6 +53,24 @@ const MCP_SERVER_INSTRUCTIONS = [
   "Use get_runner_context before starting or resuming a run so execution begins from a bounded canonical handoff.",
 ].join(" ");
 
+const PUBLISHED_DEFAULT_MCP_SERVER_INSTRUCTIONS = [
+  "Stensibly coordinates exact project work and runner-neutral execution.",
+  "Start with get_brief and get_project_attachment, then use list_work to choose current work.",
+  "Use get_runner_context for a bounded canonical task, run, machine, and receipt packet; it intentionally omits older detail when the configured limits are reached.",
+  "Treat accepted project attachments as policy, not as a claim, run lease, approval, or live authority grant.",
+  "Create an exact item, attach the minimum durable source or evidence reference it needs, and use dispatch_work to queue one reviewed runner profile; the runner owns machine-specific execution.",
+  "Claims are temporary leases. Use the current claim generation for block, unblock, complete, or handoff transitions.",
+  "Use GitHub tools only for repositories bound to the project, use one idempotency key for each intended write, and follow returned recovery guidance before replaying an ambiguous effect.",
+  "Repository publication and pull-request landing require their explicit exact-revision and authority fences.",
+].join(" ");
+
+const PUBLISHED_SEARCHABLE_MCP_SERVER_INSTRUCTIONS = [
+  PUBLISHED_DEFAULT_MCP_SERVER_INSTRUCTIONS,
+  "Use get_item only when complete item history is required beyond the bounded runner packet.",
+  "Use continuation tools for explicit durable follow-up and the searchable GitHub catalogue for a concrete provider capability that the default outcome-level actions do not cover.",
+  "Use repository setup memory and branch tidying only for their named setup or maintenance workflows.",
+].join(" ");
+
 export interface McpServerConstructionOptions {
   readonly exposureProfile?: McpCapabilityExposureProfile;
 }
@@ -68,7 +86,7 @@ export function createMcpServer(
   );
   const rawServer = new McpServer(
     { name: "stensibly", version: exposure.manifest.serverVersion },
-    { instructions: MCP_SERVER_INSTRUCTIONS },
+    { instructions: mcpServerInstructions(exposure.profile) },
   );
   return configureMcpServer(rawServer, ledger, context, exposure);
 }
@@ -85,7 +103,7 @@ export function createModernMcpServer(
   const modernServer = new ModernMcpServer(
     { name: "stensibly", version: exposure.manifest.serverVersion },
     {
-      instructions: MCP_SERVER_INSTRUCTIONS,
+      instructions: mcpServerInstructions(exposure.profile),
       cacheHints: {
         "server/discover": { ttlMs: 60_000, cacheScope: "private" },
         "tools/list": { ttlMs: 60_000, cacheScope: "private" },
@@ -97,6 +115,14 @@ export function createModernMcpServer(
   // plain registration calls are shared with the existing ChatGPT/v1 catalogue.
   configureMcpServer(modernServer as unknown as McpServer, ledger, context, exposure);
   return modernServer;
+}
+
+function mcpServerInstructions(profile: McpCapabilityExposureProfile): string {
+  if (profile === "published_default") return PUBLISHED_DEFAULT_MCP_SERVER_INSTRUCTIONS;
+  if (profile === "published_plus_searchable") {
+    return PUBLISHED_SEARCHABLE_MCP_SERVER_INSTRUCTIONS;
+  }
+  return FULL_INTERNAL_MCP_SERVER_INSTRUCTIONS;
 }
 
 function configureMcpServer(

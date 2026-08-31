@@ -105,6 +105,32 @@ describe("trusted MCP exposure registration", () => {
       expect(names).not.toContain("enrol_worker");
       expect(names.length).toBeGreaterThan(publishedDefaultNames.length);
       expect(names.length).toBeLessThan(53);
+
+      const instructions = await serverInstructions(
+        ledger,
+        "published_plus_searchable",
+      );
+      expect(instructions).toContain("get_item");
+      expect(instructions).toContain("continuation tools");
+      expect(instructions).not.toContain("survey_workspace");
+      expect(instructions).not.toContain("enrol_worker");
+      expect(instructions).not.toContain("get_operation_receipt");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("preserves full internal routing guidance for the full_internal profile", async () => {
+    const store = new StensiblyStore(":memory:");
+    const ledger = withHostedMcpProviders(new SqliteWorkLedger(store));
+    try {
+      const instructions = await serverInstructions(ledger, "full_internal");
+      expect(instructions).toContain("survey_workspace");
+      expect(instructions).toContain("enrol_worker");
+      expect(instructions).toContain("get_operation_receipt");
+      expect(instructions).toContain("Record discoveries and progress as events");
+      expect(instructions).toContain("renew active work");
+      expect(instructions).toContain("release work you abandon");
     } finally {
       store.close();
     }
@@ -173,6 +199,26 @@ async function listToolNames(
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     return (await client.listTools()).tools.map((tool) => tool.name);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+}
+
+async function serverInstructions(
+  ledger: ReturnType<typeof withHostedMcpProviders>,
+  profile: McpCapabilityExposureProfile,
+): Promise<string> {
+  const server = createMcpServer(ledger, {}, { exposureProfile: profile });
+  const client = new Client(
+    { name: "mcp-exposure-instructions-test", version: "0.0.1" },
+    { capabilities: {} },
+  );
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    return client.getInstructions() ?? "";
   } finally {
     await client.close();
     await server.close();
