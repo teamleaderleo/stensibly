@@ -18,6 +18,7 @@
     "codex-roots:memory-probe": "bun scripts/codex-root-memory-probe.ts",
     "glaeda:workstation": "bun scripts/glaeda-owned-workstation-runner.ts",
     "glaeda:verify-focused": "bun scripts/glaeda-verify-focused-runner.ts",
+    "glaeda:verify-required": "bun scripts/glaeda-verify-focused-runner.ts --verification-profile required",
     "verify:hosted": "bun src/verify-hosted-cli.ts",
     "verify:oauth": "bun src/verify-oauth-hosted.ts",
     "verify:oauth-abuse": "bun src/verify-oauth-abuse.ts",

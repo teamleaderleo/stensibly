@@ -15,7 +15,9 @@ describe("owned workstation credential delivery workflow", () => {
     expect(workflow).toContain('--project "$PROJECT"');
     expect(workflow).toContain("--runner-type glaeda-workstation");
     expect(workflow).toContain("--adapter-id glaeda-workstation");
-    expect(workflow).toContain("--profiles repo-query/v1,verify-focused/v1");
+    expect(workflow).toContain(
+      "--profiles repo-query/v1,verify-focused/v1,verify-required/v1",
+    );
   });
 
   test("keeps ephemeral control separate and bound to the selected project", () => {

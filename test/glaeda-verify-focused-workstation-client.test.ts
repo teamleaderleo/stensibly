@@ -4,9 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   fingerprintGlaedaVerifyFocusedRequestV1,
+  fingerprintGlaedaVerifyRequiredRequestV1,
   fingerprintGlaedaVerifyFocusedRuntimeV1,
+  GLAEDA_VERIFY_REQUIRED_PROFILE_V1,
   GlaedaVerifyFocusedWorkstationClientV1,
   type GlaedaVerifyFocusedRequestV1,
+  type GlaedaVerifyRequiredRequestV1,
 } from "../src/glaeda-verify-focused-workstation-client.ts";
 import { fingerprintGlaedaWorkstationCommandV1 } from
   "../src/glaeda-workstation-contracts.ts";
@@ -167,6 +170,48 @@ describe("Glaeda verify-focused workstation client", () => {
       "changed exact command or isolation identity",
     );
   });
+
+  test("binds verify-required to its distinct fixed profile and receipt", async () => {
+    const fixture = files();
+    const request = requiredRequest();
+    const node = {
+      id: "big-red",
+      generation: 1,
+      capabilitySnapshotSha256: sha("c"),
+      osClass: "linux" as const,
+      architectureClass: "x86_64" as const,
+      glaedaRuntimeSha256: fingerprintGlaedaVerifyFocusedRuntimeV1(
+        fixture.script,
+        fixture.implementation,
+      ),
+    };
+    const command = requiredCommand(node, request);
+    const client = new GlaedaVerifyFocusedWorkstationClientV1({
+      pythonInterpreter: fixture.python,
+      script: fixture.script,
+      implementation: fixture.implementation,
+      repositoryRoot: fixture.repository,
+      stateRoot: fixture.state,
+      cargoRoot: fixture.cargo,
+      rustupRoot: fixture.rustup,
+      node,
+      request,
+      profile: GLAEDA_VERIFY_REQUIRED_PROFILE_V1,
+      process: () => ({
+        status: 0,
+        stdout: new TextEncoder().encode(`${JSON.stringify(physicalReport(command))}\n`),
+        stderr: new Uint8Array(),
+      }),
+    });
+    const check = await client.check(command);
+    expect(await client.execute({ command, check })).toMatchObject({
+      terminalClass: "succeeded",
+      profile: { id: "verify-required/v1", class: "verify_required" },
+    });
+    expect(client.lastResult()?.requestSha256).toBe(
+      fingerprintGlaedaVerifyRequiredRequestV1(request),
+    );
+  });
 });
 
 function focusedRequest(): GlaedaVerifyFocusedRequestV1 {
@@ -179,6 +224,14 @@ function focusedRequest(): GlaedaVerifyFocusedRequestV1 {
     resourceClass: "big-red-focused",
     deadlineSeconds: 600,
     executionIdentityClass: "credentialless_project",
+  };
+}
+
+function requiredRequest(): GlaedaVerifyRequiredRequestV1 {
+  return {
+    ...focusedRequest(),
+    resourceClass: "big-red-required",
+    deadlineSeconds: 1200,
   };
 }
 
@@ -212,6 +265,29 @@ function focusedCommand(node: ReturnType<typeof nodeType>, request: GlaedaVerify
   };
 }
 
+function requiredCommand(
+  node: ReturnType<typeof nodeType>,
+  request: GlaedaVerifyRequiredRequestV1,
+) {
+  return {
+    ...focusedCommand(node, focusedRequest()),
+    source: {
+      repository: request.repository,
+      commitOid: request.commitOid,
+      treeOid: request.treeOid,
+      logicalChangeRef: `github:${request.commitOid}`,
+    },
+    profile: {
+      id: "verify-required/v1",
+      versionSha256: request.profileVersionSha256,
+      class: "verify_required" as const,
+      resourceClass: "big-red-required",
+      deadlineSeconds: 1200,
+    },
+    profileRequestSha256: fingerprintGlaedaVerifyRequiredRequestV1(request),
+  };
+}
+
 function nodeType() {
   return {
     id: "big-red",
@@ -223,7 +299,9 @@ function nodeType() {
   };
 }
 
-function physicalReport(command: ReturnType<typeof focusedCommand>) {
+function physicalReport(
+  command: ReturnType<typeof focusedCommand> | ReturnType<typeof requiredCommand>,
+) {
   return {
     authority: "physical_execution_observation",
     authorizes_effects: false,
@@ -232,7 +310,9 @@ function physicalReport(command: ReturnType<typeof focusedCommand>) {
     command_fingerprint: fingerprintGlaedaWorkstationCommandV1(command),
     contains_credentials: false,
     contains_private_content: false,
-    document_type: "glaeda-verify-focused-receipt",
+    document_type: command.profile.id === "verify-required/v1"
+      ? "glaeda-verify-required-receipt"
+      : "glaeda-verify-focused-receipt",
     execution_identity_class: "credentialless_project",
     isolation: {
       ambient_environment: "cleared",

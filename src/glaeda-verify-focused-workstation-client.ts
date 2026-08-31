@@ -15,25 +15,57 @@ import type {
 } from "./glaeda-workstation-adapter.js";
 import { canonicalJsonString } from "./idempotency-request-fingerprint.js";
 
-const PROFILE_ID = "verify-focused/v1";
-const PROFILE_CLASS = "verify_focused";
-const RESOURCE_CLASS = "big-red-focused";
-const DEADLINE_SECONDS = 600;
+export interface GlaedaVerificationProfileContractV1 {
+  id: "verify-focused/v1" | "verify-required/v1";
+  class: "verify_focused" | "verify_required";
+  resourceClass: "big-red-focused" | "big-red-required";
+  deadlineSeconds: 600 | 1200;
+  requestArtifactSchema: "glaeda-verify-focused-request/v1" | "glaeda-verify-required-request/v1";
+  receiptDocumentType: "glaeda-verify-focused-receipt" | "glaeda-verify-required-receipt";
+}
+
+export const GLAEDA_VERIFY_FOCUSED_PROFILE_V1 = Object.freeze({
+  id: "verify-focused/v1",
+  class: "verify_focused",
+  resourceClass: "big-red-focused",
+  deadlineSeconds: 600,
+  requestArtifactSchema: "glaeda-verify-focused-request/v1",
+  receiptDocumentType: "glaeda-verify-focused-receipt",
+} as const satisfies GlaedaVerificationProfileContractV1);
+
+export const GLAEDA_VERIFY_REQUIRED_PROFILE_V1 = Object.freeze({
+  id: "verify-required/v1",
+  class: "verify_required",
+  resourceClass: "big-red-required",
+  deadlineSeconds: 1200,
+  requestArtifactSchema: "glaeda-verify-required-request/v1",
+  receiptDocumentType: "glaeda-verify-required-receipt",
+} as const satisfies GlaedaVerificationProfileContractV1);
 const MAX_RESULT_BYTES = 32 * 1024;
 const GIT_OID = /^[a-f0-9]{40}$/u;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SHA256 = /^sha256:[a-f0-9]{64}$/u;
 
-export interface GlaedaVerifyFocusedRequestV1 {
+export interface GlaedaVerificationRequestV1 {
   version: 1;
   repository: string;
   commitOid: string;
   treeOid: string;
   profileVersionSha256: string;
-  resourceClass: typeof RESOURCE_CLASS;
-  deadlineSeconds: typeof DEADLINE_SECONDS;
+  resourceClass: GlaedaVerificationProfileContractV1["resourceClass"];
+  deadlineSeconds: GlaedaVerificationProfileContractV1["deadlineSeconds"];
   executionIdentityClass: "credentialless_project";
 }
+
+export type GlaedaVerifyFocusedRequestV1 = GlaedaVerificationRequestV1 & {
+  resourceClass: "big-red-focused";
+  deadlineSeconds: 600;
+};
+
+export type GlaedaVerifyRequiredRequestV1 = GlaedaVerificationRequestV1 & {
+  resourceClass: "big-red-required";
+  deadlineSeconds: 1200;
+};
 
 export interface GlaedaVerifyFocusedResultV1 {
   requestSha256: string;
@@ -59,7 +91,8 @@ export class GlaedaVerifyFocusedWorkstationClientV1 implements GlaedaWorkstation
   readonly #cargoRoot: string;
   readonly #rustupRoot: string;
   readonly #node: GlaedaWorkstationNodeV1;
-  readonly #request: GlaedaVerifyFocusedRequestV1;
+  readonly #profile: GlaedaVerificationProfileContractV1;
+  readonly #request: GlaedaVerificationRequestV1;
   readonly #requestSha256: string;
   readonly #process: GlaedaVerifyFocusedProcessV1;
   #lastResult: GlaedaVerifyFocusedResultV1 | null = null;
@@ -73,27 +106,29 @@ export class GlaedaVerifyFocusedWorkstationClientV1 implements GlaedaWorkstation
     cargoRoot: string;
     rustupRoot: string;
     node: GlaedaWorkstationNodeV1;
-    request: GlaedaVerifyFocusedRequestV1;
+    request: GlaedaVerificationRequestV1;
+    profile?: GlaedaVerificationProfileContractV1;
     process?: GlaedaVerifyFocusedProcessV1;
   }) {
+    this.#profile = Object.freeze({ ...(input.profile ?? GLAEDA_VERIFY_FOCUSED_PROFILE_V1) });
     this.#python = canonicalRegularFile(input.pythonInterpreter, "Python interpreter");
-    this.#script = canonicalRegularFile(input.script, "Glaeda verify-focused script");
+    this.#script = canonicalRegularFile(input.script, "Glaeda verification script");
     this.#implementation = canonicalRegularFile(
       input.implementation,
-      "Glaeda verify-focused implementation",
+      "Glaeda verification implementation",
     );
     this.#repositoryRoot = canonicalDirectory(input.repositoryRoot, "resident repository");
     this.#stateRoot = canonicalOrCreatableDirectory(input.stateRoot, "Glaeda state root");
     this.#cargoRoot = canonicalDirectory(input.cargoRoot, "Cargo root");
     this.#rustupRoot = canonicalDirectory(input.rustupRoot, "rustup root");
     this.#node = Object.freeze({ ...input.node });
-    this.#request = normalizeRequest(input.request);
-    this.#requestSha256 = fingerprintGlaedaVerifyFocusedRequestV1(this.#request);
+    this.#request = normalizeRequest(input.request, this.#profile);
+    this.#requestSha256 = fingerprintGlaedaVerificationRequestV1(this.#request, this.#profile);
     this.#process = input.process ?? runVerifyFocused;
     if (
       fingerprintGlaedaVerifyFocusedRuntimeV1(this.#script, this.#implementation)
       !== this.#node.glaedaRuntimeSha256
-    ) throw new RangeError("Glaeda verify-focused runtime digest changed");
+    ) throw new RangeError("Glaeda verification runtime digest changed");
   }
 
   async check(command: GlaedaWorkstationCommandV1): Promise<GlaedaWorkstationCheckV1> {
@@ -130,7 +165,7 @@ export class GlaedaVerifyFocusedWorkstationClientV1 implements GlaedaWorkstation
     try {
       return await this.#invoke(input, true);
     } catch (error) {
-      if (error instanceof MissingFocusedReceiptError) return null;
+      if (error instanceof MissingVerificationReceiptError) return null;
       throw error;
     }
   }
@@ -172,14 +207,19 @@ export class GlaedaVerifyFocusedWorkstationClientV1 implements GlaedaWorkstation
         ...(reconcileOnly ? ["--reconcile-only"] : []),
       ],
     });
-    if (result.status === 75 && reconcileOnly) throw new MissingFocusedReceiptError();
+    if (result.status === 75 && reconcileOnly) throw new MissingVerificationReceiptError();
     if (result.status !== 0) {
-      throw new Error(`Glaeda verify-focused refused with status ${result.status ?? "signal"}`);
+      throw new Error(`Glaeda verification refused with status ${result.status ?? "signal"}`);
     }
     if (result.stdout.byteLength > MAX_RESULT_BYTES) {
-      throw new RangeError("Glaeda verify-focused receipt exceeds the fixed byte ceiling");
+      throw new RangeError("Glaeda verification receipt exceeds the fixed byte ceiling");
     }
-    const report = admitPhysicalReport(result.stdout, input.command, commandFingerprint);
+    const report = admitPhysicalReport(
+      result.stdout,
+      input.command,
+      commandFingerprint,
+      this.#profile,
+    );
     const resultSha256 = sha256(result.stdout);
     const terminalClass = report.result.terminal_class;
     this.#lastResult = Object.freeze({
@@ -212,24 +252,37 @@ export class GlaedaVerifyFocusedWorkstationClientV1 implements GlaedaWorkstation
 
   #assertCommand(command: GlaedaWorkstationCommandV1): void {
     if (
-      command.profile.id !== PROFILE_ID
-      || command.profile.class !== PROFILE_CLASS
-      || command.profile.resourceClass !== RESOURCE_CLASS
-      || command.profile.deadlineSeconds !== DEADLINE_SECONDS
+      command.profile.id !== this.#profile.id
+      || command.profile.class !== this.#profile.class
+      || command.profile.resourceClass !== this.#profile.resourceClass
+      || command.profile.deadlineSeconds !== this.#profile.deadlineSeconds
       || command.profile.versionSha256 !== this.#request.profileVersionSha256
       || command.profileRequestSha256 !== this.#requestSha256
       || command.source.repository !== this.#request.repository
       || command.source.commitOid !== this.#request.commitOid
       || command.source.treeOid !== this.#request.treeOid
       || canonicalJsonString(command.node) !== canonicalJsonString(this.#node)
-    ) throw new RangeError("Glaeda verify-focused client does not match the exact command");
+    ) throw new RangeError("Glaeda verification client does not match the exact command");
   }
 }
 
 export function fingerprintGlaedaVerifyFocusedRequestV1(
   raw: GlaedaVerifyFocusedRequestV1,
 ): string {
-  return sha256(new TextEncoder().encode(`${canonicalJsonString(normalizeRequest(raw))}\n`));
+  return fingerprintGlaedaVerificationRequestV1(raw, GLAEDA_VERIFY_FOCUSED_PROFILE_V1);
+}
+
+export function fingerprintGlaedaVerifyRequiredRequestV1(
+  raw: GlaedaVerifyRequiredRequestV1,
+): string {
+  return fingerprintGlaedaVerificationRequestV1(raw, GLAEDA_VERIFY_REQUIRED_PROFILE_V1);
+}
+
+export function fingerprintGlaedaVerificationRequestV1(
+  raw: GlaedaVerificationRequestV1,
+  profile: GlaedaVerificationProfileContractV1,
+): string {
+  return sha256(new TextEncoder().encode(`${canonicalJsonString(normalizeRequest(raw, profile))}\n`));
 }
 
 export function fingerprintGlaedaVerifyFocusedRuntimeV1(
@@ -247,7 +300,10 @@ export function fingerprintGlaedaVerifyFocusedRuntimeV1(
   return `sha256:${hash.digest("hex")}`;
 }
 
-function normalizeRequest(value: GlaedaVerifyFocusedRequestV1): GlaedaVerifyFocusedRequestV1 {
+function normalizeRequest(
+  value: GlaedaVerificationRequestV1,
+  profile: GlaedaVerificationProfileContractV1,
+): GlaedaVerificationRequestV1 {
   if (
     !value
     || typeof value !== "object"
@@ -261,21 +317,26 @@ function normalizeRequest(value: GlaedaVerifyFocusedRequestV1): GlaedaVerifyFocu
     || !GIT_OID.test(value.commitOid)
     || !GIT_OID.test(value.treeOid)
     || !SHA256.test(value.profileVersionSha256)
-    || value.resourceClass !== RESOURCE_CLASS
-    || value.deadlineSeconds !== DEADLINE_SECONDS
+    || value.resourceClass !== profile.resourceClass
+    || value.deadlineSeconds !== profile.deadlineSeconds
     || value.executionIdentityClass !== "credentialless_project"
-  ) throw new RangeError("Glaeda verify-focused request is invalid");
+  ) throw new RangeError("Glaeda verification request is invalid");
   return Object.freeze({ ...value });
 }
 
-function admitPhysicalReport(bytes: Uint8Array, command: GlaedaWorkstationCommandV1, fingerprint: string) {
+function admitPhysicalReport(
+  bytes: Uint8Array,
+  command: GlaedaWorkstationCommandV1,
+  fingerprint: string,
+  verificationProfile: GlaedaVerificationProfileContractV1,
+) {
   let raw: Record<string, unknown>;
   try {
     const parsed: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
     if (!isRecord(parsed)) throw new Error();
     raw = parsed;
   } catch {
-    throw new RangeError("Glaeda verify-focused returned invalid bounded JSON");
+    throw new RangeError("Glaeda verification returned invalid bounded JSON");
   }
   const source = record(raw.source);
   const profile = record(raw.profile);
@@ -301,7 +362,7 @@ function admitPhysicalReport(bytes: Uint8Array, command: GlaedaWorkstationComman
       "settled_at_unix_millis", "started_at_unix_millis", "task_cleanup_complete",
       "terminal_class",
     ])
-    || raw.document_type !== "glaeda-verify-focused-receipt"
+    || raw.document_type !== verificationProfile.receiptDocumentType
     || raw.schema_version !== 1
     || raw.command_fingerprint !== fingerprint
     || raw.execution_identity_class !== "credentialless_project"
@@ -343,7 +404,7 @@ function admitPhysicalReport(bytes: Uint8Array, command: GlaedaWorkstationComman
     || raw.authorizes_work !== false
     || raw.authorizes_effects !== false
     || raw.authorizes_redispatch !== false
-  ) throw new RangeError("Glaeda verify-focused receipt changed exact command or isolation identity");
+  ) throw new RangeError("Glaeda verification receipt changed exact command or isolation identity");
   return {
     raw,
     result: {
@@ -418,7 +479,7 @@ function sha256(value: Uint8Array): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
-class MissingFocusedReceiptError extends Error {}
+class MissingVerificationReceiptError extends Error {}
 
 function exactKeys(value: Record<string, unknown>, expected: string[]): boolean {
   const actual = Object.keys(value).sort();
