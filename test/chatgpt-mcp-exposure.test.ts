@@ -44,6 +44,18 @@ describe("ChatGPT MCP exposure", () => {
       expect(names).not.toContain("enrol_worker");
       expect(names).not.toContain("survey_workspace");
 
+      const instructions = client.getInstructions();
+      expect(instructions).toContain("runner-neutral execution");
+      expect(instructions).toContain("get_runner_context");
+      expect(instructions).toContain("dispatch_work");
+      expect(instructions).not.toContain("survey_workspace");
+      expect(instructions).not.toContain("get_item");
+      expect(instructions).not.toContain("enrol_worker");
+      expect(instructions).not.toContain("get_operation_receipt");
+      expect(instructions).not.toContain("record_event");
+      expect(instructions).not.toContain("renew_claim");
+      expect(instructions).not.toContain("release_work");
+
       for (const tool of listed.tools) {
         const expected = compileMcpCapabilitySubmissionAnnotations(
           requireMcpCapabilityPolicy(tool.name),
