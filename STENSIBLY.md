@@ -119,9 +119,9 @@ verification, fix-forward, and rollback. A direct operator instruction in the ac
 chat to proceed, fix, merge, deploy, test, connect, or finish a covered action is its
 current integration decision.
 
-Relevant accepted changes merged to `main` should follow the repository's normal
-automatic delivery path after validation. Manual delivery is a recovery or exceptional
-control path when the owning workflow requires it.
+Relevant accepted changes merged to `main` follow the current delivery procedure in
+[`docs/operations.md`](docs/operations.md). That document owns deployment triggers,
+approval gates, verification, rollback, and recovery paths.
 
 ## Review and integration
 

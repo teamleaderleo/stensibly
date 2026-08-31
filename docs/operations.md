@@ -221,7 +221,7 @@ preview-health, concurrent-deployment, and automatic-recovery gates.
 
 ## Dashboard deployment
 
-The dashboard is the static Vercel project named `stensibly`. Its production branch is deployed through Vercel Git integration.
+The dashboard is the static Vercel project named `stensibly`. Production publication is owned by [dashboard-auto-publication.md](dashboard-auto-publication.md). Vercel Git deployment is disabled in the repository Vercel configs; the normal path is the guarded two-hour GitHub Actions publication window, with `Deploy Dashboard Production` retained for staged recovery and deliberate releases.
 
 Before merging dashboard changes, confirm:
 
@@ -241,7 +241,7 @@ After production deployment:
 5. disconnect and confirm the token is cleared
 6. run the hosted verifier separately
 
-A dedicated dashboard deployment workflow remains future automation work.
+For exact publication cadence, revision leasing, guarded publisher, domain assignment, verification, and recovery semantics, follow [dashboard-auto-publication.md](dashboard-auto-publication.md).
 
 ## Logs
 
