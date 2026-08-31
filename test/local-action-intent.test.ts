@@ -109,7 +109,9 @@ describe("local action intent", () => {
       ["fish", "--command", "echo nope"],
       ["fish", "-C", "echo nope"],
       ["pwsh", "-Command", "Write-Output nope"],
+      ["pwsh", "-c", "Write-Output nope"],
       ["powershell.exe", "-EncodedCommand", "ZQBjAGgAbwAgAG4AbwBwAGUA"],
+      ["powershell.exe", "-enc", "ZQBjAGgAbwAgAG4AbwBwAGUA"],
       ["cmd.exe", "/c", "echo nope"],
     ]) {
       expect(() => compileLocalActionIntentV1({
