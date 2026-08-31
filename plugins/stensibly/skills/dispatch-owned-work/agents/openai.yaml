@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dispatch Owned Work"
+  short_description: "Route exact work through Stensibly"
+  default_prompt: "Use Stensibly to resume or dispatch this exact task, then return its bounded receipt."

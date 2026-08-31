@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "stensibly": {
+      "type": "http",
+      "url": "https://api.stensibly.com/mcp"
+    }
+  }
+}
