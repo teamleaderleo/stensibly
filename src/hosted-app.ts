@@ -47,6 +47,10 @@ import type {
 } from "./project-repository-setup-observation.js";
 import { createProjectSetupStatusApi } from "./setup-status-api.js";
 import {
+  handleRunnerMcpHttpRequest,
+  type RunnerMcpHttpOptions,
+} from "./runner-mcp-http.js";
+import {
   ConvexTokenProvider,
   type ApiTokenAuthenticator,
 } from "./token-provider.js";
@@ -69,6 +73,10 @@ export interface HostedAppOptions {
   workspace?: string | null;
   allowedOrigins?: string[];
   allowedHosts?: string[];
+  runnerMcp?: Omit<
+    RunnerMcpHttpOptions,
+    "ledger" | "authenticator" | "allowedOrigins" | "allowedHosts"
+  >;
   hostedAuth?: HostedAuthOptions;
   mcpOAuth?: McpOAuthOptions;
   mcpSetupFirstReadRecorder?: Pick<McpSetupFirstReadRecorder, "recordSetupFirstRead">;
@@ -182,6 +190,15 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
     }
     return response;
   });
+  app.all("/runner/mcp", (context) =>
+    handleRunnerMcpHttpRequest(context.req.raw, {
+      ...options.runnerMcp,
+      ledger: options.ledger,
+      authenticator: options.authenticator,
+      allowedOrigins,
+      allowedHosts: options.allowedHosts,
+    }),
+  );
   if (setupStatusObserver) {
     app.route(
       "/api/v1",
@@ -394,7 +411,7 @@ function mcpOAuthFromEnv(
 }
 
 function hostedSurfaces(options: HostedAppOptions): string[] {
-  const surfaces = ["api-v1", "mcp"];
+  const surfaces = ["api-v1", "mcp", "runner-mcp"];
   if (options.hostedAuth) surfaces.push("auth");
   if (options.mcpOAuth) surfaces.push("oauth");
   if (options.providerCapacity) surfaces.push("provider-capacity");
