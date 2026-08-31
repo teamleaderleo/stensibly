@@ -11,6 +11,8 @@ interface ChatGptAppActionSnapshot {
   toolCount: number;
   toolManifestFingerprint: string;
   toolContractFingerprint: string;
+  serverInstructionsFingerprint: string;
+  reviewedMetadataFingerprint: string;
   tools: string[];
   releasePolicy: string;
   requiredAdminActionAfterAnyManifestChange: string;
@@ -39,12 +41,14 @@ describe("ChatGPT app action snapshot", () => {
       }))
       .digest("hex")}`;
 
-    expect(snapshot.snapshotVersion).toBe(22);
+    expect(snapshot.snapshotVersion).toBe(23);
     expect(snapshot.manifestVersion).toBe(MCP_TOOL_MANIFEST_VERSION);
     expect(snapshot.toolCount).toBe(21);
     expect(snapshot.toolCount).toBe(selection.toolNames.length);
     expect(snapshot.toolManifestFingerprint).toBe(expectedManifestFingerprint);
     expect(snapshot.toolContractFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(snapshot.serverInstructionsFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(snapshot.reviewedMetadataFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(snapshot.tools).toEqual([...selection.toolNames]);
     expect(snapshot.tools).toContain("get_brief");
     expect(snapshot.tools).toContain("get_runner_context");
@@ -83,9 +87,11 @@ describe("ChatGPT app action snapshot", () => {
     expect(recovery).toContain(String(snapshot.toolCount));
     expect(recovery).toContain(snapshot.toolManifestFingerprint);
     expect(recovery).toContain(snapshot.toolContractFingerprint);
+    expect(recovery).toContain(snapshot.serverInstructionsFingerprint);
+    expect(recovery).toContain(snapshot.reviewedMetadataFingerprint);
     expect(recovery).toContain("published_default");
     expect(recovery).toContain("full_internal");
-    expect(recovery).toContain("latest manifest only");
+    expect(recovery).toContain("latest reviewed metadata only");
     expect(recovery).toContain("before network dispatch");
     expect(recovery).toContain("HAR");
     expect(recovery).not.toContain("25-action");
