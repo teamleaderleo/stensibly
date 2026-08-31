@@ -7,7 +7,7 @@ import type {
   McpOAuthService,
 } from "../src/mcp-oauth-service.ts";
 import { createMcpOAuth } from "../src/mcp-oauth.ts";
-import { MCP_OAUTH_CONSENT_SCRIPT, consentPage } from "../src/mcp-oauth-protocol.ts";
+import { consentPage } from "../src/mcp-oauth-protocol.ts";
 
 const issuer = "https://api.stensibly.com";
 const resource = `${issuer}/mcp`;
@@ -87,20 +87,16 @@ describe("MCP OAuth hardening", () => {
     });
     expect(html).not.toContain("A refresh token keeps the connection active");
     expect(html).toContain('touch-action:manipulation');
-    expect(html).toContain('<script src="/oauth/consent.js" defer></script>');
+    expect(html).not.toContain("<script");
     expect(html).toContain('name="decision" value="approve"');
     expect(html).toContain('name="decision" value="deny"');
-    expect(html).toContain('data-consent-action="approve"');
-    expect(html).toContain('data-consent-action="deny"');
-    expect(html).toContain('<input class="consent-control approve native-fallback" type="submit"');
-    expect(html).toContain('<input class="consent-control native-fallback" type="submit"');
-    expect(html).not.toContain('<button class="approve" name="decision"');
+    expect(html).toContain('<button class="consent-control approve" type="submit"');
+    expect(html).toContain('<button class="consent-control" type="submit">Not now</button>');
+    expect(html).not.toContain("data-consent-action");
 
     const script = await app.request("/oauth/consent.js");
-    expect(script.status).toBe(200);
-    expect(script.headers.get("content-type")).toContain("text/javascript");
-    expect(script.headers.get("content-security-policy")).toContain("script-src 'self'");
-    expect(await script.text()).toBe(MCP_OAUTH_CONSENT_SCRIPT);
+    expect(script.status).toBe(404);
+    expect(script.headers.get("content-security-policy")).not.toContain("script-src");
   });
 
   test("redirects scope errors only after validating the client redirect", async () => {
