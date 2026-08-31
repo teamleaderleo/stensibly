@@ -629,7 +629,6 @@ export function presentWorkerBriefV1(
       ]
       : [
         `item ${identity.itemId} · run ${identity.dispatch.runId} g${identity.dispatch.runGeneration}/l${identity.dispatch.leaseGeneration}`,
-        `brief ${brief.semanticDigest}`,
       ]),
   }));
   sections.push(Object.freeze({

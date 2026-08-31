@@ -523,6 +523,7 @@ describe("presentations", () => {
     expect(terseRender).not.toContain("outcome source:");
     expect(explicitRender).toContain("bun run test:convex");
     expect(terseRender).toContain("validate: bun run test:convex");
+    expect(terseRender.match(new RegExp(brief.semanticDigest, "gu"))).toHaveLength(1);
     expect(explicitRender.length).toBeGreaterThan(terseRender.length);
   });
 
@@ -821,7 +822,7 @@ describe("two disposable workers", () => {
     const explicitB = renderWorkerBriefPresentationV1(presentWorkerBriefV1(briefB, "explicit"));
     expect(terseB).toContain(handoff.nextAction);
     expect(explicitB).toContain(`handoff_record:handoff:${handoff.ref}`);
-    expect(terseB).toContain(`brief ${briefB.semanticDigest}`);
+    expect(terseB).toContain(`semantic digest ${briefB.semanticDigest}`);
   });
 
   test("a handoff cannot attach without a current claim generation", () => {
