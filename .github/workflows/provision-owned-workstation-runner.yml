@@ -1,0 +1,208 @@
+name: Provision Owned Workstation Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Mint a sealed runner credential or revoke one exact token ID
+        required: true
+        default: mint
+        type: choice
+        options:
+          - mint
+          - revoke
+      recipient_public_key_base64:
+        description: Base64 PEM RSA public key for mint (non-secret)
+        required: false
+        type: string
+      recipient_public_key_sha256:
+        description: SHA-256 of the public-key DER for mint
+        required: false
+        type: string
+      token_id:
+        description: Exact tok_ ID for revoke
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stensibly-owned-workstation-runner-credential
+  cancel-in-progress: false
+
+jobs:
+  credential:
+    name: Mint or revoke exact runner credential
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+
+      - name: Require exact current main
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main \
+            || { echo "Runner credential operations require main" >&2; exit 1; }
+          git fetch --no-tags origin refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA" \
+            || { echo "Checked-out runner credential source changed" >&2; exit 1; }
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA" \
+            || { echo "Runner credential candidate is not current main" >&2; exit 1; }
+
+      - name: Validate protected request
+        env:
+          OPERATION: ${{ inputs.operation }}
+          RECIPIENT_PUBLIC_KEY_BASE64: ${{ inputs.recipient_public_key_base64 }}
+          RECIPIENT_PUBLIC_KEY_SHA256: ${{ inputs.recipient_public_key_sha256 }}
+          TOKEN_ID: ${{ inputs.token_id }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$CONVEX_DEPLOY_KEY" || { echo "Missing protected Convex deploy key" >&2; exit 1; }
+          case "$OPERATION" in
+            mint)
+              test -n "$RECIPIENT_PUBLIC_KEY_BASE64" || { echo "Mint requires a recipient public key" >&2; exit 1; }
+              [[ "$RECIPIENT_PUBLIC_KEY_SHA256" =~ ^[a-f0-9]{64}$ ]] \
+                || { echo "Mint requires an exact lowercase SHA-256 public-key fingerprint" >&2; exit 1; }
+              test -z "$TOKEN_ID" || { echo "Mint does not accept a revoke token ID" >&2; exit 1; }
+              ;;
+            revoke)
+              [[ "$TOKEN_ID" =~ ^tok_[a-f0-9]{32}$ ]] \
+                || { echo "Revoke requires one exact token ID" >&2; exit 1; }
+              test -z "$RECIPIENT_PUBLIC_KEY_BASE64$RECIPIENT_PUBLIC_KEY_SHA256" \
+                || { echo "Revoke does not accept recipient-key inputs" >&2; exit 1; }
+              ;;
+            *) echo "Unsupported operation" >&2; exit 1 ;;
+          esac
+
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Mint and seal Big Red credential
+        if: ${{ inputs.operation == 'mint' }}
+        id: mint
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          RECIPIENT_PUBLIC_KEY_BASE64: ${{ inputs.recipient_public_key_base64 }}
+          RECIPIENT_PUBLIC_KEY_SHA256: ${{ inputs.recipient_public_key_sha256 }}
+          STENSIBLY_WORKSPACE: default
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          credential_root="$RUNNER_TEMP/owned-workstation-runner"
+          mkdir -m 700 "$credential_root"
+          printf '%s' "$RECIPIENT_PUBLIC_KEY_BASE64" | base64 --decode > "$credential_root/recipient.pem"
+          openssl pkey -pubin -in "$credential_root/recipient.pem" -noout >/dev/null
+          actual_fingerprint="$(
+            openssl pkey -pubin -in "$credential_root/recipient.pem" -outform DER \
+              | sha256sum | awk '{print $1}'
+          )"
+          test "$actual_fingerprint" = "$RECIPIENT_PUBLIC_KEY_SHA256" \
+            || { echo "Recipient public-key fingerprint changed" >&2; exit 1; }
+
+          deployment_prefix="${CONVEX_DEPLOY_KEY%%|*}"
+          deployment_name="${deployment_prefix#*:}"
+          [[ "$deployment_name" =~ ^[a-z0-9-]+$ ]] \
+            || { echo "Protected Convex deployment identity is malformed" >&2; exit 1; }
+          export CONVEX_URL="https://${deployment_name}.convex.cloud"
+          export STENSIBLY_SERVICE_SECRET="$(bunx convex env get STENSIBLY_SERVICE_SECRET --prod)"
+          test -n "$STENSIBLY_SERVICE_SECRET" \
+            || { echo "Protected Stensibly service secret is unavailable" >&2; exit 1; }
+
+          minted_id=""
+          revoke_on_failure() {
+            status=$?
+            if [[ "$status" -ne 0 && -n "$minted_id" ]]; then
+              STENSIBLY_BACKEND=convex bun src/tokens.ts revoke "$minted_id" >/dev/null 2>&1 || true
+            fi
+            trap - EXIT
+            exit "$status"
+          }
+          trap revoke_on_failure EXIT
+
+          STENSIBLY_BACKEND=convex bun src/tokens.ts create-runner \
+            --name big-red-glaeda \
+            --project glaeda \
+            --actor-id service:big-red-glaeda \
+            --runner-type glaeda-workstation \
+            --adapter-id glaeda-workstation \
+            --profiles repo-query/v1 \
+            --output-file "$credential_root/runner.token" \
+            > "$credential_root/metadata.json"
+          minted_id="$(jq -er '.id | select(test("^tok_[a-f0-9]{32}$"))' "$credential_root/metadata.json")"
+          printf 'token_id=%s\n' "$minted_id" >> "$GITHUB_OUTPUT"
+
+          openssl pkeyutl -encrypt -pubin \
+            -inkey "$credential_root/recipient.pem" \
+            -in "$credential_root/runner.token" \
+            -out "$credential_root/runner-token.oaep-sha256.bin" \
+            -pkeyopt rsa_padding_mode:oaep \
+            -pkeyopt rsa_oaep_md:sha256
+          printf '%s\n' "$actual_fingerprint" > "$credential_root/recipient-public-key.sha256"
+          shred --remove "$credential_root/runner.token" "$credential_root/recipient.pem"
+          trap - EXIT
+
+      - name: Upload immutable sealed credential
+        if: ${{ inputs.operation == 'mint' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: big-red-runner-credential-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/owned-workstation-runner/metadata.json
+            ${{ runner.temp }}/owned-workstation-runner/recipient-public-key.sha256
+            ${{ runner.temp }}/owned-workstation-runner/runner-token.oaep-sha256.bin
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Revoke mint when sealed artifact publication failed
+        if: ${{ failure() && inputs.operation == 'mint' && steps.mint.outputs.token_id != '' }}
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          TOKEN_ID: ${{ steps.mint.outputs.token_id }}
+          STENSIBLY_WORKSPACE: default
+        run: |
+          set -euo pipefail
+          set +x
+          deployment_prefix="${CONVEX_DEPLOY_KEY%%|*}"
+          deployment_name="${deployment_prefix#*:}"
+          export CONVEX_URL="https://${deployment_name}.convex.cloud"
+          export STENSIBLY_SERVICE_SECRET="$(bunx convex env get STENSIBLY_SERVICE_SECRET --prod)"
+          STENSIBLY_BACKEND=convex bun src/tokens.ts revoke "$TOKEN_ID" >/dev/null
+
+      - name: Revoke exact runner credential
+        if: ${{ inputs.operation == 'revoke' }}
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          TOKEN_ID: ${{ inputs.token_id }}
+          STENSIBLY_WORKSPACE: default
+        run: |
+          set -euo pipefail
+          set +x
+          deployment_prefix="${CONVEX_DEPLOY_KEY%%|*}"
+          deployment_name="${deployment_prefix#*:}"
+          export CONVEX_URL="https://${deployment_name}.convex.cloud"
+          export STENSIBLY_SERVICE_SECRET="$(bunx convex env get STENSIBLY_SERVICE_SECRET --prod)"
+          STENSIBLY_BACKEND=convex bun src/tokens.ts revoke "$TOKEN_ID" >/dev/null
+          printf 'Revoked exact runner token ID `%s`.\n' "$TOKEN_ID" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record sealed mint
+        if: ${{ inputs.operation == 'mint' }}
+        env:
+          TOKEN_ID: ${{ steps.mint.outputs.token_id }}
+          RECIPIENT_PUBLIC_KEY_SHA256: ${{ inputs.recipient_public_key_sha256 }}
+        run: |
+          {
+            echo "### Owned workstation runner credential sealed"
+            echo
+            echo "- Token ID: \`$TOKEN_ID\`"
+            echo "- Recipient public-key SHA-256: \`$RECIPIENT_PUBLIC_KEY_SHA256\`"
+            echo "- Raw token printed or uploaded: \`false\`"
+            echo "- Artifact retention: \`1 day\`"
+          } >> "$GITHUB_STEP_SUMMARY"
