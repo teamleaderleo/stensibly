@@ -33,6 +33,26 @@ class FailingAuthenticator implements ApiTokenAuthenticator {
   }
 }
 
+class RunnerAuthenticator implements ApiTokenAuthenticator {
+  async authenticate(rawToken: string): Promise<TokenPrincipal | null> {
+    if (rawToken !== "hosted-token") return null;
+    return {
+      tokenId: "tok_runner",
+      name: "Big Red runner",
+      scopes: ["write"],
+      projects: ["stensibly"],
+      runnerGrant: {
+        version: 1,
+        actorId: "service:big-red-glaeda",
+        runnerType: "glaeda-workstation",
+        adapterId: "glaeda-workstation",
+        profiles: ["repo-query/v1"],
+        tools: ["claim_runner_work", "transition_runner_run"],
+      },
+    };
+  }
+}
+
 let store: StensiblyStore;
 let app: ReturnType<typeof createHostedApp>;
 
@@ -165,6 +185,34 @@ describe("hosted gateway", () => {
     expect(names).toContain("claim_runner_work");
     expect(names).toContain("reserve_workstation_adapter_command");
     expect(names).toContain("settle_runner_adapter_command");
+  });
+
+  test("rejects a runner-audience credential from the published MCP", async () => {
+    const runnerApp = createHostedApp({
+      ledger: new SqliteWorkLedger(store),
+      authenticator: new RunnerAuthenticator(),
+    });
+    const response = await runnerApp.request("/mcp", {
+      method: "POST",
+      headers: mcpHeaders(),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.headers.get(FAILURE_CATEGORY_HEADER)).toBe("authorization_failure");
+    expect(await response.json()).toEqual({
+      jsonrpc: "2.0",
+      error: {
+        code: -32001,
+        message: "Runner credentials are accepted only by the runner endpoint",
+      },
+      id: null,
+    });
   });
 
   test("applies exact-origin CORS only to the REST surface", async () => {

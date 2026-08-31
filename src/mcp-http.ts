@@ -106,6 +106,16 @@ async function handleMcpHttpRequestCore(
       "WWW-Authenticate": "Bearer",
     }, "auth_failure");
   }
+  if (principal.runnerGrant) {
+    return jsonRpcError(
+      403,
+      -32001,
+      "Runner credentials are accepted only by the runner endpoint",
+      null,
+      {},
+      "authorization_failure",
+    );
+  }
 
   let body: unknown;
   try {
