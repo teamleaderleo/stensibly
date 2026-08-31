@@ -1,18 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { runStatuses, type WorkRunStatus } from "./run-statuses.js";
 import { actorSchema, type ActorInput } from "./schemas.js";
 import { ConflictError, NotFoundError, StensiblyStore } from "./store.js";
 
-export const runStatuses = [
-  "queued",
-  "starting",
-  "running",
-  "waiting",
-  "blocked",
-  "succeeded",
-  "failed",
-  "cancelled",
-  "abandoned",
-] as const;
+export { runStatuses } from "./run-statuses.js";
+export type { WorkRunStatus } from "./run-statuses.js";
 
 export const runCommands = [
   "start",
@@ -26,7 +18,6 @@ export const runCommands = [
   "cancel",
 ] as const;
 
-export type WorkRunStatus = typeof runStatuses[number];
 export type WorkRunCommand = typeof runCommands[number];
 
 export interface RunUsage {

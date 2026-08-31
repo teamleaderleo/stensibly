@@ -1,5 +1,5 @@
 import type { WorkRun, WorkRunCommand } from "./runs.js";
-import { ConflictError } from "./store.js";
+import { ConflictError } from "./errors.js";
 
 /**
  * Commands a runner may request while acting under an existing run authority
