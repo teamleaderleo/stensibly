@@ -1,0 +1,38 @@
+{
+  "name": "stensibly",
+  "version": "0.1.0",
+  "description": "Coordinate exact work, machine dispatch, and bounded receipts through Stensibly.",
+  "author": {
+    "name": "Team Leader Leo",
+    "url": "https://github.com/teamleaderleo"
+  },
+  "homepage": "https://www.stensibly.com/",
+  "repository": "https://github.com/teamleaderleo/stensibly",
+  "license": "Apache-2.0",
+  "keywords": [
+    "coordination",
+    "dispatch",
+    "workstations",
+    "receipts"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Stensibly",
+    "shortDescription": "Dispatch exact work and inspect bounded receipts",
+    "longDescription": "Use Stensibly as the durable work, context, authority, and dispatch layer for runner-neutral execution. Pair it with GitHub for live repository and provider facts.",
+    "developerName": "Team Leader Leo",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://www.stensibly.com/",
+    "defaultPrompt": [
+      "Dispatch this exact task to the right owned workstation.",
+      "Show the bounded receipt for this Stensibly run.",
+      "Resume claimed work from canonical state."
+    ],
+    "brandColor": "#A52A2A"
+  },
+  "mcpServers": "./.mcp.json"
+}
