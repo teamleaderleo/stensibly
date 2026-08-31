@@ -305,12 +305,16 @@ export function consentPage(input: {
   const offlineText = input.scopes.includes("offline_access")
     ? '<p class="muted">A refresh token keeps the connection active until it is revoked or expires.</p>'
     : "";
+  const consentFields = (decision: "approve" | "deny") =>
+    `<input type="hidden" name="request" value="${escapeHtml(input.payload)}">`
+    + `<input type="hidden" name="signature" value="${escapeHtml(input.signature)}">`
+    + `<input type="hidden" name="decision" value="${decision}">`;
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Authorise Stensibly</title><style>
-body{font:16px/1.5 system-ui,sans-serif;max-width:620px;margin:48px auto;padding:0 20px;color:#171717}main{border:1px solid #ddd;border-radius:16px;padding:28px}button{font:inherit;padding:10px 16px;border-radius:10px;border:1px solid #aaa;cursor:pointer}.approve{background:#171717;color:white;border-color:#171717}.actions{display:flex;gap:10px;margin-top:24px}.muted{color:#666}</style></head>
+body{font:16px/1.5 system-ui,sans-serif;max-width:620px;margin:48px auto;padding:0 20px;color:#171717}main{border:1px solid #ddd;border-radius:16px;padding:28px}button{font:inherit;min-height:44px;padding:10px 16px;border-radius:10px;border:1px solid #aaa;cursor:pointer;touch-action:manipulation}.approve{background:#171717;color:white;border-color:#171717}.actions{display:flex;gap:10px;margin-top:24px}.actions form{margin:0}.muted{color:#666}</style></head>
 <body><main><h1>Authorise ${escapeHtml(input.clientName)}</h1><p>Signed in as <strong>${escapeHtml(input.accountName)}</strong>.</p><p>This client is requesting:</p><ul>${scopeItems}</ul><p class="muted">${escapeHtml(projectText)}</p>${offlineText}
-<form method="post" action="/oauth/consent"><input type="hidden" name="request" value="${escapeHtml(input.payload)}"><input type="hidden" name="signature" value="${escapeHtml(input.signature)}"><div class="actions"><button class="approve" name="decision" value="approve">Authorise</button><button name="decision" value="deny">Cancel</button></div></form></main></body></html>`;
+<div class="actions"><form method="post" action="/oauth/consent">${consentFields("approve")}<button class="approve" type="submit">Authorise</button></form><form method="post" action="/oauth/consent">${consentFields("deny")}<button type="submit">Cancel</button></form></div></main></body></html>`;
 }
 
 export function redirectAuthorizationError(
