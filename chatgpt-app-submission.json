@@ -92,16 +92,16 @@
         "destructive_justification": "Does not delete, overwrite, dispatch, or otherwise change state."
       }
     },
-    "get_item": {
+    "get_runner_context": {
       "annotations": {
         "readOnlyHint": true,
         "openWorldHint": false,
         "destructiveHint": false
       },
       "justifications": {
-        "read_only_justification": "Returns one work item with its canonical events, artifacts, runs, and dependencies.",
+        "read_only_justification": "Returns a deterministic bounded handoff packet with exact work, run, artifact, dependency, and receipt references.",
         "open_world_justification": "Reads only the authenticated Stensibly workspace.",
-        "destructive_justification": "Does not alter the item, its history, or any execution."
+        "destructive_justification": "Does not alter the item, its history, authority, or any execution."
       }
     },
     "get_project_attachment": {
@@ -282,8 +282,8 @@
       "description": "Recover an exact workstation run and bounded receipt from canonical state.",
       "user_prompt": "Read this Stensibly item and tell me the exact run, execution target, source identity, terminal result reference, and whether it completed successfully.",
       "file_attachment_urls": null,
-      "tools_triggered": "get_item",
-      "expected_output": "Returns the canonical item and identifies the exact run and bounded receipt evidence without inventing machine state.",
+      "tools_triggered": "get_runner_context",
+      "expected_output": "Returns a bounded canonical packet and identifies the exact run and receipt evidence without inventing machine state.",
       "expected_output_url": null
     },
     {

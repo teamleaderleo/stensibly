@@ -1089,6 +1089,7 @@ function parseContextPacket(
   const input = strictRecord(value, "Runner context packet", [
     "version",
     "generatedAt",
+    "packetFingerprint",
     "item",
     "intent",
     "events",
@@ -1101,6 +1102,12 @@ function parseContextPacket(
   ]);
   if (input.version !== 1) throw new RangeError("Runner context packet version must be 1");
   canonicalTimestamp(input.generatedAt, "Runner context packet generation time");
+  if (
+    input.packetFingerprint !== undefined
+    && !digestPattern.test(String(input.packetFingerprint))
+  ) {
+    throw new RangeError("Runner context packet fingerprint must be a SHA-256 digest");
+  }
   const item = strictRecord(input.item, "Runner context packet item", [] , true);
   if (item.id !== itemId || item.project !== project) {
     throw new RangeError("Runner context packet item does not match command");

@@ -7,8 +7,8 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 Normal hosted ChatGPT publication uses the reviewed **`published_default`** profile with **21** outcome-level MCP tools. The complete current list lives in [`docs/chatgpt-app-actions.json`](chatgpt-app-actions.json), which is the release receipt and canonical owner for the published action set.
 
 ```text
-published ChatGPT tool contract: sha256:7d0320b8f96ef9f344d72251708fe9e51e3082b080a6735daaa564c78e16e223
-names-only diagnostic:            sha256:56203aa95b362fccb5429f3861f5db8593dc835a62007642ada2872aa9226190
+published ChatGPT tool contract: sha256:e4fdf6767b4e9d283903b2fadd46b1189febcbad8060a507ae71dc3a2eb99e78
+names-only diagnostic:            sha256:91919251f55e23b57292b2eb470bedfb8d86080da8a56c1df97641de9aec18b4
 ```
 
 The public profile keeps frequent work coordination, exact runner-neutral dispatch, project context, bounded GitHub issue work, repository health/CI diagnosis, reviewed publication, and PR landing immediately visible. Each visible tool carries canonical `readOnlyHint`, `destructiveHint`, and `openWorldHint` metadata derived from the capability policy.
@@ -29,7 +29,7 @@ Before a dogfood run:
 
 The public profile is designed so an agent can understand the project and complete common work without learning internal policy vocabulary.
 
-- use `get_brief`, `list_work`, `get_item`, and `get_project_attachment` for project/work context;
+- use `get_brief`, `list_work`, `get_runner_context`, and `get_project_attachment` for project/work context; use the broader discoverable profile only when full item history is actually needed;
 - use `claim_work`, `block_work`, `unblock_work`, `complete_work`, and `handoff_work` for ordinary work transitions;
 - use `create_item`, attach or record exact source evidence, then use `dispatch_work` to queue that item generation for one exact runner profile; machine mechanics and terminal settlement remain runner-owned;
 - use `github_repo_health` before a consequential repository workflow;

@@ -39,7 +39,7 @@ describe("ChatGPT app action snapshot", () => {
       }))
       .digest("hex")}`;
 
-    expect(snapshot.snapshotVersion).toBe(20);
+    expect(snapshot.snapshotVersion).toBe(21);
     expect(snapshot.manifestVersion).toBe(MCP_TOOL_MANIFEST_VERSION);
     expect(snapshot.toolCount).toBe(21);
     expect(snapshot.toolCount).toBe(selection.toolNames.length);
@@ -47,6 +47,8 @@ describe("ChatGPT app action snapshot", () => {
     expect(snapshot.toolContractFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(snapshot.tools).toEqual([...selection.toolNames]);
     expect(snapshot.tools).toContain("get_brief");
+    expect(snapshot.tools).toContain("get_runner_context");
+    expect(snapshot.tools).not.toContain("get_item");
     expect(snapshot.tools).toContain("attach_artifact");
     expect(snapshot.tools).toContain("dispatch_work");
     expect(snapshot.tools).toContain("get_project_attachment");
