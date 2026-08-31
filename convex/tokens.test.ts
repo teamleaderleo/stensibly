@@ -11,6 +11,54 @@ beforeEach(() => {
 });
 
 describe("Convex API tokens", () => {
+  test("round-trips one exact runner-only credential grant", async () => {
+    const t = convexTest(schema, modules);
+    const runnerGrant = {
+      version: 1 as const,
+      actorId: "service:big-red-glaeda",
+      runnerType: "glaeda-workstation",
+      adapterId: "glaeda-workstation",
+      profiles: ["repo-query/v1"],
+      tools: [
+        "claim_runner_work" as const,
+        "transition_runner_run" as const,
+        "reserve_workstation_adapter_command" as const,
+        "settle_runner_adapter_command" as const,
+      ],
+    };
+    const registered = await t.mutation(convexApi.tokens.register, {
+      serviceSecret,
+      workspace: "test",
+      id: "tok_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      name: "Big Red Glaeda",
+      secretHash: "c".repeat(64),
+      scopes: ["write"],
+      projects: ["glaeda"],
+      runnerGrant,
+    }) as any;
+    expect(registered).toMatchObject({
+      scopes: ["write"],
+      projects: ["glaeda"],
+      runnerGrant,
+    });
+    expect(await t.query(convexApi.tokens.authenticate, {
+      serviceSecret,
+      workspace: "test",
+      id: registered.id,
+      secretHash: "c".repeat(64),
+    })).toMatchObject({ runnerGrant });
+    await expect(t.mutation(convexApi.tokens.register, {
+      serviceSecret,
+      workspace: "test",
+      id: "tok_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      name: "Overbroad Big Red",
+      secretHash: "d".repeat(64),
+      scopes: ["read", "write"],
+      projects: ["glaeda"],
+      runnerGrant,
+    })).rejects.toThrow("scope must be exactly write");
+  });
+
   test("registers, authenticates, scopes, lists, and revokes hashed tokens", async () => {
     const t = convexTest(schema, modules);
     const secretHash = "a".repeat(64);

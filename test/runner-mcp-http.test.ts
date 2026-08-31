@@ -27,6 +27,50 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 describe("generic runner MCP endpoint", () => {
+  test("binds a runner credential to one actor, runner type, profile, and tool vocabulary", async () => {
+    const token = createApiToken(store, {
+      name: "Exact alpha runner",
+      scopes: ["write"],
+      projects: ["alpha"],
+      runnerGrant: {
+        version: 1,
+        actorId: runner.id,
+        runnerType: "generic-mcp",
+        adapterId: "generic-mcp",
+        profiles: ["codex-default"],
+        tools: ["claim_runner_work", "transition_runner_run"],
+      },
+    });
+    const wrongActor = await runnerRequest(token.token, toolCall(80, "claim_runner_work", {
+      actor: { ...runner, id: "agent:other" },
+      runnerType: "generic-mcp",
+      runnerProfile: "codex-default",
+      project: "alpha",
+    }));
+    expect(wrongActor.status).toBe(403);
+    const wrongProfile = await runnerRequest(token.token, toolCall(81, "claim_runner_work", {
+      actor: runner,
+      runnerType: "generic-mcp",
+      runnerProfile: "other-profile",
+      project: "alpha",
+    }));
+    expect(wrongProfile.status).toBe(403);
+    const ungrantedRead = await runnerRequest(token.token, toolCall(82, "list_runner_runs", {
+      project: "alpha",
+    }));
+    expect(ungrantedRead.status).toBe(403);
+    const claimed = await runnerRequest(token.token, toolCall(83, "claim_runner_work", {
+      actor: runner,
+      runnerType: "generic-mcp",
+      runnerProfile: "codex-default",
+      project: "alpha",
+      runId: alphaRunId,
+      leaseSeconds: 300,
+      idempotencyKey: "exact-runner-claim",
+    }));
+    expect(claimed.status).toBe(200);
+  });
+
   test("claims exact context, advances the run, heartbeats, and finishes", async () => {
     const token = createApiToken(store, {
       name: "Alpha runner",

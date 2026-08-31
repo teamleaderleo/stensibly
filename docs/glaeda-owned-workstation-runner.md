@@ -46,8 +46,26 @@ physical-node facts; changing them does not change the repository query vocabula
 
 ## One-shot launch
 
-Use an owner-only Stensibly machine-token file (`0600`) and do not put the token on the command
-line or in logs:
+Create a runner-audience credential in the protected Stensibly operator environment. The command
+registers only the token hash, writes the one-time credential directly to a new absolute file with
+mode `0600`, and prints only the non-secret token record:
+
+```sh
+bun run tokens create-runner -- \
+  --name big-red-glaeda \
+  --project glaeda \
+  --actor-id service:big-red-glaeda \
+  --runner-type glaeda-workstation \
+  --adapter-id glaeda-workstation \
+  --profiles repo-query/v1 \
+  --output-file /protected/runner-credentials/big-red-glaeda.token
+```
+
+The grant has exactly `write` scope for one project and an explicit actor, runner type, adapter,
+profile list, and the four tools used by this one-shot runner (claim, transition, reserve, settle).
+It does not grant heartbeat or recovery. Ordinary API/MCP endpoints reject it. The runner endpoint
+rejects another actor, runner type, profile, adapter, tool, or project before dispatch. Use the
+owner-only token file and do not put the token on the command line or in logs:
 
 ```sh
 bun run glaeda:workstation -- \
@@ -104,3 +122,14 @@ or arbitrary process output. The result commit is the separately inspectable bou
   publication behavior.
 - Source-executing profiles require a separate execution identity and are not added by this bridge.
 - A GitHub request/result ref is fallback transport evidence, never work or redispatch authority.
+
+## Rotation, revocation, and recovery
+
+List token records in the protected operator environment with `bun run tokens list`; the token ID,
+grant, creation time, and revocation time are safe control metadata, while the raw token is never
+recoverable from Stensibly. To rotate, create a new credential at a fresh owner-only path, verify one
+authenticated runner refusal/claim probe, switch the one-shot runner to that path, then run
+`bun run tokens revoke <old-token-id>`. To recover from a lost or suspect file, revoke its retained
+token ID and mint a successor; never copy a value out of logs, process listings, GitHub, or chat.
+Credential rotation changes runner authentication only. Existing Stensibly run, reservation,
+settlement, and replay identities remain canonical and do not authorize duplicate physical work.

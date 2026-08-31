@@ -1,4 +1,7 @@
 import { tokenScopes, type TokenScope } from "./auth.js";
+import { open, realpath, stat, unlink } from "node:fs/promises";
+import { dirname, isAbsolute } from "node:path";
+import { runnerCredentialTools } from "./token-contracts.js";
 import { createConvexWorkLedgerFromEnv } from "./convex-ledger.js";
 import { SqliteTokenProvider } from "./sqlite-token-provider.js";
 import { StensiblyStore } from "./store.js";
@@ -6,6 +9,10 @@ import {
   ConvexTokenProvider,
   type ApiTokenManager,
 } from "./token-provider.js";
+
+const oneShotWorkstationTools = runnerCredentialTools.filter((tool) =>
+  tool !== "heartbeat_runner_run"
+);
 
 const args = Bun.argv.slice(2);
 const command = args[0];
@@ -21,6 +28,29 @@ try {
         const created = await provider.create(options);
         console.log(JSON.stringify(created, null, 2));
         console.error("Save the token now. Stensibly stores only its hash.");
+      } else if (command === "create-runner") {
+        const options = parseCreateRunnerArgs(args.slice(1));
+        const created = await provider.create({
+          name: options.name,
+          scopes: ["write"],
+          projects: [options.project],
+          runnerGrant: {
+            version: 1,
+            actorId: options.actorId,
+            runnerType: options.runnerType,
+            adapterId: options.adapterId,
+            profiles: options.profiles,
+            tools: [...oneShotWorkstationTools],
+          },
+        });
+        try {
+          await writePrivateToken(options.outputFile, created.token);
+        } catch {
+          await provider.revoke(created.id).catch(() => undefined);
+          throw new Error("Runner token installation failed; the registered token was revoked");
+        }
+        const { token: _secret, ...record } = created;
+        console.log(JSON.stringify({ ...record, installed: true }, null, 2));
       } else if (command === "list") {
         requireNoArgs(args.slice(1), "list");
         console.log(JSON.stringify(await provider.list(), null, 2));
@@ -41,6 +71,72 @@ try {
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
+}
+
+function parseCreateRunnerArgs(args: string[]): {
+  name: string;
+  project: string;
+  actorId: string;
+  runnerType: string;
+  adapterId: string;
+  profiles: string[];
+  outputFile: string;
+} {
+  const values = new Map<string, string>();
+  const supported = new Set([
+    "--name", "--project", "--actor-id", "--runner-type", "--adapter-id",
+    "--profiles", "--output-file",
+  ]);
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index];
+    if (!flag || !supported.has(flag)) throw new Error(`Unknown create-runner argument: ${flag ?? "missing"}`);
+    if (values.has(flag)) throw new Error(`Duplicate create-runner argument: ${flag}`);
+    values.set(flag, requireValue(args, index + 1, flag));
+  }
+  const outputFile = values.get("--output-file") ?? "";
+  if (!isAbsolute(outputFile)) throw new Error("--output-file must be an absolute path");
+  const profiles = (values.get("--profiles") ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+  if (profiles.length === 0) throw new Error("--profiles requires at least one named profile");
+  return {
+    name: values.get("--name") ?? "",
+    project: values.get("--project") ?? "",
+    actorId: values.get("--actor-id") ?? "",
+    runnerType: values.get("--runner-type") ?? "",
+    adapterId: values.get("--adapter-id") ?? "",
+    profiles,
+    outputFile,
+  };
+}
+
+async function writePrivateToken(path: string, token: string): Promise<void> {
+  const parent = dirname(path);
+  const metadata = await stat(parent);
+  if (
+    !metadata.isDirectory()
+    || await realpath(parent) !== parent
+    || metadata.uid !== process.getuid?.()
+    || (metadata.mode & 0o077) !== 0
+  ) throw new Error("Runner token parent must be a canonical owner-only directory");
+  let created = false;
+  try {
+    const file = await open(path, "wx", 0o600);
+    created = true;
+    try {
+      await file.writeFile(`${token}\n`, { encoding: "utf8" });
+      await file.sync();
+    } finally {
+      await file.close();
+    }
+    const directory = await open(parent, "r");
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
+  } catch (error) {
+    if (created) await unlink(path).catch(() => undefined);
+    throw error;
+  }
 }
 
 function createProvider(): {
@@ -138,6 +234,9 @@ function usage(): string {
 
 Usage:
   bun run tokens create --name <name> --scopes <read,write,admin> [--projects <a,b>]
+  bun run tokens create-runner --name <name> --project <project> --actor-id <actor> \\
+    --runner-type <type> --adapter-id <adapter> --profiles <profile,...> \\
+    --output-file <absolute-owner-only-path>
   bun run tokens list
   bun run tokens revoke <token-id>
 

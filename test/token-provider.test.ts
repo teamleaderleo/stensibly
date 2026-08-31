@@ -96,6 +96,35 @@ describe("Convex token provider", () => {
     expect(JSON.stringify(registration)).not.toContain(parsed?.secret ?? "impossible");
   });
 
+  test("registers a runner grant without placing the raw token in Convex arguments", async () => {
+    const client = new RecordingCaller();
+    const provider = new ConvexTokenProvider({
+      client,
+      serviceSecret: "private-service-secret",
+      workspace: "shared-work",
+    });
+    const runnerGrant = {
+      version: 1 as const,
+      actorId: "service:big-red-glaeda",
+      runnerType: "glaeda-workstation",
+      adapterId: "glaeda-workstation",
+      profiles: ["repo-query/v1"],
+      tools: ["claim_runner_work" as const],
+    };
+    const created = await provider.create({
+      name: "Big Red Glaeda",
+      scopes: ["write"],
+      projects: ["glaeda"],
+      runnerGrant,
+    });
+    expect(client.calls[0]).toMatchObject({
+      type: "mutation",
+      name: "tokens:register",
+      args: { scopes: ["write"], projects: ["glaeda"], runnerGrant },
+    });
+    expect(JSON.stringify(client.calls[0])).not.toContain(created.token);
+  });
+
   test("rejects malformed tokens without calling Convex", async () => {
     const client = new RecordingCaller();
     const provider = new ConvexTokenProvider({

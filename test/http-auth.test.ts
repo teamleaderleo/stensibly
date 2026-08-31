@@ -106,6 +106,28 @@ describe("HTTP API authentication", () => {
     expect(response.status).toBe(403);
   });
 
+  test("rejects runner credentials from the ordinary API audience", async () => {
+    const token = createApiToken(store, {
+      name: "Big Red runner",
+      scopes: ["write"],
+      projects: ["scrapbook"],
+      runnerGrant: {
+        version: 1,
+        actorId: "service:big-red-glaeda",
+        runnerType: "glaeda-workstation",
+        adapterId: "glaeda-workstation",
+        profiles: ["repo-query/v1"],
+        tools: ["claim_runner_work"],
+      },
+    });
+    const response = await app.request("/api/items", { headers: bearer(token.token) });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: "Runner credentials are accepted only by the runner endpoint",
+      code: "runner_credential_wrong_audience",
+    });
+  });
+
   test("read-write tokens stay inside their project allowlist", async () => {
     const token = createApiToken(store, {
       name: "Scrapbook worker",

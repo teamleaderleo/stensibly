@@ -12,6 +12,8 @@ import {
   type TokenPrincipal,
   type TokenRecord,
   type TokenScope,
+  type RunnerCredentialGrantV1,
+  normalizeRunnerCredentialGrant,
 } from "./token-contracts.js";
 
 export { tokenScopes } from "./token-contracts.js";
@@ -31,6 +33,7 @@ interface TokenRow {
   projects_json: string | null;
   created_at: string;
   revoked_at: string | null;
+  runner_grant_json: string | null;
 }
 
 export function createApiToken(
@@ -39,6 +42,7 @@ export function createApiToken(
     name: string;
     scopes: TokenScope[];
     projects?: string[] | null;
+    runnerGrant?: RunnerCredentialGrantV1;
   },
 ): CreatedToken {
   ensureAuthSchema(store);
@@ -50,6 +54,13 @@ export function createApiToken(
   const scopes = normalizeScopes(input.scopes);
   if (scopes.length === 0) throw new RangeError("Token requires at least one scope");
   const projects = normalizeProjects(input.projects);
+  const runnerGrant = normalizeRunnerCredentialGrant(input.runnerGrant);
+  if (runnerGrant && (projects === null || projects.length !== 1)) {
+    throw new RangeError("Runner credential requires exactly one project");
+  }
+  if (runnerGrant && (scopes.length !== 1 || scopes[0] !== "write")) {
+    throw new RangeError("Runner credential scope must be exactly write");
+  }
   const id = `tok_${randomUUID().replaceAll("-", "")}`;
   const secret = randomBytes(32).toString("base64url");
   const token = `stn.${id}.${secret}`;
@@ -58,8 +69,8 @@ export function createApiToken(
   store.db
     .query(`
       INSERT INTO api_tokens (
-        id, name, secret_hash, scopes_json, projects_json, created_at, revoked_at
-      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)
+        id, name, secret_hash, scopes_json, projects_json, runner_grant_json, created_at, revoked_at
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)
     `)
     .run(
       id,
@@ -67,6 +78,7 @@ export function createApiToken(
       hashSecret(secret),
       JSON.stringify(scopes),
       projects === null ? null : JSON.stringify(projects),
+      runnerGrant === undefined ? null : JSON.stringify(runnerGrant),
       now,
     );
 
@@ -76,6 +88,7 @@ export function createApiToken(
     token,
     scopes,
     projects,
+    ...(runnerGrant ? { runnerGrant } : {}),
     createdAt: now,
     revokedAt: null,
   };
@@ -103,6 +116,7 @@ export function authenticateApiToken(
     name: row.name,
     scopes: parseScopes(row.scopes_json),
     projects: parseProjects(row.projects_json),
+    ...parseRunnerGrant(row.runner_grant_json),
   };
 }
 
@@ -167,6 +181,7 @@ export function ensureAuthSchema(store: StensiblyStore): void {
       secret_hash TEXT NOT NULL,
       scopes_json TEXT NOT NULL,
       projects_json TEXT,
+      runner_grant_json TEXT,
       created_at TEXT NOT NULL,
       revoked_at TEXT
     );
@@ -174,6 +189,13 @@ export function ensureAuthSchema(store: StensiblyStore): void {
     CREATE INDEX IF NOT EXISTS idx_api_tokens_revoked
       ON api_tokens(revoked_at, created_at DESC);
   `);
+  const columns = new Set(store.db
+    .query<{ name: string }, []>("PRAGMA table_info(api_tokens)")
+    .all()
+    .map((column) => column.name));
+  if (!columns.has("runner_grant_json")) {
+    store.db.exec("ALTER TABLE api_tokens ADD COLUMN runner_grant_json TEXT");
+  }
 }
 
 function normalizeScopes(scopes: TokenScope[]): TokenScope[] {
@@ -223,12 +245,21 @@ function parseProjects(value: string | null): string[] | null {
   return parsed.filter((project): project is string => typeof project === "string");
 }
 
+function parseRunnerGrant(value: string | null): { runnerGrant?: RunnerCredentialGrantV1 } {
+  if (value === null) return {};
+  const parsed = JSON.parse(value) as RunnerCredentialGrantV1;
+  const runnerGrant = normalizeRunnerCredentialGrant(parsed);
+  if (!runnerGrant) throw new Error("Stored runner credential grant is invalid");
+  return { runnerGrant };
+}
+
 function mapTokenRecord(row: TokenRow): TokenRecord {
   return {
     id: row.id,
     name: row.name,
     scopes: parseScopes(row.scopes_json),
     projects: parseProjects(row.projects_json),
+    ...parseRunnerGrant(row.runner_grant_json),
     createdAt: row.created_at,
     revokedAt: row.revoked_at,
   };

@@ -157,6 +157,15 @@ async function authorizeMessage(
     );
   }
 
+  const grantDenial = await authorizeRunnerCredentialGrant(
+    ledger,
+    principal,
+    toolName,
+    args,
+    requestId(payload),
+  );
+  if (grantDenial) return grantDenial;
+
   const project = await resolveProject(ledger, toolName, args);
   if (!project && principal.projects !== null) {
     return jsonRpcError(
@@ -177,6 +186,91 @@ async function authorizeMessage(
     );
   }
   return null;
+}
+
+async function authorizeRunnerCredentialGrant(
+  ledger: WorkLedger,
+  principal: TokenPrincipal,
+  toolName: string,
+  args: Record<string, unknown>,
+  id: unknown,
+): Promise<Response | null> {
+  const grant = principal.runnerGrant;
+  if (!grant) return null;
+  if (!grant.tools.includes(toolName as typeof grant.tools[number])) {
+    return runnerGrantDenied("Runner credential does not grant this tool", id);
+  }
+  const actor = isRecord(args.actor) ? stringArgument(args.actor, "id") : undefined;
+  if (actor !== undefined && actor !== grant.actorId) {
+    return runnerGrantDenied("Runner credential actor changed", id);
+  }
+  if (toolName === "claim_runner_work") {
+    if (
+      stringArgument(args, "runnerType") !== grant.runnerType
+      || !profileGranted(grant.profiles, stringArgument(args, "runnerProfile"))
+    ) {
+      return runnerGrantDenied("Runner credential type or profile changed", id);
+    }
+    return null;
+  }
+  if (toolName === "reserve_workstation_adapter_command") {
+    if (
+      stringArgument(args, "adapterId") !== grant.adapterId
+      || !profileGranted(grant.profiles, stringArgument(args, "profileId"))
+    ) {
+      return runnerGrantDenied("Runner credential adapter or profile changed", id);
+    }
+    return null;
+  }
+  if (toolName === "settle_runner_adapter_command") {
+    const commands = runnerAdapterCommandLedger(ledger);
+    const idempotencyKey = stringArgument(args, "reservationIdempotencyKey");
+    if (!commands || !idempotencyKey) {
+      return runnerGrantDenied("Runner credential settlement lacks exact reservation", id);
+    }
+    try {
+      const lookup = await commands.getRunnerAdapterCommand({ idempotencyKey });
+      if (
+        !lookup
+        || lookup.command.adapterId !== grant.adapterId
+        || !profileGranted(grant.profiles, lookup.command.profileId)
+        || lookup.command.actor.id !== grant.actorId
+      ) return runnerGrantDenied("Runner credential settlement changed identity", id);
+    } catch {
+      return runnerGrantDenied("Runner credential settlement cannot resolve identity", id);
+    }
+    return null;
+  }
+  if (toolName === "heartbeat_runner_run" || toolName === "transition_runner_run") {
+    const runs = runnerLedger(ledger);
+    const runId = stringArgument(args, "id");
+    try {
+      const run = runId && runs ? await runs.getRun(runId) : null;
+      if (
+        !run
+        || run.runnerType !== grant.runnerType
+        || !profileGranted(grant.profiles, run.runnerProfile)
+      ) return runnerGrantDenied("Runner credential run identity changed", id);
+    } catch {
+      return runnerGrantDenied("Runner credential cannot resolve run identity", id);
+    }
+  }
+  return null;
+}
+
+function profileGranted(profiles: readonly string[], profile: string | undefined): boolean {
+  return profile !== undefined && profiles.includes(profile);
+}
+
+function runnerGrantDenied(message: string, id: unknown): Response {
+  return jsonRpcError(
+    403,
+    -32001,
+    message,
+    id,
+    {},
+    "authorization_failure",
+  );
 }
 
 async function resolveProject(
