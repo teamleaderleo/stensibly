@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
   buildWorkerGlance,
+  PI_LUNA_RECEIPT_SCHEMA_VERSION,
   SOL_LUNA_RECEIPT_SCHEMA_VERSION,
   WORKER_GLANCE_MAX_ARTIFACT_BYTES,
   WORKER_GLANCE_MAX_OUTPUT_CHARS,
@@ -146,7 +147,60 @@ async function createRun(root: string, name: string, options: RunOptions = {}): 
   return directory;
 }
 
+async function createPiRun(root: string, name: string): Promise<string> {
+  const directory = join(root, name);
+  await mkdir(directory, { recursive: true });
+  await json(join(directory, "receipt.json"), {
+    ...receipt(directory, {
+      schemaVersion: PI_LUNA_RECEIPT_SCHEMA_VERSION,
+      changedPaths: ["src/pi.ts"],
+      commitsMade: ["pi-commit"],
+    }),
+    pi: {},
+    invocation: {},
+    usage: {
+      input: 100,
+      cacheRead: 80,
+      output: 20,
+      reasoning: 10,
+      totalTokens: 210,
+      cost: { total: 0.01 },
+    },
+  });
+  await json(join(directory, "worker-result.json"), {
+    status: "complete",
+    verification: ["passed"],
+    summary: "COLD PI RESULT SUMMARY SHOULD NOT APPEAR",
+  });
+  await writeFile(join(directory, "stdout.jsonl"), "COLD PI RAW MODEL MESSAGE\n");
+  await writeFile(join(directory, "stderr.log"), "COLD PI HARNESS ERROR SECRET\n");
+  return directory;
+}
+
 describe("worker glance", () => {
+  test("projects Pi receipts through the same bounded row without reading prose", async () => {
+    const root = await mkdtemp(join(tmpdir(), "worker-glance-pi-"));
+    temporaryRoots.push(root);
+    const run = await createPiRun(root, "pi-run");
+
+    const projection = await buildWorkerGlance([run]);
+    expect(projection.rows[0]).toMatchObject({
+      backend: "pi",
+      state: "terminal",
+      success: true,
+      provisional: true,
+      changedPathCount: 1,
+      changedPaths: ["src/pi.ts"],
+      commitCount: 1,
+      usage: { input: 100, cached: 80, uncached: 20, cachePercentage: 80, output: 20, reasoning: 10 },
+      resultStatus: "success",
+      verificationCount: 1,
+      verificationPass: "passed",
+      blocker: "none",
+    });
+    expect(JSON.stringify(projection)).not.toContain("COLD");
+  });
+
   test("shares one root, uses relative evidence pointers, and sorts deterministically", async () => {
     const root = await mkdtemp(join(tmpdir(), "worker-glance-prefix-"));
     temporaryRoots.push(root);
