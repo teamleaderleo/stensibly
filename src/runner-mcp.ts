@@ -33,6 +33,8 @@ export interface RunnerMcpServerOptions {
   concurrency?: Partial<RunnerConcurrencyPolicy>;
 }
 
+const restartableClaimStatuses = new Set(["starting", "running", "waiting"]);
+
 export function createRunnerMcpServer(
   ledger: WorkLedger,
   options: RunnerMcpServerOptions = {},
@@ -81,6 +83,8 @@ export function createRunnerMcpServer(
     async ({ maxContextCharacters, ...input }) => asToolResult(async () => {
       const run = await runs.claimRunnerWork({ ...input, concurrency });
       if (!run) return null;
+      const current = await runs.getRun(run.id);
+      if (!restartableClaimStatuses.has(current.status)) return null;
       const authorityFence = runAuthorityFence(run);
       if (!authorityFence) throw new Error("Claimed run did not return an authority fence");
       return {

@@ -201,6 +201,19 @@ describe("generic runner MCP endpoint", () => {
       status: "succeeded",
       executionRecords: [{ actual: executionActual }],
     });
+
+    const terminalClaimReplay = await readToolJson<null>(
+      await runnerRequest(token.token, toolCall(6, "claim_runner_work", {
+        actor: runner,
+        runnerType: "generic-mcp",
+        runnerProfile: "codex-default",
+        runId: alphaRunId,
+        externalRunId: "mcp-session-alpha",
+        leaseSeconds: 600,
+        idempotencyKey: "claim-alpha",
+      })),
+    );
+    expect(terminalClaimReplay).toBeNull();
   });
 
   test("enforces runner scopes and project allowlists before dispatch", async () => {
