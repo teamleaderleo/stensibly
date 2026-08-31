@@ -7,13 +7,15 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 Normal hosted ChatGPT publication uses the reviewed **`published_default`** profile with **21** outcome-level MCP tools. The complete current list lives in [`docs/chatgpt-app-actions.json`](chatgpt-app-actions.json), which is the release receipt and canonical owner for the published action set.
 
 ```text
-reviewed metadata:                sha256:42869e8662788716cc7083481c187eed993804472fa5d5e8460ccdfdaa3b0793
-published ChatGPT tool contract:  sha256:05286477065988eea49d07e66b6513eea6df1daa1201d3b4e86c3505d8569a23
+reviewed metadata:                sha256:9e89917a5fb2b7cf7e1e5a0e921f8c4be5700be15d88a6f1f20dfedf82154f89
+published ChatGPT tool contract:  sha256:0b9f2cc9b2412ec8591d932d69131b7140ae4d53603e4b8b0b1c9549776b9730
 server instructions:              sha256:4bf979bbccbc647d41e5272cfb48890b62e27f12aeefbe060dec9ca213174832
 names-only diagnostic:            sha256:91919251f55e23b57292b2eb470bedfb8d86080da8a56c1df97641de9aec18b4
 ```
 
 The public profile keeps frequent work coordination, exact runner-neutral dispatch, project context, bounded GitHub issue work, repository health/CI diagnosis, reviewed publication, and PR landing immediately visible. Each visible tool carries canonical `readOnlyHint`, `destructiveHint`, and `openWorldHint` metadata derived from the capability policy.
+
+Every public tool also returns a host-validated `structuredContent.data` JSON envelope alongside the readable text result. The envelope is intentionally generic at this stage; replace it with precise per-tool field schemas incrementally, with the preflight warning remaining visible until that work is complete.
 
 The broader **`full_internal`** profile remains available to explicit internal/admin clients. It retains long-tail provider discovery, receipts, worker enrolment, continuation machinery, low-level repository primitives, and recovery operations. Public visibility and backend capability stay separate.
 

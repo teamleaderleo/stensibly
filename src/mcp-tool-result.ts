@@ -42,11 +42,13 @@ export async function asToolResult(read: () => Promise<unknown>) {
   try {
     const text = JSON.stringify(value, null, 2);
     if (typeof text !== "string") throw new Error("Tool result was not JSON serializable");
+    const data = JSON.parse(text) as unknown;
     return {
       content: [{
         type: "text" as const,
         text,
       }],
+      structuredContent: { data },
     };
   } catch {
     return {

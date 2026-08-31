@@ -1,6 +1,20 @@
 import { expect, test } from "bun:test";
 import { asToolResult } from "../src/mcp-tool-result.ts";
 
+test("returns one canonical structured JSON envelope with the readable result", async () => {
+  const source = { id: "item-1", nested: { status: "ready" } };
+  const result = await asToolResult(async () => source);
+
+  expect(result).toEqual({
+    content: [{
+      type: "text",
+      text: JSON.stringify(source, null, 2),
+    }],
+    structuredContent: { data: source },
+  });
+  expect(result.structuredContent?.data).not.toBe(source);
+});
+
 test("preserves an ordinary Error own-data message", async () => {
   await expect(asToolResult(async () => {
     throw new Error("bounded domain failure");
