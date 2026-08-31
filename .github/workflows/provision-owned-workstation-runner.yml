@@ -35,6 +35,7 @@ on:
         options:
           - glaeda
           - stensibly
+          - quarry
       recipient_public_key_base64:
         description: Base64 PEM RSA public key for mint (non-secret)
         required: false
@@ -94,7 +95,7 @@ jobs:
           test -n "$CONVEX_DEPLOY_KEY" || { echo "Missing protected Convex deploy key" >&2; exit 1; }
           [[ "$RECIPIENT_NODE" =~ ^(big-red|air-blue)$ ]] \
             || { echo "Request requires one exact owned workstation" >&2; exit 1; }
-          [[ "$PROJECT" =~ ^(glaeda|stensibly)$ ]] \
+          [[ "$PROJECT" =~ ^(glaeda|stensibly|quarry)$ ]] \
             || { echo "Request requires one exact supported project" >&2; exit 1; }
           case "$OPERATION" in
             mint)
@@ -167,13 +168,17 @@ jobs:
           trap revoke_on_failure EXIT
 
           if [[ "$CREDENTIAL_CLASS" == runner ]]; then
+            runner_profiles="repo-query/v1,verify-focused/v1,verify-required/v1"
+            if [[ "$PROJECT" == quarry ]]; then
+              runner_profiles="repo-query/v1"
+            fi
             STENSIBLY_BACKEND=convex bun src/tokens.ts create-runner \
               --name "${RECIPIENT_NODE}-${PROJECT}-runner" \
               --project "$PROJECT" \
               --actor-id "service:${RECIPIENT_NODE}-glaeda" \
               --runner-type glaeda-workstation \
               --adapter-id glaeda-workstation \
-              --profiles repo-query/v1,verify-focused/v1,verify-required/v1 \
+              --profiles "$runner_profiles" \
               --output-file "$credential_root/credential.token" \
               > "$credential_root/metadata.json"
           else

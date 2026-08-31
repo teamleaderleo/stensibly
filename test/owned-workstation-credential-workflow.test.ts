@@ -8,16 +8,19 @@ const workflow = readFileSync(fileURLToPath(new URL(
 )), "utf8");
 
 describe("owned workstation credential delivery workflow", () => {
-  test("mints the same narrow runner grant for either node and exactly one project", () => {
+  test("mints a node-local grant for exactly one project and narrows Quarry", () => {
     expect(workflow).toContain("- big-red\n          - air-blue");
-    expect(workflow).toContain("- glaeda\n          - stensibly");
+    expect(workflow).toContain("- glaeda\n          - stensibly\n          - quarry");
     expect(workflow).toContain('--actor-id "service:${RECIPIENT_NODE}-glaeda"');
     expect(workflow).toContain('--project "$PROJECT"');
     expect(workflow).toContain("--runner-type glaeda-workstation");
     expect(workflow).toContain("--adapter-id glaeda-workstation");
     expect(workflow).toContain(
-      "--profiles repo-query/v1,verify-focused/v1,verify-required/v1",
+      'runner_profiles="repo-query/v1,verify-focused/v1,verify-required/v1"',
     );
+    expect(workflow).toContain('if [[ "$PROJECT" == quarry ]]');
+    expect(workflow).toContain('runner_profiles="repo-query/v1"');
+    expect(workflow).toContain('--profiles "$runner_profiles"');
   });
 
   test("keeps ephemeral control separate and bound to the selected project", () => {
