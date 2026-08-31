@@ -180,7 +180,7 @@ describe("MCP capability policy registry", () => {
       ["dispatch_work", { readOnlyHint: false, destructiveHint: true, openWorldHint: false }],
       ["github_add_issue_comment", {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         openWorldHint: true,
       }],
       ["github_land_pr", { readOnlyHint: false, destructiveHint: true, openWorldHint: true }],

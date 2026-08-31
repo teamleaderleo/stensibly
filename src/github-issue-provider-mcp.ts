@@ -409,7 +409,7 @@ export function registerGitHubIssueProviderTools(
         assignees: uniqueAssigneesSchema().optional(),
         idempotencyKey: idempotencyKeySchema(),
       },
-      annotations: { destructiveHint: false, idempotentHint: true },
+      annotations: { destructiveHint: true, idempotentHint: true },
     },
     async (input) => asToolResult(() => writeService(ledger).createIssue({
       ...providerContext(context, input.project, input.repository, "write"),
@@ -472,7 +472,7 @@ export function registerGitHubIssueProviderTools(
         signoff: workerSignoffSchema().optional(),
         idempotencyKey: idempotencyKeySchema(),
       },
-      annotations: { destructiveHint: false, idempotentHint: true },
+      annotations: { destructiveHint: true, idempotentHint: true },
     },
     async (input) => asToolResult(async () => {
       const identity = providerContext(context, input.project, input.repository, "write");

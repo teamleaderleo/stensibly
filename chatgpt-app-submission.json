@@ -1,0 +1,332 @@
+{
+  "$schema": "https://developers.openai.com/apps-sdk/schemas/chatgpt-app-submission.v1.json",
+  "schema_version": 1,
+  "app_info": {
+    "display_name": "Stensibly",
+    "subtitle": "Coordinate work and runners",
+    "description": "Stensibly helps users inspect and coordinate exact work, dispatch runner-neutral tasks to authorised execution targets, review bounded receipts, and perform guarded GitHub issue, CI, and publication workflows through ChatGPT.",
+    "category": "PRODUCTIVITY"
+  },
+  "tools": {
+    "attach_artifact": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Attaches a durable artifact reference to an existing Stensibly work item.",
+        "open_world_justification": "Changes only the private Stensibly workspace and does not publish the referenced content externally.",
+        "destructive_justification": "Adds a reference without deleting or overwriting existing work records."
+      }
+    },
+    "block_work": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": false,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Changes an exact work item to blocked state and releases its current lease.",
+        "open_world_justification": "Changes only governed state inside the Stensibly workspace.",
+        "destructive_justification": "Replaces the item's active state and clears its current responsibility lease under a generation fence."
+      }
+    },
+    "claim_work": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": false,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Acquires a time-bounded responsibility lease on an exact work item.",
+        "open_world_justification": "Changes only governed state inside the Stensibly workspace.",
+        "destructive_justification": "Changes who may act on the item and excludes competing claims until the lease ends."
+      }
+    },
+    "complete_work": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": false,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Marks exact work complete, clears its lease, and may create bounded continuation proposals.",
+        "open_world_justification": "Changes only governed state inside the Stensibly workspace.",
+        "destructive_justification": "Applies a terminal state transition that replaces the item's active responsibility state."
+      }
+    },
+    "create_item": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Creates a new task, finding, question, decision, tip, handoff, or note in Stensibly.",
+        "open_world_justification": "Creates a record only in the private Stensibly workspace.",
+        "destructive_justification": "Adds a new record without deleting or overwriting existing work."
+      }
+    },
+    "dispatch_work": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": false,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Claims an exact work generation and queues one runner-neutral execution run.",
+        "open_world_justification": "Changes Stensibly work and run state while the selected runner owns any physical execution.",
+        "destructive_justification": "Starts an execution workflow and changes responsibility under exact generation and idempotency fences."
+      }
+    },
+    "get_brief": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Returns a compact project briefing without changing work or authority state.",
+        "open_world_justification": "Reads only the authenticated Stensibly workspace.",
+        "destructive_justification": "Does not delete, overwrite, dispatch, or otherwise change state."
+      }
+    },
+    "get_item": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Returns one work item with its canonical events, artifacts, runs, and dependencies.",
+        "open_world_justification": "Reads only the authenticated Stensibly workspace.",
+        "destructive_justification": "Does not alter the item, its history, or any execution."
+      }
+    },
+    "get_project_attachment": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Returns accepted repository policy and an advisory setup plan without granting authority.",
+        "open_world_justification": "Reads project policy inside Stensibly and does not call or change an external provider.",
+        "destructive_justification": "Does not accept a proposal or modify project attachment state."
+      }
+    },
+    "github_add_issue_comment": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Posts one bounded attributed comment to an exact GitHub issue.",
+        "open_world_justification": "Changes a third-party GitHub repository and may create publicly visible content.",
+        "destructive_justification": "Sends an externally visible message that this app cannot erase, with idempotent receipt safeguards."
+      }
+    },
+    "github_ci_diagnose": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Reads exact pull-request, status, workflow, job, and failed-step evidence to produce a CI verdict.",
+        "open_world_justification": "Queries the external GitHub provider without modifying it.",
+        "destructive_justification": "Authorises no provider mutation and changes no repository state."
+      }
+    },
+    "github_create_issue": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Creates one GitHub issue with optional labels and assignees.",
+        "open_world_justification": "Changes a third-party GitHub repository and may create publicly visible content.",
+        "destructive_justification": "Creates an external ticket that this app cannot erase, with an explicit idempotency key to prevent duplicates."
+      }
+    },
+    "github_get_issue": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Retrieves canonical identity and revision evidence for one GitHub issue while omitting its body.",
+        "open_world_justification": "Queries the external GitHub provider without modifying it.",
+        "destructive_justification": "Does not post, edit, close, or otherwise change the issue."
+      }
+    },
+    "github_land_pr": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Merges one exact pull request after checking current authority, source, CI, review, and mergeability fences.",
+        "open_world_justification": "Changes repository history on the external GitHub provider.",
+        "destructive_justification": "Performs an irreversible merge operation guarded by exact revisions, durable reservation, and post-merge verification."
+      }
+    },
+    "github_publish_change": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Creates a branch, writes one exact file change, and opens a pull request as one durable workflow.",
+        "open_world_justification": "Publishes code and pull-request state to the external GitHub provider.",
+        "destructive_justification": "Creates externally visible Git history and review state, with exact-parent and durable receipt safeguards."
+      }
+    },
+    "github_repo_health": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Checks repository connectivity, binding, exact head, state, catalogue identity, and available operations.",
+        "open_world_justification": "Reads live facts from the external GitHub provider without modifying them.",
+        "destructive_justification": "Authorises no mutation and changes no repository or Stensibly state."
+      }
+    },
+    "github_search_issues": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": true,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Searches a bounded issue-only scope in one project-bound GitHub repository.",
+        "open_world_justification": "Queries the external GitHub provider without modifying it.",
+        "destructive_justification": "Does not create, edit, comment on, or close issues."
+      }
+    },
+    "github_update_issue": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": true,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Updates the title, body, or state of one exact GitHub issue.",
+        "open_world_justification": "Changes issue content or lifecycle state on the external GitHub provider.",
+        "destructive_justification": "Overwrites externally visible issue fields or state under an optimistic revision fence."
+      }
+    },
+    "handoff_work": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": false,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Releases an exact claim and replaces the item's summary and next action for a successor.",
+        "open_world_justification": "Changes only governed state inside the Stensibly workspace.",
+        "destructive_justification": "Changes current responsibility and overwrites continuation fields under a generation fence."
+      }
+    },
+    "list_work": {
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false,
+        "destructiveHint": false
+      },
+      "justifications": {
+        "read_only_justification": "Lists current work with optional project and status filters without modifying it.",
+        "open_world_justification": "Reads only the authenticated Stensibly workspace.",
+        "destructive_justification": "Does not claim, transition, dispatch, or otherwise alter work."
+      }
+    },
+    "unblock_work": {
+      "annotations": {
+        "readOnlyHint": false,
+        "openWorldHint": false,
+        "destructiveHint": true
+      },
+      "justifications": {
+        "read_only_justification": "Returns an exact blocked item to ready state and may replace its next action.",
+        "open_world_justification": "Changes only governed state inside the Stensibly workspace.",
+        "destructive_justification": "Replaces blocker state and continuation guidance under a generation fence."
+      }
+    }
+  },
+  "test_cases": [
+    {
+      "description": "Understand the current state of one Stensibly project.",
+      "user_prompt": "Give me a compact briefing for my stensibly project and identify the most urgent ready or blocked work.",
+      "file_attachment_urls": null,
+      "tools_triggered": "get_brief",
+      "expected_output": "Returns a compact project briefing with current counts, ready work, blockers, and the next useful action.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Create and dispatch one exact runner-neutral task.",
+      "user_prompt": "Create a bounded task in my glaeda project to query the exact current source on an eligible owned workstation, then dispatch it with the repository query runner profile.",
+      "file_attachment_urls": null,
+      "tools_triggered": "create_item, dispatch_work",
+      "expected_output": "Creates one canonical work item and queues one exact generation-fenced run using the requested runner profile.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Recover an exact workstation run and bounded receipt from canonical state.",
+      "user_prompt": "Read this Stensibly item and tell me the exact run, execution target, source identity, terminal result reference, and whether it completed successfully.",
+      "file_attachment_urls": null,
+      "tools_triggered": "get_item",
+      "expected_output": "Returns the canonical item and identifies the exact run and bounded receipt evidence without inventing machine state.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Diagnose CI for one exact pull request.",
+      "user_prompt": "Diagnose the current CI state of pull request 1802 in the GitHub repository attached to my stensibly project.",
+      "file_attachment_urls": null,
+      "tools_triggered": "github_ci_diagnose",
+      "expected_output": "Returns a healthy, pending, or failing verdict tied to the pull request's exact current head and bounded failure evidence.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Create one guarded GitHub issue from an explicit request.",
+      "user_prompt": "Create a GitHub issue in the repository attached to my stensibly project titled 'Measure phone-to-workstation receipt latency' with a short acceptance checklist.",
+      "file_attachment_urls": null,
+      "tools_triggered": "github_create_issue",
+      "expected_output": "After the required confirmation, creates one idempotent GitHub issue and returns its durable provider receipt.",
+      "expected_output_url": null
+    }
+  ],
+  "negative_test_cases": [
+    {
+      "description": "Do not trigger for local source editing without a Stensibly workflow request.",
+      "user_prompt": "Refactor this local TypeScript function and run its unit tests.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because ordinary local coding is outside its coordination and governed-provider workflows.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not trigger for calendar and scheduling requests.",
+      "user_prompt": "What meetings do I have tomorrow afternoon?",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because it does not provide calendar or scheduling data.",
+      "expected_output_url": null
+    },
+    {
+      "description": "Do not trigger for general public-web research.",
+      "user_prompt": "Find today's most important technology news and summarize it.",
+      "file_attachment_urls": null,
+      "tools_triggered": null,
+      "expected_output": "The app should not be invoked because general web research is outside its supported project and repository workflows.",
+      "expected_output_url": null
+    }
+  ]
+}

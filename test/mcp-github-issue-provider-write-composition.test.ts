@@ -172,8 +172,8 @@ describe("GitHub issue provider write composition", () => {
         tool.name === "get_github_provider_receipt"
       )?.annotations?.readOnlyHint).toBe(true);
       for (const [name, destructiveHint] of [
-        ["github_add_issue_comment", false],
-        ["github_create_issue", false],
+        ["github_add_issue_comment", true],
+        ["github_create_issue", true],
         ["github_update_issue", true],
       ] as const) {
         const annotations = tools.tools.find((tool) => tool.name === name)?.annotations;
