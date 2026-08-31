@@ -104,6 +104,12 @@ describe("owned workstation capability artifact admission", () => {
     expectRefusal((value) => { value.authorizesExecution = true; }, /authority/);
   });
 
+  test("treats a sleeping or otherwise unavailable Air as ineligible", () => {
+    expectRefusal((value) => {
+      (value.admission as Record<string, unknown>).availabilityClass = "blocked";
+    }, /does not currently admit this node/);
+  });
+
   test("refuses runtime, node, source, profile, and digest drift", () => {
     expectRefusal((value) => { (value.node as Record<string, unknown>).id = "big-red"; }, /physical target/);
     expectRefusal((value) => {
