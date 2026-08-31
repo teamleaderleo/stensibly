@@ -39,14 +39,15 @@ describe("ChatGPT app action snapshot", () => {
       }))
       .digest("hex")}`;
 
-    expect(snapshot.snapshotVersion).toBe(17);
+    expect(snapshot.snapshotVersion).toBe(18);
     expect(snapshot.manifestVersion).toBe(MCP_TOOL_MANIFEST_VERSION);
-    expect(snapshot.toolCount).toBe(19);
+    expect(snapshot.toolCount).toBe(20);
     expect(snapshot.toolCount).toBe(selection.toolNames.length);
     expect(snapshot.toolManifestFingerprint).toBe(expectedManifestFingerprint);
     expect(snapshot.toolContractFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(snapshot.tools).toEqual([...selection.toolNames]);
     expect(snapshot.tools).toContain("get_brief");
+    expect(snapshot.tools).toContain("dispatch_work");
     expect(snapshot.tools).toContain("get_project_attachment");
     expect(snapshot.tools).toContain("github_repo_health");
     expect(snapshot.tools).toContain("github_ci_diagnose");

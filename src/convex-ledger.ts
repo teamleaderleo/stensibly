@@ -7,6 +7,11 @@ import type {
 } from "./completion-continuation-contracts.js";
 import type { ContinuationLedger } from "./continuation-contracts.js";
 import type { EditContinuationInput } from "./continuation-edit.js";
+import type {
+  DispatchWorkInputV1,
+  DispatchWorkResultV1,
+  ExactDispatchLedgerV1,
+} from "./exact-dispatch-contracts.js";
 import type { ContinuationSupervisorLedger } from "./continuation-supervisor-contracts.js";
 import type {
   QueueContinuationForSupervisorInput,
@@ -128,6 +133,7 @@ export class ConvexWorkLedger implements
   RunnerLedger,
   RunnerAdapterCommandLedger,
   RunnerAdapterCommandRecoveryLedger,
+  ExactDispatchLedgerV1,
   WorkerEnrolmentProvider,
   WorkerEnrolmentResolver
 {
@@ -309,6 +315,13 @@ export class ConvexWorkLedger implements
       convexApi.runnerRuns.claim,
       this.args(input),
     ) as Awaited<ReturnType<RunnerLedger["claimRunnerWork"]>>;
+  }
+
+  async dispatchWork(input: DispatchWorkInputV1): Promise<DispatchWorkResultV1> {
+    return await this.client.mutation(
+      convexApi.exactDispatch.dispatch,
+      this.args(input),
+    ) as DispatchWorkResultV1;
   }
 
   async getRunnerAdapterCommand(input: GetRunnerAdapterCommandInput) {

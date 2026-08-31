@@ -18,7 +18,7 @@ describe("MCP capability policy registry", () => {
     const names = mcpCapabilityPolicyRegistry.policies.map((policy) => policy.toolName);
 
     expect(mcpCapabilityPolicyRegistry.version).toBe(2);
-    expect(mcpCapabilityPolicyRegistry.policies).toHaveLength(52);
+    expect(mcpCapabilityPolicyRegistry.policies).toHaveLength(53);
     expect(names).toEqual([...names].sort());
     expect(new Set(names).size).toBe(names.length);
     expect(mcpCapabilityPolicyRegistry.fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
@@ -177,6 +177,7 @@ describe("MCP capability policy registry", () => {
       ["github_get_issue", { readOnlyHint: true, destructiveHint: false, openWorldHint: true }],
       ["claim_work", { readOnlyHint: false, destructiveHint: true, openWorldHint: false }],
       ["create_item", { readOnlyHint: false, destructiveHint: false, openWorldHint: false }],
+      ["dispatch_work", { readOnlyHint: false, destructiveHint: true, openWorldHint: false }],
       ["github_add_issue_comment", {
         readOnlyHint: false,
         destructiveHint: false,

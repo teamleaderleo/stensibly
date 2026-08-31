@@ -31,6 +31,8 @@ export interface HostedExactDispatchInput {
   readonly continuationRef?: string;
   readonly executionEnvelope: ExecutionEnvelope;
   readonly eventSource: string;
+  readonly idempotencyKey?: string;
+  readonly requestFingerprint?: string;
   readonly now: number;
 }
 
@@ -170,6 +172,7 @@ export async function dispatchHostedExactGeneration(
     type: "run.queued",
     payload: {
       runId: runExternalId,
+      claimedGeneration,
       generation: 1,
       leaseGeneration: 1,
       leaseExpiresAt: new Date(leaseExpiresAt).toISOString(),
@@ -179,7 +182,11 @@ export async function dispatchHostedExactGeneration(
       source: input.eventSource,
       readyPromiseWakeups: 0,
       envelopeSchemaVersion: input.executionEnvelope.schemaVersion,
+      ...(input.requestFingerprint === undefined
+        ? {}
+        : { requestFingerprint: input.requestFingerprint }),
     },
+    idempotencyKey: input.idempotencyKey,
     createdAt: input.now,
   });
 
@@ -276,6 +283,12 @@ function normalizeInput(input: HostedExactDispatchInput): HostedExactDispatchInp
   const continuationRef = input.continuationRef === undefined
     ? undefined
     : assertText(input.continuationRef, "Continuation reference", 240);
+  const idempotencyKey = input.idempotencyKey === undefined
+    ? undefined
+    : assertText(input.idempotencyKey, "Dispatch idempotency key", 240);
+  const requestFingerprint = input.requestFingerprint === undefined
+    ? undefined
+    : fingerprint(input.requestFingerprint);
   return {
     ...input,
     expectedClaimGeneration,
@@ -286,9 +299,19 @@ function normalizeInput(input: HostedExactDispatchInput): HostedExactDispatchInp
     maxAttempts,
     retryBackoffSeconds,
     continuationRef,
+    idempotencyKey,
+    requestFingerprint,
     eventSource,
     now,
   };
+}
+
+function fingerprint(value: string): string {
+  const output = assertText(value, "Dispatch request fingerprint", 71);
+  if (!/^sha256:[a-f0-9]{64}$/u.test(output)) {
+    throw new Error("Dispatch request fingerprint is invalid");
+  }
+  return output;
 }
 
 function nonNegativeInteger(value: number, label: string): number {

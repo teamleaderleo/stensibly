@@ -7,6 +7,26 @@ import { StensiblyStore } from "../src/store.ts";
 
 const leo = { id: "leo", name: "Leo", kind: "human" as const };
 const agent = { id: "browser-agent", name: "Browser Agent", kind: "agent" as const };
+const exactDispatchEnvelope = {
+  schemaVersion: 1,
+  objective: "Run one exact bounded owned-workstation query.",
+  scopeClass: "atomic",
+  estimate: { lowMinutes: 0, likelyMinutes: 1, highMinutes: 3, confidence: 0.8 },
+  budget: { expectedMessages: 1, expectedToolCalls: 1, expectedReviewMinutes: 0 },
+  boundaries: { softCheckpointMinutes: 1, forcedHandoffMinutes: 2, hardRecoveryMinutes: 3 },
+  completion: {
+    requiredOutputs: ["bounded receipt"],
+    verificationRequired: true,
+    continuationStateRequired: false,
+    acceptanceChecks: ["receipt binds exact task and runner profile"],
+  },
+  durableState: {
+    accessClass: "project",
+    retentionClass: "standard",
+    redactionRequired: true,
+    deleteAfter: null,
+  },
+} as const;
 
 describe("MCP work surface", () => {
   test("carries the generation-fenced work lifecycle through an async ledger", async () => {
@@ -31,6 +51,7 @@ describe("MCP work surface", () => {
         "claim_work",
         "complete_work",
         "create_item",
+        "dispatch_work",
         "get_brief",
         "get_item",
         "github_get_issue",
@@ -62,13 +83,57 @@ describe("MCP work surface", () => {
         claimGeneration: 0,
       });
 
+      const dispatchItem = await call<{
+        id: string;
+        claimGeneration: number;
+      }>(client, "create_item", {
+        project: "scrapbook",
+        kind: "task",
+        title: "Run an exact owned-workstation query",
+        actor: leo,
+        idempotencyKey: "mcp-create-exact-dispatch",
+      });
+      const dispatchInput = {
+        project: "scrapbook",
+        itemId: dispatchItem.id,
+        expectedClaimGeneration: dispatchItem.claimGeneration,
+        actor: agent,
+        runnerType: "glaeda-workstation",
+        runnerProfile: "repo-query/v1",
+        runnerProfileVersion: `sha256:${"a".repeat(64)}`,
+        executionEnvelope: exactDispatchEnvelope,
+        leaseSeconds: 900,
+        maxAttempts: 3,
+        retryBackoffSeconds: 60,
+        idempotencyKey: "mcp-dispatch-owned-workstation-query",
+      };
+      const dispatched = await call<{
+        replay: boolean;
+        claimedGeneration: number;
+        item: { id: string; status: string };
+        run: { id: string; status: string; runnerProfile: string };
+      }>(client, "dispatch_work", dispatchInput);
+      expect(dispatched).toMatchObject({
+        replay: false,
+        claimedGeneration: 1,
+        item: { id: dispatchItem.id, status: "active" },
+        run: { status: "queued", runnerProfile: "repo-query/v1" },
+      });
+      const dispatchReplay = await call<typeof dispatched>(
+        client,
+        "dispatch_work",
+        dispatchInput,
+      );
+      expect(dispatchReplay.replay).toBe(true);
+      expect(dispatchReplay.run).toEqual(dispatched.run);
+
       const brief = await call<{
         project: string;
         counts: { total: number };
         ready: Array<{ id: string }>;
       }>(client, "get_brief", { project: "scrapbook", limit: 5 });
       expect(brief.project).toBe("scrapbook");
-      expect(brief.counts.total).toBe(1);
+      expect(brief.counts.total).toBe(2);
       expect(brief.ready.map((item) => item.id)).toEqual([created.id]);
 
       const claimed = await call<{

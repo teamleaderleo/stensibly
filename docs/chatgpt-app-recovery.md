@@ -4,14 +4,14 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 
 ## Current published profile
 
-Normal hosted ChatGPT publication uses the reviewed **`published_default`** profile with **19** outcome-level MCP tools. The complete current list lives in [`docs/chatgpt-app-actions.json`](chatgpt-app-actions.json), which is the release receipt and canonical owner for the published action set.
+Normal hosted ChatGPT publication uses the reviewed **`published_default`** profile with **20** outcome-level MCP tools. The complete current list lives in [`docs/chatgpt-app-actions.json`](chatgpt-app-actions.json), which is the release receipt and canonical owner for the published action set.
 
 ```text
-published ChatGPT tool contract: sha256:68fd7b40327d970cd574909abe3a064ee0e317b20a60fd227ed3c2dfa497698f
-names-only diagnostic:            sha256:482bfea495a3aab3789b9e2f6dfae9de0414f8cf7a42879aa37b67713eb1fb07
+published ChatGPT tool contract: sha256:5bc3fa65faf1531b2fd5ab4f3d3a8683d14d17bf7a84c56e072345085fba79ba
+names-only diagnostic:            sha256:aad109a726c780e3cf891f9d3a5d5ad53754a6beb768b826a08a01934079d3bf
 ```
 
-The public profile keeps frequent work coordination, project context, bounded GitHub issue work, repository health/CI diagnosis, reviewed publication, and PR landing immediately visible. Each visible tool carries canonical `readOnlyHint`, `destructiveHint`, and `openWorldHint` metadata derived from the capability policy.
+The public profile keeps frequent work coordination, exact runner-neutral dispatch, project context, bounded GitHub issue work, repository health/CI diagnosis, reviewed publication, and PR landing immediately visible. Each visible tool carries canonical `readOnlyHint`, `destructiveHint`, and `openWorldHint` metadata derived from the capability policy.
 
 The broader **`full_internal`** profile remains available to explicit internal/admin clients. It retains long-tail provider discovery, receipts, worker enrolment, continuation machinery, low-level repository primitives, and recovery operations. Public visibility and backend capability stay separate.
 
@@ -31,6 +31,7 @@ The public profile is designed so an agent can understand the project and comple
 
 - use `get_brief`, `list_work`, `get_item`, and `get_project_attachment` for project/work context;
 - use `claim_work`, `block_work`, `unblock_work`, `complete_work`, and `handoff_work` for ordinary work transitions;
+- use `create_item`, attach or record exact source evidence, then use `dispatch_work` to queue that item generation for one exact runner profile; machine mechanics and terminal settlement remain runner-owned;
 - use `github_repo_health` before a consequential repository workflow;
 - use `github_search_issues`, `github_get_issue`, `github_create_issue`, `github_update_issue`, and `github_add_issue_comment` for the normal GitHub issue loop;
 - use one explicit idempotency key for each intended GitHub write;
@@ -71,11 +72,12 @@ Use a new normal ChatGPT conversation with the refreshed Stensibly app. Exercise
 
 1. read one project with `get_brief` and `get_project_attachment`;
 2. find useful work with `list_work` and inspect one item;
-3. run `github_repo_health` and find one issue through `github_search_issues` or `github_get_issue`;
-4. perform one permitted issue create/update/comment workflow with a unique idempotency key;
-5. prepare one bounded repository change through `github_publish_change` when the project contract permits it;
-6. verify the agent can explain why merge/deploy remains gated when approval is required;
-7. exercise one ambiguous-effect recovery scenario and confirm the agent follows the returned reconciliation instruction without duplicate provider effect.
+3. create and exactly dispatch one bounded item to a reviewed runner profile, then read its eventual work/run receipt;
+4. run `github_repo_health` and find one issue through `github_search_issues` or `github_get_issue`;
+5. perform one permitted issue create/update/comment workflow with a unique idempotency key;
+6. prepare one bounded repository change through `github_publish_change` when the project contract permits it;
+7. verify the agent can explain why merge/deploy remains gated when approval is required;
+8. exercise one ambiguous-effect recovery scenario and confirm the agent follows the returned reconciliation instruction without duplicate provider effect.
 
 Record the first transition where discovery, executable binding, network dispatch, server processing, result delivery, or another app changes.
 
@@ -83,7 +85,7 @@ Record the first transition where discovery, executable binding, network dispatc
 
 ### Stale ChatGPT action snapshot
 
-Evidence: the visible action count/names differ from the current 19-action release receipt, or recently changed definitions are absent.
+Evidence: the visible action count/names differ from the current 20-action release receipt, or recently changed definitions are absent.
 
 Action: refresh, rescan, or recreate the app and start a fresh conversation.
 
