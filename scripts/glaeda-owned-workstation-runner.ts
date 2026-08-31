@@ -2,6 +2,7 @@
 import { stat } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { executeGlaedaOwnedWorkstationRunV1 } from "../src/glaeda-owned-workstation-runner.js";
+import { loseFirstSuccessfulConsumeResponseV1 } from "../src/glaeda-github-canary-client.js";
 import { RunnerMcpHttpClient } from "../src/runner-mcp-http-client.js";
 
 const { values } = parseArgs({
@@ -20,6 +21,7 @@ const { values } = parseArgs({
     "os-class": { type: "string", default: process.platform === "darwin" ? "macos" : "linux" },
     architecture: { type: "string", default: process.arch === "arm64" ? "arm64" : "x86_64" },
     "lease-seconds": { type: "string", default: "900" },
+    "simulate-response-loss-after-consume": { type: "boolean" },
     help: { type: "boolean", short: "h" },
   },
   strict: true,
@@ -41,7 +43,12 @@ Required:
 
 The runner claims one exact Stensibly run, reserves the existing workstation
 command ledger fence, consumes one exact immutable Glaeda request on this node,
-settles its bounded result, and terminates. It is not a daemon or scheduler.`);
+settles its bounded result, and terminates. It is not a daemon or scheduler.
+
+Dogfood recovery:
+  --simulate-response-loss-after-consume
+    Publish the physical result, hide that response once, and exit failed. A new
+    ordinary invocation must reconcile and settle without redispatch.`);
   process.exit(0);
 }
 
@@ -67,6 +74,9 @@ try {
       glaedaRuntimeSha256: required(values["glaeda-runtime"], "--glaeda-runtime"),
     },
     leaseSeconds: positiveInteger(values["lease-seconds"], "--lease-seconds"),
+    ...(values["simulate-response-loss-after-consume"]
+      ? { canaryProcess: loseFirstSuccessfulConsumeResponseV1() }
+      : {}),
   });
   console.log(JSON.stringify({ schema: "glaeda-owned-workstation-run/v1", ...result }));
 } catch (error) {

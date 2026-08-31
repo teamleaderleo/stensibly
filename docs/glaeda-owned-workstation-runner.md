@@ -87,6 +87,11 @@ parent, closed tree, unchanged request blob, canonical byte bound, source/profil
 and stable remote ref without invoking `repo-query`. A valid result settles the original command;
 a missing result leaves the run waiting for reconciliation.
 
+For the physical response-loss exercise, run the first process with
+`--simulate-response-loss-after-consume`. It publishes the exact result, deliberately hides that
+one successful response, and exits. Start a new ordinary process with identical node/run inputs;
+it must reconcile and settle the published result without invoking `repo-query` again.
+
 The result reference stored on the run is immutable:
 
 ```text
