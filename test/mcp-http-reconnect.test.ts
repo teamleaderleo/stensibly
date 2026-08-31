@@ -57,7 +57,7 @@ describe("hosted MCP reconnect lifecycle", () => {
     expect(initialTools).toContain("get_item");
     expect(initialTools).toContain("complete_work");
     expect(initialTools).not.toContain("record_event");
-    expect(initialTools).not.toContain("attach_artifact");
+    expect(initialTools).toContain("attach_artifact");
 
     const created = await callTool<{
       id: string;

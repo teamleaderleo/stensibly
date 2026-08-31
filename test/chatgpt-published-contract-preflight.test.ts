@@ -25,6 +25,7 @@ function readSnapshot(): ChatGptAppContractSnapshot {
 }
 
 const publishedDefaultNames = [
+  "attach_artifact",
   "block_work",
   "claim_work",
   "complete_work",
@@ -54,7 +55,7 @@ const submissionAnnotationKeys = [
 ] as const;
 
 describe("ChatGPT curated publication preflight", () => {
-  test("serves the reviewed 20-tool default with complete canonical action metadata", async () => {
+  test("serves the reviewed 21-tool default with complete canonical action metadata", async () => {
     const snapshot = readSnapshot();
     const store = new StensiblyStore(":memory:");
     const server = createChatGptMcpServer(withHostedMcpProviders(
@@ -71,8 +72,8 @@ describe("ChatGPT curated publication preflight", () => {
       await client.connect(clientTransport);
       const listed = await client.listTools();
 
-      expect(listed.tools).toHaveLength(20);
-      expect(snapshot.toolCount).toBe(20);
+      expect(listed.tools).toHaveLength(21);
+      expect(snapshot.toolCount).toBe(21);
       expect(listed.tools.map((tool) => tool.name).sort()).toEqual(
         [...publishedDefaultNames].sort(),
       );
@@ -116,7 +117,7 @@ describe("ChatGPT curated publication preflight", () => {
       expect(contract.publishedManifest.tools.map((tool) => tool.name)).toEqual(
         [...publishedDefaultNames],
       );
-      expect(contract.publishedManifest.tools).toHaveLength(20);
+      expect(contract.publishedManifest.tools).toHaveLength(21);
       expect(contract.publishedManifest.digest).toBe(snapshot.toolContractFingerprint);
       expect(contract.publishedContractFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
       expect(contract.grantsAuthority).toBe(false);

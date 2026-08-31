@@ -30,7 +30,7 @@ describe("ChatGPT MCP exposure", () => {
       const names = listed.tools.map((tool) => tool.name);
 
       expect([...names].sort()).toEqual([...plan.manifest.tools].sort());
-      expect(names).toHaveLength(20);
+      expect(names).toHaveLength(21);
       expect(names).toContain("get_brief");
       expect(names).toContain("github_create_issue");
       expect(names).toContain("github_publish_change");

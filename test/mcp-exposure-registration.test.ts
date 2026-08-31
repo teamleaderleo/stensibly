@@ -14,6 +14,7 @@ import { StensiblyStore } from "../src/store.ts";
 import { withHostedMcpProviders } from "./support/hosted-mcp-ledger.ts";
 
 const publishedDefaultNames = [
+  "attach_artifact",
   "block_work",
   "claim_work",
   "complete_work",
@@ -60,13 +61,13 @@ describe("trusted MCP exposure registration", () => {
     }
   });
 
-  test("registers the reviewed 20-tool published_default surface only when explicitly requested", async () => {
+  test("registers the reviewed 21-tool published_default surface only when explicitly requested", async () => {
     const store = new StensiblyStore(":memory:");
     const ledger = withHostedMcpProviders(new SqliteWorkLedger(store));
     try {
       const plan = compileMcpExposureRegistrationPlan(ledger, "published_default");
       expect(plan.manifest.tools).toEqual([...publishedDefaultNames]);
-      expect(plan.manifest.tools).toHaveLength(20);
+      expect(plan.manifest.tools).toHaveLength(21);
       expect(plan.manifest.fingerprint).not.toBe(
         mcpToolManifestForLedger(ledger).fingerprint,
       );

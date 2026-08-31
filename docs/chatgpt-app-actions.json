@@ -1,10 +1,11 @@
 {
-  "snapshotVersion": 18,
+  "snapshotVersion": 19,
   "manifestVersion": 1,
-  "toolCount": 20,
-  "toolManifestFingerprint": "sha256:aad109a726c780e3cf891f9d3a5d5ad53754a6beb768b826a08a01934079d3bf",
-  "toolContractFingerprint": "sha256:5bc3fa65faf1531b2fd5ab4f3d3a8683d14d17bf7a84c56e072345085fba79ba",
+  "toolCount": 21,
+  "toolManifestFingerprint": "sha256:56203aa95b362fccb5429f3861f5db8593dc835a62007642ada2872aa9226190",
+  "toolContractFingerprint": "sha256:63d7ebf73071e4bcc17e2a8c1767e7cac8f8006cd37b526280b1bd45dbef1007",
   "tools": [
+    "attach_artifact",
     "block_work",
     "claim_work",
     "complete_work",
