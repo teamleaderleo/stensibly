@@ -56,6 +56,7 @@ describe("owned workstation capability artifact admission", () => {
 
   test("admits the same snapshot contract for an exact verify-required profile", () => {
     const value = snapshot();
+    value.expiresAt = "2026-08-31T05:30:00.000Z";
     value.profiles = [{
       class: "verify_required",
       id: "verify-required/v1",
@@ -73,6 +74,27 @@ describe("owned workstation capability artifact admission", () => {
       },
     });
     expect(admitted.heatClass).toBe("resident_hot");
+  });
+
+  test("bounds verify-required recovery evidence at thirty minutes", () => {
+    const value = snapshot();
+    value.expiresAt = "2026-08-31T05:30:00.001Z";
+    value.profiles = [{
+      class: "verify_required",
+      id: "verify-required/v1",
+      versionSha256: sha("f"),
+    }];
+    (value.projects as Array<Record<string, unknown>>)[0]!.verificationProfiles = [
+      "verify-required/v1",
+    ];
+    expect(() => admitGlaedaCapabilityArtifactV1([artifact(value)], {
+      ...target,
+      profile: {
+        id: "verify-required/v1",
+        class: "verify_required",
+        versionSha256: sha("f"),
+      },
+    })).toThrow(/validity/);
   });
 
   test("refuses stale, future, overlong, and authority-bearing snapshots", () => {

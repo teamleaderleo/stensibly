@@ -96,7 +96,7 @@ async function executeGlaedaVerificationRunV1(
   raw: ExecuteGlaedaVerifyFocusedInputV1,
   profile: GlaedaVerificationProfileContractV1,
 ): Promise<ExecuteGlaedaVerifyFocusedResultV1> {
-  const input = normalizeInput(raw);
+  const input = normalizeInput(raw, profile);
   const actor = input.actor;
   const claimed = await input.runner.call<ClaimedRunEnvelope | null>("claim_runner_work", {
     actor,
@@ -304,12 +304,25 @@ interface NormalizedInput extends Omit<ExecuteGlaedaVerifyFocusedInputV1,
   now: () => Date;
 }
 
-function normalizeInput(input: ExecuteGlaedaVerifyFocusedInputV1): NormalizedInput {
+function normalizeInput(
+  input: ExecuteGlaedaVerifyFocusedInputV1,
+  profile: GlaedaVerificationProfileContractV1,
+): NormalizedInput {
   const actor = input.actor ?? {
     id: `service:${text(input.node.id, "node ID")}-glaeda`,
     name: `${text(input.node.id, "node ID")} Glaeda workstation`,
     kind: "service" as const,
   };
+  const minimumLeaseSeconds = profile.deadlineSeconds + 120;
+  const leaseSeconds = integer(
+    input.leaseSeconds ?? (profile.id === "verify-required/v1" ? 1_500 : 900),
+    "lease seconds",
+  );
+  if (leaseSeconds < minimumLeaseSeconds) {
+    throw new RangeError(
+      `${profile.id} lease must outlive its physical deadline by at least 120 seconds`,
+    );
+  }
   return {
     ...input,
     project: slug(input.project),
@@ -324,7 +337,7 @@ function normalizeInput(input: ExecuteGlaedaVerifyFocusedInputV1): NormalizedInp
     },
     actor,
     inspectPythonInterpreter: input.inspectPythonInterpreter ?? inspectPython314InterpreterV1,
-    leaseSeconds: integer(input.leaseSeconds ?? 900, "lease seconds"),
+    leaseSeconds,
     now: input.now ?? (() => new Date()),
   };
 }
