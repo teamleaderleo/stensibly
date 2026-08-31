@@ -18,7 +18,8 @@ canonical pointers. Rows are sorted by their relative run directory. A missing
 receipt is reported as `state: "missing"`, `success: null`, and
 `blocker: "receipt_missing"`; it never becomes a guessed success or running
 state. A receipt is the terminal boundary for the current
-`sol-luna-worker-receipt/3` and `pi-luna-worker-receipt/1` contracts.
+`sol-luna-worker-receipt/3`, `pi-luna-worker-receipt/1`, and
+`antigravity-gemini-worker-receipt/1` contracts.
 Unrecognized future schemas use explicit `unknown` fields and
 `unknown_schema`.
 
@@ -36,6 +37,12 @@ fields. The glance normalizes them to total prompt input (`input + cacheRead +
 cacheWrite`), cached input (`cacheRead`), and uncached input (`input +
 cacheWrite`). It rejects a Pi receipt whose declared `totalTokens` does not
 equal prompt input plus output; missing usage remains unknown rather than zero.
+
+Antigravity reports prompt input, cache reads, generated output, and thinking
+tokens separately. The glance preserves those classes and checks the declared
+total instead of folding thinking into generated output. Provider quota
+percentages and reset times stay in the cold immutable receipt; their accepted
+work economics are projected only after external verification and settlement.
 
 The intended loop is:
 

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
   buildWorkerGlance,
+  ANTIGRAVITY_GEMINI_RECEIPT_SCHEMA_VERSION,
   PI_LUNA_RECEIPT_SCHEMA_VERSION,
   SOL_LUNA_RECEIPT_SCHEMA_VERSION,
   WORKER_GLANCE_MAX_ARTIFACT_BYTES,
@@ -182,7 +183,78 @@ async function createPiRun(
   return directory;
 }
 
+async function createAntigravityRun(root: string, name: string): Promise<string> {
+  const directory = join(root, name);
+  const resultPath = join(directory, "worker-result.json");
+  await mkdir(directory, { recursive: true });
+  await json(join(directory, "receipt.json"), {
+    schemaVersion: ANTIGRAVITY_GEMINI_RECEIPT_SCHEMA_VERSION,
+    run: { id: "gemini-run", attempt: 1, assignedRole: "implementation-worker" },
+    source: {
+      headRelationship: "unchanged",
+      changedPaths: ["src/gemini.ts"],
+    },
+    child: {
+      outcome: "worker_succeeded",
+      timedOut: false,
+    },
+    invocation: {},
+    usage: {
+      inputTokens: 120,
+      cachedInputTokens: 90,
+      outputTokens: 30,
+      reasoningTokens: 15,
+      totalRecordedTokens: 150,
+    },
+    artifacts: {
+      workerResult: { path: resultPath, bytes: 1, sha256: "sha256:result" },
+    },
+    provisional: {
+      acceptedOutcome: "unknown",
+      verificationOutcome: "unknown",
+    },
+    success: true,
+    harnessError: null,
+  });
+  await json(resultPath, {
+    status: "complete",
+    changedPaths: ["src/gemini.ts"],
+    verificationAttempts: [],
+    remainingLimits: ["External verification required"],
+  });
+  return directory;
+}
+
 describe("worker glance", () => {
+  test("projects Antigravity receipts through the shared bounded row", async () => {
+    const root = await mkdtemp(join(tmpdir(), "worker-glance-antigravity-"));
+    temporaryRoots.push(root);
+    const run = await createAntigravityRun(root, "gemini-run");
+
+    const projection = await buildWorkerGlance([run]);
+    expect(projection.rows[0]).toMatchObject({
+      backend: "antigravity",
+      runId: "gemini-run",
+      role: "implementation-worker",
+      state: "terminal",
+      success: true,
+      provisional: true,
+      changedPathCount: 1,
+      changedPaths: ["src/gemini.ts"],
+      commitCount: 0,
+      usage: {
+        input: 120,
+        cached: 90,
+        uncached: 30,
+        cachePercentage: 75,
+        output: 30,
+        reasoning: 15,
+      },
+      resultStatus: "success",
+      blocker: "verification_unknown",
+    });
+  });
+
   test("projects Pi receipts through the same bounded row without reading prose", async () => {
     const root = await mkdtemp(join(tmpdir(), "worker-glance-pi-"));
     temporaryRoots.push(root);

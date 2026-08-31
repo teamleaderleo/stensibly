@@ -16,6 +16,8 @@
     "sol-luna:worker": "bun scripts/sol-luna-worker.ts",
     "worker:glance": "bun scripts/worker-glance.ts",
     "pi-luna:worker": "bun scripts/pi-luna-worker.ts",
+    "antigravity-gemini:worker": "bun scripts/antigravity-gemini-worker.ts",
+    "antigravity-gemini:account": "bun scripts/antigravity-gemini-accounting.ts",
     "codex-roots:probe": "bun scripts/codex-root-harness-probe.ts",
     "codex-roots:memory-probe": "bun scripts/codex-root-memory-probe.ts",
     "glaeda:workstation": "bun scripts/glaeda-owned-workstation-runner.ts",
