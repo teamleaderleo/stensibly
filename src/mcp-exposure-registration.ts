@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
 import {
   compileMcpCapabilitySubmissionAnnotations,
   mcpCapabilityPolicyRegistry,
@@ -15,6 +14,7 @@ import {
   mcpToolManifestForLedger,
   type McpToolManifestIdentity,
 } from "./mcp-diagnostics.js";
+import { publicMcpOutputSchema } from "./public-mcp-output-schemas.js";
 
 export interface McpExposureRegistrationPlan {
   readonly profile: McpCapabilityExposureProfile;
@@ -143,7 +143,7 @@ function withCanonicalSubmissionMetadata(
     {
       ...config,
       title,
-      outputSchema: config.outputSchema ?? publicToolOutputSchema,
+      outputSchema: config.outputSchema ?? publicMcpOutputSchema(toolName),
       annotations: {
         ...existing,
         ...canonical,
@@ -176,10 +176,6 @@ const publicToolTitles: Readonly<Record<string, string>> = Object.freeze({
   list_work: "List Work",
   unblock_work: "Unblock Work",
 });
-
-const publicToolOutputSchema = {
-  data: z.unknown(),
-} as const;
 
 function toolManifestIdentity(tools: readonly string[]): McpToolManifestIdentity {
   const canonicalTools = Object.freeze([...tools]);

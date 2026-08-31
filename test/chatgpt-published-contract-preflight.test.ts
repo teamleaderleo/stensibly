@@ -94,13 +94,11 @@ describe("ChatGPT curated publication preflight", () => {
         );
         const actual = tool.annotations ?? {};
         expect(tool.title).toEqual(expect.any(String));
-        expect(tool.outputSchema).toEqual({
+        expect(tool.outputSchema).toEqual(expect.objectContaining({
           type: "object",
-          properties: { data: {} },
           required: ["data"],
-          $schema: "http://json-schema.org/draft-07/schema#",
           additionalProperties: false,
-        });
+        }));
         for (const key of submissionAnnotationKeys) {
           if (!Object.hasOwn(actual, key) || actual[key] !== expected[key]) {
             annotationMismatches.push(
@@ -110,6 +108,22 @@ describe("ChatGPT curated publication preflight", () => {
         }
       }
       expect(annotationMismatches).toEqual([]);
+      expect(listed.tools
+        .filter((tool) => JSON.stringify(tool.outputSchema).includes('"data":{}'))
+        .map((tool) => tool.name)
+        .sort()).toEqual([
+          "complete_work",
+          "get_project_attachment",
+          "github_add_issue_comment",
+          "github_ci_diagnose",
+          "github_create_issue",
+          "github_get_issue",
+          "github_land_pr",
+          "github_publish_change",
+          "github_repo_health",
+          "github_search_issues",
+          "github_update_issue",
+        ]);
 
       const structuredRead = await client.callTool({
         name: "list_work",
