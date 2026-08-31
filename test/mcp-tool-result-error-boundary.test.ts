@@ -8,7 +8,7 @@ test("returns one canonical structured JSON envelope with the readable result", 
   expect(result).toEqual({
     content: [{
       type: "text",
-      text: JSON.stringify(source, null, 2),
+      text: JSON.stringify(source),
     }],
     structuredContent: { data: source },
   });

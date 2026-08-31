@@ -7,15 +7,17 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 Normal hosted ChatGPT publication uses the reviewed **`published_default`** profile with **21** outcome-level MCP tools. The complete current list lives in [`docs/chatgpt-app-actions.json`](chatgpt-app-actions.json), which is the release receipt and canonical owner for the published action set.
 
 ```text
-reviewed metadata:                sha256:ac2e712bba23eff9cfdec8cabadcba50798ee9e86ab5f3bd4697bf17121ab194
-published ChatGPT tool contract:  sha256:7c84bed6e49f60cc2e74b4d80494421c05382fb137413edce48c3533c4fa9809
-server instructions:              sha256:4bf979bbccbc647d41e5272cfb48890b62e27f12aeefbe060dec9ca213174832
+reviewed metadata:                sha256:c1bf7d17a42192a9aa484946a83153b4fac4f20745e793d545caa7a452082786
+published ChatGPT tool contract:  sha256:fe04d9d666a869a6f7cd22cbdd404714468aec093823242f72688622427eee86
+server instructions:              sha256:482fa19b5a4451a0a2021b4d85802af48034de5512734e8a8a37e815c2d91bbe
 names-only diagnostic:            sha256:91919251f55e23b57292b2eb470bedfb8d86080da8a56c1df97641de9aec18b4
 ```
 
 The public profile keeps frequent work coordination, exact runner-neutral dispatch, project context, bounded GitHub issue work, repository health/CI diagnosis, reviewed publication, and PR landing immediately visible. Each visible tool carries canonical `readOnlyHint`, `destructiveHint`, and `openWorldHint` metadata derived from the capability policy.
 
-Every public tool also returns a host-validated `structuredContent.data` JSON envelope alongside the readable text result. The exact task, dispatch, context, brief, item-transition, and artifact results use precise field schemas. Remaining provider/project-attachment envelopes stay generic and visible in the preflight warning until they are typed.
+Every public tool returns one host-validated `structuredContent.data` envelope. Small results stay readable for compatibility; only results above 2 KiB replace the duplicate text copy with a deterministic digest. Routing-critical fields are typed; storage-shaped detail remains bounded data instead of being repeated in every tool declaration.
+
+Familiar GitHub operations remain visible, but Stensibly intercepts them through accepted project bindings. Reads and writes receive bounded execution telemetry; writes additionally retain their existing idempotency, verification, reconciliation, and durable receipt semantics. The wrapper logs only tool identity, outcome, duration, and argument/result digests—not bodies, paths, credentials, or returned content.
 
 The broader **`full_internal`** profile remains available to explicit internal/admin clients. It retains long-tail provider discovery, receipts, worker enrolment, continuation machinery, low-level repository primitives, and recovery operations. Public visibility and backend capability stay separate.
 

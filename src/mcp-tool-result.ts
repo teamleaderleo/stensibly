@@ -40,7 +40,7 @@ export async function asToolResult(read: () => Promise<unknown>) {
   }
 
   try {
-    const text = JSON.stringify(value, null, 2);
+    const text = JSON.stringify(value);
     if (typeof text !== "string") throw new Error("Tool result was not JSON serializable");
     const data = JSON.parse(text) as unknown;
     return {

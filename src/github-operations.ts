@@ -215,7 +215,7 @@ export class DefaultGitHubOperationsService implements GitHubOperationsService {
       }),
       repository: Object.freeze({ ...metadata, defaultBranchSha }),
       operationSurface: githubOperationSurface,
-      operationAvailability: operationAvailability("ready"),
+      operationAvailability: operationAvailability("configured"),
       catalogueFingerprint: this.#catalogue.registry.fingerprint,
       attention: Object.freeze(attention),
       authorizesMutation: false,
@@ -570,18 +570,26 @@ function observationCoverage(
   });
 }
 
-function operationAvailability(binding: "ready" | "blocked") {
-  const availability = (operationBinding: "ready" | "blocked") => Object.freeze({
+function operationAvailability(binding: "configured" | "blocked") {
+  const availability = (
+    operationBinding: "configured" | "blocked",
+    probe: "passed" | "not_run" | "blocked",
+  ) => Object.freeze({
     capability: "present" as const,
     binding: operationBinding,
+    probe,
     blockedBy: operationBinding === "blocked" ? "project_attachment" as const : null,
   });
+  const unprovenProbe = binding === "blocked" ? "blocked" : "not_run";
   return Object.freeze({
-    github_repo_health: availability("ready"),
-    github_branch_tidy: availability(binding),
-    github_ci_diagnose: availability(binding),
+    github_repo_health: availability(
+      binding === "blocked" ? "blocked" : "configured",
+      binding === "blocked" ? "blocked" : "passed",
+    ),
+    github_branch_tidy: availability(binding, unprovenProbe),
+    github_ci_diagnose: availability(binding, unprovenProbe),
     github_land_pr: Object.freeze({
-      ...availability(binding),
+      ...availability(binding, unprovenProbe),
       candidatePrerequisites: githubLandPrCandidatePrerequisites,
     }),
   });

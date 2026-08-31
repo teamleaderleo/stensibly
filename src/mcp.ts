@@ -24,6 +24,7 @@ import {
 } from "./mcp-exposure-registration.js";
 import { withSuccessfulMcpReadObservation } from "./mcp-successful-read-observation.js";
 import { asToolResult } from "./mcp-tool-result.js";
+import { withMcpToolObservation } from "./mcp-tool-observation.js";
 import { registerOperationReceiptTools } from "./operation-receipt-mcp.js";
 import { registerProjectAttachmentTools } from "./project-attachment-mcp.js";
 import {
@@ -54,14 +55,14 @@ const FULL_INTERNAL_MCP_SERVER_INSTRUCTIONS = [
 ].join(" ");
 
 const PUBLISHED_DEFAULT_MCP_SERVER_INSTRUCTIONS = [
-  "Stensibly coordinates exact project work and runner-neutral execution.",
-  "Start with get_brief and get_project_attachment, then use list_work to choose current work.",
-  "Use get_runner_context for a bounded canonical task, run, machine, and receipt packet; it intentionally omits older detail when the configured limits are reached.",
-  "Treat accepted project attachments as policy, not as a claim, run lease, approval, or live authority grant.",
-  "Create an exact item, attach the minimum durable source or evidence reference it needs, and use dispatch_work to queue one reviewed runner profile; the runner owns machine-specific execution.",
-  "Claims are temporary leases. Use the current claim generation for block, unblock, complete, or handoff transitions.",
-  "Use GitHub tools only for repositories bound to the project, use one idempotency key for each intended write, and follow returned recovery guidance before replaying an ambiguous effect.",
-  "Repository publication and pull-request landing require their explicit exact-revision and authority fences.",
+  "Coordinate runner-neutral execution.",
+  "Start with get_brief; read policy with get_project_attachment.",
+  "Use get_runner_context before run or resume.",
+  "Work transitions require the current claim generation; exact retries reuse one idempotency key.",
+  "Attach durable references, not copied evidence.",
+  "dispatch_work binds one item and profile; the runner owns machine execution.",
+  "Attachments are policy, not authority.",
+  "GitHub actions require a bound repository and their exact fences; follow returned recovery before retrying an ambiguous write.",
 ].join(" ");
 
 const PUBLISHED_SEARCHABLE_MCP_SERVER_INSTRUCTIONS = [
@@ -136,9 +137,14 @@ function configureMcpServer(
     registration.server,
     exposure.manifest.tools,
   );
-  const server = withSuccessfulMcpReadObservation(
+  const observedReads = withSuccessfulMcpReadObservation(
     filteredRegistration.server,
     context.onSuccessfulReadToolCall,
+  );
+  const server = withMcpToolObservation(
+    observedReads,
+    context.requestId ?? null,
+    context.onToolCall,
   );
 
   server.registerTool(

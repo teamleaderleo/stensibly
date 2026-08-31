@@ -57,7 +57,7 @@ const submissionAnnotationKeys = [
 ] as const;
 
 describe("ChatGPT curated publication preflight", () => {
-  test("serves the reviewed 21-tool default with complete canonical action metadata", async () => {
+  test("serves the compact 21-tool default with complete canonical action metadata", async () => {
     const snapshot = readSnapshot();
     const store = new StensiblyStore(":memory:");
     const server = createChatGptMcpServer(withHostedMcpProviders(
@@ -112,7 +112,11 @@ describe("ChatGPT curated publication preflight", () => {
         .filter((tool) => JSON.stringify(tool.outputSchema).includes('"data":{}'))
         .map((tool) => tool.name)
         .sort()).toEqual([
+          "attach_artifact",
+          "block_work",
+          "claim_work",
           "complete_work",
+          "create_item",
           "get_project_attachment",
           "github_add_issue_comment",
           "github_ci_diagnose",
@@ -123,6 +127,8 @@ describe("ChatGPT curated publication preflight", () => {
           "github_repo_health",
           "github_search_issues",
           "github_update_issue",
+          "handoff_work",
+          "unblock_work",
         ]);
 
       const structuredRead = await client.callTool({
@@ -137,17 +143,8 @@ describe("ChatGPT curated publication preflight", () => {
       }]);
 
       const attachArtifactSchema = listedByName.get("attach_artifact")?.inputSchema;
-      const metadataSchema = (attachArtifactSchema?.properties as Record<string, unknown>)
-        ?.metadata as Record<string, unknown> | undefined;
-      expect(metadataSchema?.propertyNames).toEqual(expect.objectContaining({
-        minLength: 1,
-        maxLength: 80,
-      }));
-      expect(metadataSchema?.additionalProperties).toEqual(expect.objectContaining({
-        $ref: expect.stringContaining("#/definitions/"),
-      }));
-      expect(JSON.stringify(attachArtifactSchema)).toContain('"maxLength":2000');
-      expect(JSON.stringify(attachArtifactSchema)).toContain('"maxItems":50');
+      expect((attachArtifactSchema?.properties as Record<string, unknown>)?.metadata)
+        .toBeUndefined();
 
       const contract = compileMcpPublishedContract(
         listed.tools.map((tool) => ({

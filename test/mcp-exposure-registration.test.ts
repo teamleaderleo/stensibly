@@ -61,7 +61,7 @@ describe("trusted MCP exposure registration", () => {
     }
   });
 
-  test("registers the reviewed 21-tool published_default surface only when explicitly requested", async () => {
+  test("registers the compact 21-tool published_default surface only when explicitly requested", async () => {
     const store = new StensiblyStore(":memory:");
     const ledger = withHostedMcpProviders(new SqliteWorkLedger(store));
     try {
