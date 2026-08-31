@@ -36,7 +36,7 @@ export interface GlaedaWorkstationClientV1 {
 export interface GlaedaWorkstationAdapterResultV1 {
   version: typeof GLAEDA_WORKSTATION_ADAPTER_V1;
   kind: "glaeda_workstation_adapter_result";
-  disposition: "executed" | "settled_replay" | "ambiguous_reserved";
+  disposition: "executed" | "reconciled" | "settled_replay" | "ambiguous_reserved";
   command: GlaedaWorkstationCommandV1;
   check: GlaedaWorkstationCheckV1;
   receipt: GlaedaWorkstationReceiptV1 | null;
@@ -55,6 +55,11 @@ export class GlaedaWorkstationAdapterV1 {
   readonly #ledger: WorkstationCommandLedgerV1;
   readonly #client: GlaedaWorkstationClientV1;
   readonly #actor: ActorInput;
+  readonly #ambiguousCommandFingerprints = new Set<string>();
+  readonly #settledReplayByCommandFingerprint = new Map<
+    string,
+    RunnerAdapterCommandSettlementRecord
+  >();
 
   constructor(input: {
     ledger: WorkstationCommandLedgerV1;
@@ -115,6 +120,11 @@ export class GlaedaWorkstationAdapterV1 {
       const settlement = reservation.settlement === null
         ? null
         : admitRunnerAdapterCommandSettlementRecord(reservation.settlement);
+      if (settlement === null) {
+        this.#ambiguousCommandFingerprints.add(commandFingerprint);
+      } else {
+        this.#settledReplayByCommandFingerprint.set(commandFingerprint, settlement);
+      }
       return result(
         settlement === null ? "ambiguous_reserved" : "settled_replay",
         prepared,
@@ -151,6 +161,78 @@ export class GlaedaWorkstationAdapterV1 {
     });
     return result(
       settled.outcome === "replayed" ? "settled_replay" : "executed",
+      prepared,
+      requestFingerprint,
+      commandFingerprint,
+      receipt,
+      receiptFingerprint,
+      settled.settlement,
+    );
+  }
+
+  async reconcile(
+    rawPrepared: unknown,
+    rawReceipt: unknown,
+  ): Promise<GlaedaWorkstationAdapterResultV1> {
+    const prepared = normalizePrepared(rawPrepared);
+    this.#assertAuthority(prepared.command);
+    const commandFingerprint = fingerprintGlaedaWorkstationCommandV1(prepared.command);
+    const ambiguous = this.#ambiguousCommandFingerprints.delete(commandFingerprint);
+    const settledReplay = this.#settledReplayByCommandFingerprint.get(commandFingerprint) ?? null;
+    this.#settledReplayByCommandFingerprint.delete(commandFingerprint);
+    if (!ambiguous && settledReplay === null) {
+      throw new RunnerAdapterCommandConflictError(
+        "Glaeda reconciliation requires an exact ambiguous durable reservation",
+      );
+    }
+    const receipt = admitGlaedaWorkstationReceiptV1(rawReceipt);
+    assertGlaedaWorkstationReceiptMatchesCommandV1(
+      prepared.command,
+      prepared.check,
+      receipt,
+    );
+    const requestFingerprint = digest({
+      version: GLAEDA_WORKSTATION_ADAPTER_V1,
+      kind: "glaeda_workstation_execution",
+      actor: this.#actor,
+      command: prepared.command,
+      check: prepared.check,
+    });
+    const receiptFingerprint = digest(receipt);
+    if (settledReplay !== null) {
+      if (settledReplay.outcome.observationsSha256 !== receiptFingerprint) {
+        throw new RunnerAdapterCommandConflictError(
+          "Reconciled Glaeda receipt differs from the durable settlement",
+        );
+      }
+      return result(
+        "settled_replay",
+        prepared,
+        requestFingerprint,
+        commandFingerprint,
+        receipt,
+        receiptFingerprint,
+        settledReplay,
+      );
+    }
+    const settled = await this.#ledger.settleRunnerAdapterCommand({
+      commandId: prepared.command.commandId,
+      commandFingerprint,
+      outcome: {
+        version: 1,
+        kind: "bounded_episode_completed",
+        observationCount: 1,
+        observationsSha256: receiptFingerprint,
+        terminalObservationId: `glaeda-result:${receipt.resultSha256.slice(7)}`,
+        terminalObservationType: `glaeda_workstation_${receipt.terminalClass}`,
+        latestCheckpointExternalId: `glaeda-result:${receipt.resultSha256}`,
+        latestCheckpointSha256: receipt.resultSha256,
+        containsPrivateContent: false,
+        containsCredentials: false,
+      },
+    });
+    return result(
+      "reconciled",
       prepared,
       requestFingerprint,
       commandFingerprint,

@@ -27,6 +27,7 @@ import {
 } from "./runner-profile-provenance.js";
 import { runStatuses } from "./runs.js";
 import { actorSchema } from "./schemas.js";
+import type { WorkstationCommandLedgerV1 } from "./workstation-command-adapter.js";
 
 export interface RunnerMcpServerOptions {
   concurrency?: Partial<RunnerConcurrencyPolicy>;
@@ -39,6 +40,7 @@ export function createRunnerMcpServer(
   const runs = runnerLedger(ledger);
   if (!runs) throw new Error("Runner lifecycle is unavailable on this backend");
   const commands = runnerAdapterCommandLedger(ledger);
+  const workstations = workstationCommandLedger(ledger);
   const recoveries = runnerAdapterCommandRecoveryLedger(ledger);
   const concurrency = normalizeRunnerConcurrencyPolicy(options.concurrency);
 
@@ -173,7 +175,9 @@ export function createRunnerMcpServer(
     }),
   );
 
-  if (commands) registerRunnerAdapterCommandTools(server, runs, commands, recoveries);
+  if (commands) {
+    registerRunnerAdapterCommandTools(server, runs, commands, workstations, recoveries);
+  }
 
   return server;
 }
@@ -182,6 +186,7 @@ function registerRunnerAdapterCommandTools(
   server: McpServer,
   runs: RunnerLedger,
   commands: RunnerAdapterCommandLedger,
+  workstations: WorkstationCommandLedgerV1 | null,
   recoveries: RunnerAdapterCommandRecoveryLedger | null,
 ): void {
   server.registerTool(
@@ -236,6 +241,63 @@ function registerRunnerAdapterCommandTools(
       });
     }),
   );
+
+  if (workstations) {
+    server.registerTool(
+      "reserve_workstation_adapter_command",
+      {
+        description: "Atomically reserve one workstation adapter dispatch under the exact current item claim and run authority fence. Exact replay returns the stored reservation without authorizing another physical dispatch.",
+        inputSchema: {
+          project: projectSchema(),
+          itemId: z.string().trim().min(1).max(240),
+          itemClaimGeneration: z.number().int().min(0),
+          runId: z.string().trim().min(1).max(240),
+          runGeneration: z.number().int().min(1),
+          leaseGeneration: z.number().int().min(1),
+          authorityHolderId: z.string().trim().min(1).max(240),
+          authorityExpiresAt: z.string().datetime({ offset: true }),
+          actor: actorSchema,
+          adapterId: z.string().trim().min(1).max(80),
+          profileId: z.string().trim().min(1).max(79),
+          profileVersion: z.string().trim().min(1).max(160).nullable().optional(),
+          requestFingerprint: fingerprintSchema(),
+          commandId: z.string().trim().min(1).max(160),
+          commandFingerprint: fingerprintSchema(),
+          idempotencyKey: z.string().trim().min(1).max(240),
+        },
+        annotations: { destructiveHint: false, idempotentHint: true },
+      },
+      async ({
+        itemClaimGeneration,
+        authorityHolderId,
+        authorityExpiresAt,
+        ...reservation
+      }) => asToolResult(async () => {
+        const run = await runs.getRun(reservation.runId);
+        const requestedProfileVersion = runnerProfileProvenanceV1(
+          reservation.profileId,
+          reservation.profileVersion ?? null,
+        ).profileVersion;
+        requireReservationRunnerProfile(
+          run,
+          reservation.adapterId,
+          reservation.profileId,
+          requestedProfileVersion,
+        );
+        return await workstations.reserveWorkstationCommand({
+          itemClaimGeneration,
+          authority: {
+            holderId: authorityHolderId,
+            expiresAt: authorityExpiresAt,
+          },
+          reservation: {
+            ...reservation,
+            profileVersion: requestedProfileVersion,
+          },
+        });
+      }),
+    );
+  }
 
   server.registerTool(
     "settle_runner_adapter_command",
@@ -348,6 +410,15 @@ function runnerAdapterCommandRecoveryLedger(
   const candidate = value as Partial<RunnerAdapterCommandRecoveryLedger>;
   return typeof candidate.claimRunnerAdapterCommandRecovery === "function"
     ? candidate as RunnerAdapterCommandRecoveryLedger
+    : null;
+}
+
+function workstationCommandLedger(value: unknown): WorkstationCommandLedgerV1 | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<WorkstationCommandLedgerV1>;
+  return typeof candidate.reserveWorkstationCommand === "function"
+    && typeof candidate.settleRunnerAdapterCommand === "function"
+    ? candidate as WorkstationCommandLedgerV1
     : null;
 }
 

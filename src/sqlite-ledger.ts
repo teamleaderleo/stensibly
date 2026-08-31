@@ -115,6 +115,11 @@ import {
 import { requireMatchingSqliteIdempotency } from "./sqlite-idempotency-scope.js";
 import { StensiblyStore } from "./store.js";
 import { blockWork, handoffWork, unblockWork } from "./transitions.js";
+import type {
+  WorkstationCommandLedgerV1,
+  WorkstationCommandReservationInputV1,
+} from "./workstation-command-adapter.js";
+import { SqliteWorkstationCommandLedgerV1 } from "./workstation-command-adapter-sqlite.js";
 
 export class SqliteWorkLedger implements
   WorkLedger,
@@ -122,6 +127,7 @@ export class SqliteWorkLedger implements
   ContinuationSupervisorLedger,
   RunnerLedger,
   RunnerAdapterCommandLedger,
+  WorkstationCommandLedgerV1,
   RunnerAdapterCommandRecoveryLedger,
   ProjectAttachmentLedger,
   OperationReceiptLedger,
@@ -455,6 +461,11 @@ export class SqliteWorkLedger implements
 
   async reserveRunnerAdapterCommand(input: ReserveRunnerAdapterCommandInput) {
     return reserveSqliteRunnerAdapterCommand(this.store, input);
+  }
+
+  async reserveWorkstationCommand(input: WorkstationCommandReservationInputV1) {
+    return await new SqliteWorkstationCommandLedgerV1(this.store)
+      .reserveWorkstationCommand(input);
   }
 
   async settleRunnerAdapterCommand(input: SettleRunnerAdapterCommandInput) {

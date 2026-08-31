@@ -36,6 +36,83 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 describe("runner MCP adapter command inbox", () => {
+  test("reserves a physical command through the exact workstation authority fence", async () => {
+    const token = runnerToken(["alpha"]);
+    const item = createItem("alpha", "Execute exact Glaeda repository query");
+    const profileVersion = `sha256:${"e".repeat(64)}`;
+    const dispatched = dispatchNextWork(store, {
+      actor: supervisor,
+      runnerType: "glaeda-workstation",
+      runnerProfile: "repo-query/v1",
+      runnerProfileVersion: profileVersion,
+      itemId: item.id,
+      leaseSeconds: 300,
+      idempotencyKey: "dispatch-alpha-workstation-command",
+    });
+    if (!dispatched) throw new Error("workstation fixture did not dispatch");
+    const claimed = await readToolJson<{
+      run: {
+        id: string;
+        generation: number;
+        leaseGeneration: number;
+        leaseExpiresAt: string;
+      };
+      item: { id: string; claimGeneration: number };
+    }>(await runnerRequest(token.token, toolCall(30, "claim_runner_work", {
+      actor: runner,
+      runnerType: "glaeda-workstation",
+      runnerProfile: "repo-query/v1",
+      runnerProfileVersion: profileVersion,
+      runId: dispatched.run.id,
+      leaseSeconds: 300,
+      idempotencyKey: "claim-alpha-workstation-command",
+    })));
+    const reservation = {
+      project: "alpha",
+      itemId: claimed.item.id,
+      itemClaimGeneration: claimed.item.claimGeneration,
+      runId: claimed.run.id,
+      runGeneration: claimed.run.generation,
+      leaseGeneration: claimed.run.leaseGeneration,
+      authorityHolderId: runner.id,
+      authorityExpiresAt: claimed.run.leaseExpiresAt,
+      actor: runner,
+      adapterId: "glaeda-workstation",
+      profileId: "repo-query/v1",
+      profileVersion,
+      requestFingerprint,
+      commandId: "alpha-workstation-command-1",
+      commandFingerprint,
+      idempotencyKey: "reserve-alpha-workstation-command-1",
+    };
+    const first = await readToolJson<{
+      outcome: string;
+      dispatchAuthorized: boolean;
+      command: { commandId: string };
+    }>(await runnerRequest(token.token, toolCall(
+      31,
+      "reserve_workstation_adapter_command",
+      reservation,
+    )));
+    expect(first).toMatchObject({
+      outcome: "reserved",
+      dispatchAuthorized: true,
+      command: { commandId: reservation.commandId },
+    });
+
+    expect(await readToolError(await runnerRequest(token.token, toolCall(
+      32,
+      "reserve_workstation_adapter_command",
+      {
+        ...reservation,
+        itemClaimGeneration: reservation.itemClaimGeneration + 1,
+        commandId: "alpha-workstation-command-stale",
+        commandFingerprint: `sha256:${"7".repeat(64)}`,
+        idempotencyKey: "reserve-alpha-workstation-command-stale",
+      },
+    )))).toContain("claim generation or authority changed");
+  });
+
   test("reserves, replays, reads, and settles one exact remote adapter command", async () => {
     const token = runnerToken(["alpha"]);
     const claimed = await claim(token.token, alphaRunId, "claim-alpha-command-inbox");

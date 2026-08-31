@@ -35,6 +35,7 @@ const writeTools = new Set([
   "heartbeat_runner_run",
   "transition_runner_run",
   "reserve_runner_adapter_command",
+  "reserve_workstation_adapter_command",
   "settle_runner_adapter_command",
   "claim_runner_adapter_command_recovery",
 ]);
@@ -186,7 +187,10 @@ async function resolveProject(
   if (storedCommandTools.has(toolName)) {
     return storedCommandProject(ledger, toolName, args);
   }
-  if (toolName === "reserve_runner_adapter_command") {
+  if (
+    toolName === "reserve_runner_adapter_command"
+    || toolName === "reserve_workstation_adapter_command"
+  ) {
     return (await runProject(ledger, stringArgument(args, "runId")))
       ?? stringArgument(args, "project");
   }
