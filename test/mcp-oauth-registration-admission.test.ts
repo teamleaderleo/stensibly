@@ -40,6 +40,54 @@ describe("MCP OAuth registration admission", () => {
     expect(limiter.keys).toEqual(["oauth-register"]);
   });
 
+  test("allows only the enabled Codex native loopback callback shape", async () => {
+    const callback = "http://127.0.0.1:49152/callback/AbCdEf0123_-";
+    const allowed = await runRequest(registrationRequest([callback]), {
+      enabled: true,
+      rateLimiter: new SequenceLimiter([true]),
+      allowedRedirectOrigins: "https://chatgpt.com",
+      allowCodexLoopbackRedirects: true,
+    });
+
+    expect(allowed.response.status).toBe(201);
+    expect(allowed.registrationCalls).toBe(1);
+
+    const rejected = [
+      "http://localhost:49152/callback/AbCdEf0123_-",
+      "http://127.0.0.1/callback/AbCdEf0123_-",
+      "http://127.0.0.1:49152/callback",
+      "http://127.0.0.1:49152/other/AbCdEf0123_-",
+      "http://127.0.0.1:49152/callback/too-short",
+      "http://127.0.0.1:49152/callback/AbCdEf0123_-?next=https://evil.example",
+      "http://user@127.0.0.1:49152/callback/AbCdEf0123_-",
+      "http://127.0.0.1:49152/callback/AbCdEf0123_-#fragment",
+      "http://127.0.0.2:49152/callback/AbCdEf0123_-",
+    ];
+    for (const redirectUri of rejected) {
+      const result = await runRequest(registrationRequest([redirectUri]), {
+        enabled: true,
+        rateLimiter: new SequenceLimiter([true]),
+        allowedRedirectOrigins: "https://chatgpt.com",
+        allowCodexLoopbackRedirects: true,
+      });
+      expect(result.response.status).toBe(400);
+      expect(result.registrationCalls).toBe(0);
+    }
+  });
+
+  test("keeps the Codex loopback callback disabled unless configured", async () => {
+    const result = await runRequest(registrationRequest([
+      "http://127.0.0.1:49152/callback/AbCdEf0123_-",
+    ]), {
+      enabled: true,
+      rateLimiter: new SequenceLimiter([true]),
+      allowedRedirectOrigins: "https://chatgpt.com",
+    });
+
+    expect(result.response.status).toBe(400);
+    expect(result.registrationCalls).toBe(0);
+  });
+
   test("rejects at the limiter before parsing or registration work", async () => {
     const limiter = new SequenceLimiter([false]);
     const request = new Request(`${issuer}/oauth/register`, {

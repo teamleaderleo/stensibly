@@ -8,10 +8,11 @@ The Worker applies the edge-control slice before `POST /oauth/register` reaches 
 
 - `OAUTH_REGISTRATION_RATE_LIMITER` allows 10 registration attempts per 60 seconds for the bounded constant key `oauth-register` in each Cloudflare location;
 - `STENSIBLY_OAUTH_REGISTRATION_REDIRECT_ORIGINS` contains exact HTTPS origins, initially `https://chatgpt.com` for the product callback;
+- `STENSIBLY_OAUTH_REGISTRATION_CODEX_LOOPBACK_REDIRECTS_ENABLED=true` additionally admits only Codex's native-app callback shape: explicit-port `http://127.0.0.1:<port>/callback/<12-character server id>`. Other loopback hosts, missing ports, paths, queries, credentials, fragments, and HTTP origins remain rejected;
 - missing or malformed origin configuration, a missing limiter binding, and limiter failures fail closed;
 - limiter exhaustion returns OAuth-compatible HTTP `429` with a bounded `Retry-After: 60` response;
 - the gate does not use or log client metadata, redirect URIs, credentials, cookies, or IP addresses;
-- every parsed redirect URI must match an allowed exact origin. Wildcards, suffix matching, subdomains, userinfo, fragments, and HTTP downgrade are rejected.
+- every parsed redirect URI must match an allowed exact HTTPS origin or the separately enabled exact Codex loopback shape. Wildcards, suffix matching, subdomains, userinfo, fragments, and other HTTP redirects are rejected.
 
 Cloudflare rate-limit counters are an edge abuse-control mechanism, not exact global accounting. The Convex per-workspace client ceiling remains a separate storage bound.
 

@@ -54,6 +54,7 @@ export interface CloudflareBindings extends GmailUnattendedEnvironment {
   STENSIBLY_OAUTH_AUTHORIZATION_CODE_SECONDS?: string;
   STENSIBLY_OAUTH_REFRESH_TOKEN_SECONDS?: string;
   STENSIBLY_OAUTH_REGISTRATION_REDIRECT_ORIGINS?: string;
+  STENSIBLY_OAUTH_REGISTRATION_CODEX_LOOPBACK_REDIRECTS_ENABLED?: string;
   STENSIBLY_GITHUB_WEBHOOK_SECRET?: string;
   STENSIBLY_GITHUB_APP_ID?: string;
   STENSIBLY_GITHUB_APP_PRIVATE_KEY?: string;
@@ -155,6 +156,8 @@ const worker = {
             enabled: oauthConfigurationPresent(env),
             rateLimiter: env.OAUTH_REGISTRATION_RATE_LIMITER,
             allowedRedirectOrigins: env.STENSIBLY_OAUTH_REGISTRATION_REDIRECT_ORIGINS,
+            allowCodexLoopbackRedirects:
+              env.STENSIBLY_OAUTH_REGISTRATION_CODEX_LOOPBACK_REDIRECTS_ENABLED === "true",
           },
         );
         if (admissionRejection) return admissionRejection;

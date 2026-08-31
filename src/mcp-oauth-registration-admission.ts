@@ -16,6 +16,7 @@ export interface OAuthRegistrationAdmissionOptions {
   enabled: boolean;
   rateLimiter?: OAuthRegistrationRateLimiter;
   allowedRedirectOrigins?: string;
+  allowCodexLoopbackRedirects?: boolean;
 }
 
 type RegistrationInspection =
@@ -77,6 +78,7 @@ export async function enforceOAuthRegistrationAdmission(
   if (inspection.redirectUris.some((redirectUri) => !redirectOriginAllowed(
     redirectUri,
     allowedOrigins,
+    options.allowCodexLoopbackRedirects === true,
   ))) {
     return oauthError(
       400,
@@ -192,14 +194,29 @@ function parseAllowedOrigins(value: string | undefined): Set<string> | null {
   return origins.size ? origins : null;
 }
 
-function redirectOriginAllowed(redirectUri: string, allowedOrigins: Set<string>): boolean {
+function redirectOriginAllowed(
+  redirectUri: string,
+  allowedOrigins: Set<string>,
+  allowCodexLoopbackRedirects: boolean,
+): boolean {
   try {
     const parsed = new URL(redirectUri);
-    return parsed.protocol === "https:"
+    if (parsed.protocol === "https:"
       && !parsed.username
       && !parsed.password
       && !parsed.hash
-      && allowedOrigins.has(parsed.origin);
+      && allowedOrigins.has(parsed.origin)) {
+      return true;
+    }
+    return allowCodexLoopbackRedirects
+      && parsed.protocol === "http:"
+      && parsed.hostname === "127.0.0.1"
+      && parsed.port !== ""
+      && !parsed.username
+      && !parsed.password
+      && !parsed.search
+      && !parsed.hash
+      && /^\/callback\/[A-Za-z0-9_-]{12}$/.test(parsed.pathname);
   } catch {
     return false;
   }
