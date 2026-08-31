@@ -2,101 +2,56 @@
 
 **A responsibility and authority ledger for human-agent work.**
 
-Stensibly records shared coordination facts: what needs doing, who is responsible, what is blocked, what evidence exists, and what happens next. The server owns this shared state. Agent frameworks remain optional clients.
+Stensibly keeps durable coordination facts outside disposable chats and worker
+processes: work, responsibility, blockers, evidence, decisions, continuations, and
+bounded authority. The server owns that shared state; agent frameworks and runners are
+clients.
 
-The collaborative board is the simplest projection of that state. The broader product governs which actor may perform which work, under which current authority grant, with which obligations, resources, limits, and escalation rules.
+External systems continue to own source code, files, CI, deployments, provider
+objects, and private agent execution. Stensibly stores references and coordination
+history around them. See [the product model](docs/product-model.md) for the canonical
+responsibility/authority boundary.
 
 > **The board shows the work. The ledger governs who may do it.**
 
-See [the product model](docs/product-model.md) for the distinction between a collaborative task board, a responsibility ledger, and a governed execution control plane.
-
-External systems continue to own source code, files, deployments, CI output, and private agent execution. Stensibly stores references and coordination history instead of copying those systems into the ledger.
-
 ## Hosted service
-
-The running hosted path is:
 
 | Surface | Endpoint | Role |
 | --- | --- | --- |
-| Dashboard | `https://www.stensibly.com` | Static browser board and item-detail client |
-| REST v1 and remote MCP | `https://api.stensibly.com` | Official authenticated API |
-| Worker fallback | `https://stensibly-api.leoli-082000.workers.dev` | Direct Worker endpoint during rollout and diagnosis |
-| System of record | Convex | Workspaces, projects, actors, items, events, artifacts, runs, dependencies, reservations, accounts, sessions, and API-token hashes |
+| Dashboard | `https://www.stensibly.com` | Human board and item detail |
+| REST v1 | `https://api.stensibly.com/api/v1` | Authenticated HTTP API |
+| Remote MCP | `https://api.stensibly.com/mcp` | Authenticated MCP |
+| Worker fallback | `https://stensibly-api.leoli-082000.workers.dev` | Direct Worker endpoint for diagnosis |
 
-The Cloudflare Worker authenticates public API tokens and hosted browser sessions, enforces workspace and project scopes, and calls Convex with a private service secret. The browser never receives that service secret.
+The hosted path uses Convex for shared state and a Cloudflare Worker for public HTTP,
+authentication, workspace/project scope enforcement, and trusted Convex calls. The
+static dashboard is a client of that API. Hosted MCP uses Bearer authentication; the
+browser also supports its hosted session flow.
 
-The dashboard currently polls REST v1. Manual endpoint and token connection remains available for self-hosted use and diagnostics. The token is kept in `sessionStorage`, disappears when the browser session ends, and is never rendered after connection.
-
-### Verify the hosted path
-
-Use a read token through the environment so it stays out of shell history:
+Verify the hosted read path with a token supplied through the environment:
 
 ```bash
 STENSIBLY_TOKEN="$STENSIBLY_TOKEN" bun run verify:hosted
 ```
 
-The verifier performs seven read-only checks:
+Deployment, verification, logs, rollback, bindings, and credential placement live in
+[docs/operations.md](docs/operations.md).
 
-1. Convex-backed health
-2. unauthenticated REST rejection
-3. dashboard CORS preflight
-4. authenticated item listing
-5. authenticated remote MCP initialization
-6. full live MCP tool contract against the checked-in ChatGPT action snapshot
-7. one bounded `survey_workspace` MCP read with Worker and request receipts
+## Local SQLite mode
 
-Use the Worker fallback or a project-scoped check when needed:
-
-```bash
-STENSIBLY_TOKEN="$STENSIBLY_TOKEN" \
-  bun run verify:hosted -- \
-  --endpoint https://stensibly-api.leoli-082000.workers.dev \
-  --project scrapbook
-```
-
-See [docs/operations.md](docs/operations.md) for deployment, verification, logs, rollback, and incident diagnosis.
-
-## Two supported modes
-
-### Hosted Convex mode
-
-This is the production path. Convex owns shared state and authentication authority. Cloudflare Workers exposes REST v1 and Streamable HTTP MCP. The static Vercel site is a client of that API.
-
-Hosted clients should use:
-
-- `/api/v1` for REST
-- `/mcp` for remote MCP
-- Bearer authentication for machine clients and advanced browser connection
-- the hosted browser session for supported human REST access
-
-MCP remains bearer-only.
-
-### Local SQLite compatibility mode
-
-The original Bun and SQLite application remains useful for local experiments and small self-hosted setups. It includes the browser board, REST v1, legacy unversioned `/api` routes, local token authority, and remote MCP.
-
-The unversioned `/api` routes are compatibility routes. New clients should use `/api/v1` in both modes.
-
-## Run locally with SQLite
-
-Install [Bun](https://bun.sh), then:
+The Bun/SQLite application remains supported for local experiments and small
+self-hosted setups.
 
 ```bash
 bun install
 bun run dev
 ```
 
-Open `http://localhost:3000`. The default database is `./stensibly.sqlite`.
+Open `http://localhost:3000`. The default database is `./stensibly.sqlite`; choose
+another with `STENSIBLY_DB=/absolute/path/to/stensibly.sqlite`.
 
-Choose another database path with:
-
-```bash
-STENSIBLY_DB=/absolute/path/to/stensibly.sqlite bun run start
-```
-
-Local HTTP authentication is disabled by default. Enable it before exposing the process beyond a trusted machine.
-
-Create a local token:
+Local HTTP authentication is disabled by default. Before exposing the process beyond a
+trusted machine, create a scoped token and require authentication:
 
 ```bash
 STENSIBLY_DB=/absolute/path/to/stensibly.sqlite \
@@ -104,150 +59,66 @@ STENSIBLY_DB=/absolute/path/to/stensibly.sqlite \
   --name local-agent \
   --scopes read,write \
   --projects scrapbook
-```
 
-Start the local server with authentication required:
-
-```bash
 STENSIBLY_DB=/absolute/path/to/stensibly.sqlite \
 STENSIBLY_REQUIRE_AUTH=true \
   bun run start
 ```
 
-The token command prints the raw token once. Stensibly stores its SHA-256 hash, metadata, scopes, project allowlist, and revocation state.
+The token command prints the raw token once and stores its SHA-256 hash plus metadata,
+scopes, project allowlist, and revocation state.
 
-## REST v1
+## REST and MCP
 
-Set the endpoint and token for examples:
+REST clients should use `/api/v1`. The legacy unversioned `/api` routes remain a local
+compatibility surface. Writes support idempotency keys and remain subject to current
+server-owned authority.
+
+A simple hosted read:
 
 ```bash
 export STENSIBLY_ENDPOINT=https://api.stensibly.com
 export STENSIBLY_TOKEN=stn.tok_...
-```
 
-List work:
-
-```bash
 curl "$STENSIBLY_ENDPOINT/api/v1/items?project=scrapbook&status=ready" \
   -H "authorization: Bearer $STENSIBLY_TOKEN"
 ```
 
-Get a deterministic project brief:
+REST v1 covers project briefs, work and item detail, creation, artifacts, claims,
+renewal, handoff, blocking, release, completion, and append-only event recording.
 
-```bash
-curl "$STENSIBLY_ENDPOINT/api/v1/projects/scrapbook/brief?limit=10" \
-  -H "authorization: Bearer $STENSIBLY_TOKEN"
-```
+Remote MCP is available at `https://api.stensibly.com/mcp` and applies the same token
+scopes and project boundaries. Existing initialize-era Streamable HTTP clients and MCP
+`2026-07-28` self-describing clients share one governed tool catalogue.
 
-Create an item with a write token:
-
-```bash
-curl "$STENSIBLY_ENDPOINT/api/v1/items" \
-  -H "authorization: Bearer $STENSIBLY_TOKEN" \
-  -H 'content-type: application/json' \
-  -H 'idempotency-key: demo-create-1' \
-  -d '{
-    "project": "scrapbook",
-    "kind": "task",
-    "title": "See whether this thing works",
-    "nextAction": "Claim it from another process",
-    "actor": { "id": "leo", "name": "Leo", "kind": "human" }
-  }'
-```
-
-REST v1 supports project briefs, item listing and detail, creation, artifacts, claims, renewal, handoff, block, unblock, release, completion, and append-only event recording. Retryable clients should supply idempotency keys for writes.
-
-## MCP
-
-### Remote Streamable HTTP
-
-The hosted MCP endpoint is:
-
-```text
-https://api.stensibly.com/mcp
-```
-
-Remote MCP requires Bearer authentication. It exposes the same ledger operations as REST v1 and applies the same token scopes and project boundaries.
-
-The endpoint is dual-era. Existing ChatGPT connectors continue to use the
-initialize-era Streamable HTTP protocol. Clients that implement MCP
-`2026-07-28` can instead send self-describing requests, begin with
-`server/discover`, and call or list tools without a session handshake. The two
-SDK generations stay isolated at the transport boundary and share one governed
-tool catalogue.
-
-Available tools include:
-
-- `get_brief`
-- `list_work`
-- `get_item`
-- `create_item`
-- `claim_work`
-- `renew_claim`
-- `handoff_work`
-- `block_work`
-- `unblock_work`
-- `release_work`
-- `record_event`
-- `attach_artifact`
-- `list_artifacts`
-- `complete_work`
-
-When the guarded GitHub publication provider is enabled, the hosted surface also
-supports an exact-CAS `github_create_branch` → `github_create_file` or
-`github_update_file` → `github_create_pull_request` workflow. File writes require
-an existing non-default branch and exact commit/content preconditions; ambiguous
-results are reconciled through durable receipts before replay.
-
-### Local stdio
-
-For a trusted local client:
+For a trusted local stdio client:
 
 ```bash
 STENSIBLY_DB=/absolute/path/to/stensibly.sqlite bun run mcp
 ```
 
-The stdio process uses the local SQLite database directly and does not use HTTP Bearer authentication.
+The stdio process uses the local SQLite database directly.
 
-## Token administration
+## Credentials
 
-Token records contain hashes instead of raw secrets. List or revoke token metadata with:
+API tokens are scoped bearer credentials whose raw values are shown only when created;
+Stensibly stores hashes. List or revoke local token metadata with:
 
 ```bash
 bun run tokens list
 bun run tokens revoke tok_TOKEN_ID
 ```
 
-To administer hosted Convex tokens, configure a trusted operator shell before running those commands:
-
-```bash
-export STENSIBLY_BACKEND=convex
-export CONVEX_URL=https://your-deployment.convex.cloud
-export STENSIBLY_SERVICE_SECRET=...
-export STENSIBLY_WORKSPACE=default
-```
-
-`STENSIBLY_SERVICE_SECRET` is a Worker/CLI-to-Convex credential. It is never an API bearer token and never belongs in the dashboard, a static host variable, a URL, or a client configuration.
-
-## Core rules
-
-1. Work belongs to a workspace and project, independent of any agent runtime.
-2. The board is a projection; server-owned ledger state remains authoritative.
-3. Assignment does not by itself grant permission to act.
-4. Claims and run leases are renewable, expiring authority grants.
-5. Stale or superseded authority must fail closed rather than fall back to actor identity.
-6. Responsibility survives process and conversation loss through durable next actions, evidence, events, outcomes, blockers, and handoffs.
-7. Handoffs carry a summary and an explicit next action.
-8. Blocking work records a reason and releases ownership.
-9. Meaningful changes append events.
-10. Artifacts remain references with explicit provenance.
-11. API tokens store hashed secrets and carry explicit scopes.
-12. Workspace and project boundaries are enforced by the server.
-13. Writes support idempotency keys; idempotency does not replace authority fencing.
-14. Invariant reconciliation and semantic project decisions are separate policy classes.
-15. The server performs no model calls.
+Hosted service credentials such as `STENSIBLY_SERVICE_SECRET` belong only in trusted
+server/operator surfaces. Keep raw secrets out of browser code, URLs, repository text,
+issues, pull requests, logs, screenshots, tests, and retained artifacts. See
+[hosted operations](docs/operations.md) for the current credential inventory.
 
 ## Development checks
+
+Repository workers should start with [AGENTS.md](AGENTS.md) and the standing project
+policy in [STENSIBLY.md](STENSIBLY.md). Code-level conventions live in the
+[engineering handbook](docs/engineering-handbook.md).
 
 ```bash
 bun install
@@ -257,34 +128,12 @@ bun run test:convex
 bun run worker:check
 ```
 
-The Convex test suite runs in memory and covers competing claims, idempotent commands, scheduled lease expiry, timer races, artifacts, handoffs, dependencies, runs, reservations, tokens, sessions, and project briefs.
-
-## Current product boundary
-
-The hosted coordination system is live and in ongoing dogfood. Stensibly has moved past the original first-pilot question: real work now crosses disposable worker sessions through durable handoffs and provider-backed continuation, while the hosted ledger, REST/MCP surfaces, authority checks, GitHub effects, and reconciliation machinery continue to be exercised and hardened.
-
-The production Worker now has an automatic repository-attention → mail continuation path for the explicitly configured Quarry dogfood mapping. Signed GitHub webhook observations and a bounded read-only public GitHub Events fallback both feed the same durable observation, attention, thread, and Gmail publisher path. Public fallback observations carry explicit provenance, conditional polling state (ETag and provider poll-interval timing) is durable across Worker isolates and advances only after downstream acknowledgement, stale current-head evidence stays quiet, and the fallback adds no GitHub write authority. Outbound mail carries a project-owned continuation code while the internal thread/effect/provider identity remains stable for replay and reconciliation.
-
-Current work is increasingly about what comes after basic continuity works:
-
-- compile project-native worker briefs from durable policy, current state, evidence obligations, and runner profiles;
-- keep useful work moving through local Git and mail when GitHub is unavailable, then reconcile against fresh provider state;
-- project Gmail/Outlook correspondence, current activity, evidence, blockers, and recovery into human-readable Control Room views;
-- run sealed cross-model review and adversarial responsibility/authority recovery drills;
-- reuse exact CI evidence and reduce duplicated validation/deployment work;
-- improve unattended intake, continuation, settlement, and provider ambiguity recovery;
-- preserve a common runner-neutral work/authority model while Codex, Claude Code, local tools, email-driven fresh chats, and future runners remain replaceable execution clients.
-
-Consequential effects still retain explicit authority fences. Merge, deployment, spending, credential/account changes, and other high-impact operations require the current server-owned grants and approval semantics appropriate to that effect; richer continuity does not widen authority by itself.
-
-For current product direction, see the live portfolio and active programme issues rather than treating the historical guarded-pilot issue as the present status.
-
 ## Documentation
 
+- [Product model: authority and responsibility](docs/product-model.md)
 - [Engineering handbook](docs/engineering-handbook.md)
 - [Current-main code atlas](docs/code-atlas.md)
-- [Product model: authority and responsibility](docs/product-model.md)
-- [Agent and work-group nomenclature](docs/agent-nomenclature.md)
+- [Agent and execution identity](docs/agent-nomenclature.md)
 - [Distributed coordination correctness](docs/coordination-correctness.md)
 - [Architecture](docs/architecture.md)
 - [Hosted operations](docs/operations.md)
