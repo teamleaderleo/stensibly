@@ -89,8 +89,8 @@ describe("MCP OAuth hardening", () => {
     expect(html).toContain('touch-action:manipulation');
     expect(html).toContain('name="decision" value="approve"');
     expect(html).toContain('name="decision" value="deny"');
-    expect(html).toContain('<button class="approve" type="submit">Authorise</button>');
-    expect(html).toContain('<button type="submit">Cancel</button>');
+    expect(html).toContain('<input class="consent-control approve" type="submit" value="Authorise">');
+    expect(html).toContain('<input class="consent-control" type="submit" value="Cancel">');
     expect(html).not.toContain('<button class="approve" name="decision"');
   });
 
