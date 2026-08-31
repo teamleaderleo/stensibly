@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { executeVerification } from "../scripts/pi-luna-worker-extension.ts";
 import {
+  buildEffectiveReadOnlyMounts,
   buildPiResumeCommand,
   buildPiWorkerArgs,
   parsePiOutput,
@@ -41,6 +42,12 @@ async function makeRepository(root: string): Promise<string> {
     "commit", "-q", "-m", "initial",
   ]);
   return repository;
+}
+
+async function makeLinkedWorktree(repository: string, root: string): Promise<string> {
+  const worktree = join(root, "linked-worktree");
+  await shell("git", ["-C", repository, "worktree", "add", "-q", "-b", "pi-luna-linked", worktree]);
+  return worktree;
 }
 
 interface FakePiSetup {
@@ -231,6 +238,11 @@ test("parsePiOutput sums provider usage and records the terminating result/tool 
   expect(parsed.result).toMatchObject({ status: "partial", summary: "bounded" });
 });
 
+test("buildEffectiveReadOnlyMounts preserves declarations, deduplicates paths, and is empty without containment", () => {
+  expect(buildEffectiveReadOnlyMounts("bwrap", ["/usr/bin", "/usr/bin/", "/usr/bin"], "/usr/bin")).toEqual(["/usr/bin"]);
+  expect(buildEffectiveReadOnlyMounts("none", ["/usr/bin"], "/git/common")).toEqual([]);
+});
+
 describe("fake Pi Luna worker", () => {
   test("rejects non-OAuth auth before the worker invocation and publishes a receipt", async () => {
     const setup = await setupFakePi("auth-reject");
@@ -309,6 +321,55 @@ describe("fake Pi Luna worker", () => {
       if (previousApiKey === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = previousApiKey;
     }
+  });
+
+  test("auto-mounts a linked worktree Git common directory and records the effective receipt identity", async () => {
+    const setup = await setupFakePi();
+    const worktree = await makeLinkedWorktree(setup.repository, setup.root);
+    const commonDirectory = await realpath(join(setup.repository, ".git"));
+    const verificationPath = [dirnameOf(process.execPath), "/usr/bin", "/bin"].join(":");
+    const explicitMounts = ["/usr/bin", "/usr/bin/"];
+    const result = await runPiLunaWorker({
+      ...setup.options,
+      repository: worktree,
+      osBoundary: "bwrap",
+      bwrapBin: setup.executable,
+      verificationPath,
+      verificationExecutableDirs: explicitMounts,
+    });
+    const receipt = await readJson(result.receiptPath);
+    const boundary = (receipt.invocation as Record<string, unknown>).boundary as Record<string, unknown>;
+    const expectedMounts = [...new Set(verificationPath.split(":")), commonDirectory];
+
+    expect(result.exitCode).toBe(0);
+    expect(receipt.success).toBe(true);
+    expect(receipt.repository).toBe(await realpath(worktree));
+    expect(boundary).toMatchObject({
+      mode: "bwrap",
+      bwrapBin: setup.executable,
+      readOnlyMounts: expectedMounts,
+    });
+    expect((boundary.readOnlyMounts as readonly string[]).filter((path) => path === commonDirectory)).toHaveLength(1);
+  });
+
+  test("fails closed with a bounded receipt when Git metadata cannot be resolved", async () => {
+    const setup = await setupFakePi();
+    const notARepository = join(setup.root, "not-a-repository");
+    await mkdir(notARepository);
+
+    const result = await runPiLunaWorker({ ...setup.options, repository: notARepository });
+    const receipt = await readJson(result.receiptPath);
+
+    expect(result.exitCode).toBe(1);
+    expect(receipt.success).toBe(false);
+    expect(receipt.harnessError).toContain("Git common directory resolution failed");
+    expect((receipt.harnessError as string).length).toBeLessThanOrEqual(500);
+    expect((receipt.child as Record<string, unknown>).outcome).toBe("not_started");
+    expect((receipt.invocation as Record<string, unknown>).boundary).toMatchObject({
+      mode: "none",
+      readOnlyMounts: [],
+    });
+    await expect(lstat(setup.argsPath)).rejects.toThrow();
   });
 
   test("times out and kills a fake Pi process group with its descendant", async () => {

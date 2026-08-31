@@ -437,6 +437,30 @@ function safePathFor(piBin: string, verificationPath: string | undefined): strin
   return [...new Set(entries)].join(delimiter);
 }
 
+function deduplicatePaths(paths: readonly string[]): readonly string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const path of paths) {
+    const identity = resolve(path);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    result.push(path);
+  }
+  return result;
+}
+
+export function buildEffectiveReadOnlyMounts(
+  osBoundary: PiLunaOsBoundary,
+  declaredMounts: readonly string[],
+  gitCommonDirectory: string | null,
+): readonly string[] {
+  if (osBoundary === "none") return [];
+  return deduplicatePaths([
+    ...declaredMounts,
+    ...(gitCommonDirectory === null ? [] : [gitCommonDirectory]),
+  ]);
+}
+
 function normalizeVerificationCommands(
   commands: readonly PiLunaVerificationCommand[],
 ): readonly PiLunaVerificationCommand[] {
@@ -500,10 +524,10 @@ function normalizeOptions(input: PiLunaWorkerOptions): NormalizedOptions {
       if (!isAbsolute(directory)) throw new Error("verification executable directories must be absolute");
       return directory;
     });
-  const verificationExecutableDirs = [...new Set([
+  const verificationExecutableDirs = deduplicatePaths([
     ...verificationPathEntries,
     ...explicitReadOnlyMounts,
-  ])];
+  ]);
   const suppliedSessionId = input.sessionId;
   if (suppliedSessionId !== undefined && (!requireText(suppliedSessionId, "session ID", 80) || !isUuid(suppliedSessionId))) {
     throw new Error("session ID must be a UUID");
@@ -1214,6 +1238,31 @@ async function gitOutput(
   return capture.stdout;
 }
 
+async function resolveGitCommonDirectory(
+  repository: string,
+  runtime: RuntimeDirectories,
+  options: NormalizedOptions,
+): Promise<string> {
+  try {
+    const output = (await gitOutput(repository, ["rev-parse", "--git-common-dir"], runtime, options)).toString("utf8").trim();
+    if (
+      output.length === 0
+      || output.length > 4_096
+      || output.includes("\0")
+      || output.includes("\n")
+      || output.includes("\r")
+    ) {
+      throw new Error("Git returned an invalid common directory");
+    }
+    const commonDirectory = await realpath(resolve(repository, output));
+    const information = await lstat(commonDirectory);
+    if (!information.isDirectory()) throw new Error("Git common directory is not a directory");
+    return commonDirectory;
+  } catch (error) {
+    throw new Error(`Git common directory resolution failed: ${errorMessage(error)}`);
+  }
+}
+
 async function worktreePathState(repository: string, path: string): Promise<string> {
   const target = resolve(repository, path);
   if (!pathIsWithin(target, repository)) return "outside-repository";
@@ -1321,6 +1370,7 @@ async function writeExtensionConfig(
   runtime: RuntimeDirectories,
   repository: string,
   options: NormalizedOptions,
+  readOnlyMounts: readonly string[],
 ): Promise<void> {
   const config: PiLunaExtensionConfig = {
     schemaVersion: PI_LUNA_EXTENSION_VERSION,
@@ -1334,7 +1384,7 @@ async function writeExtensionConfig(
     toolPath: options.verificationPath,
     toolHome: runtime.home,
     toolTmpdir: runtime.tmpdir,
-    verificationExecutableDirs: options.verificationExecutableDirs,
+    verificationExecutableDirs: readOnlyMounts,
     verificationCommands: options.verificationCommands,
   };
   await writeFile(runtime.configPath, `${JSON.stringify(config, null, 2)}\n`, { flag: "wx", mode: 0o600 });
@@ -1460,6 +1510,8 @@ export async function runPiLunaWorker(input: PiLunaWorkerOptions): Promise<PiLun
 
   let harnessError: string | null = null;
   let runtime: RuntimeDirectories | null = null;
+  let gitCommonDirectory: string | null = null;
+  let effectiveReadOnlyMounts = buildEffectiveReadOnlyMounts(options.osBoundary, options.verificationExecutableDirs, null);
   let beforeSnapshot: GitSnapshot | null = null;
   let afterSnapshot: GitSnapshot | null = null;
   let workerCapture: ProcessCapture | null = null;
@@ -1479,6 +1531,8 @@ export async function runPiLunaWorker(input: PiLunaWorkerOptions): Promise<PiLun
 
   try {
     runtime = await createRuntime(options);
+    gitCommonDirectory = await resolveGitCommonDirectory(repository, runtime, options);
+    effectiveReadOnlyMounts = buildEffectiveReadOnlyMounts(options.osBoundary, options.verificationExecutableDirs, gitCommonDirectory);
     beforeSnapshot = await gitSnapshot(repository, runtime, options);
     versionCapture = await captureProcess([options.piBin, ...PI_LUNA_VERSION_ARGS], {
       cwd: repository,
@@ -1520,7 +1574,7 @@ export async function runPiLunaWorker(input: PiLunaWorkerOptions): Promise<PiLun
 
     if (harnessError === null && runtime !== null) {
       await mkdir(sessionDir, { recursive: true, mode: 0o700 });
-      await writeExtensionConfig(runtime, repository, options);
+      await writeExtensionConfig(runtime, repository, options, effectiveReadOnlyMounts);
       workerCapture = await captureProcess(workerCommand, {
         cwd: repository,
         env: piEnvironment(process.env, {
@@ -1699,7 +1753,7 @@ export async function runPiLunaWorker(input: PiLunaWorkerOptions): Promise<PiLun
       boundary: {
         mode: options.osBoundary,
         bwrapBin: options.bwrapBin,
-        readOnlyMounts: options.verificationExecutableDirs,
+        readOnlyMounts: effectiveReadOnlyMounts,
       },
       disabledDiscovery: ["extensions", "skills", "prompt-templates", "themes", "context-files"],
       environment: {
