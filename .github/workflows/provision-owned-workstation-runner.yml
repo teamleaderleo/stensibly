@@ -91,6 +91,7 @@ jobs:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           RECIPIENT_PUBLIC_KEY_BASE64: ${{ inputs.recipient_public_key_base64 }}
           RECIPIENT_PUBLIC_KEY_SHA256: ${{ inputs.recipient_public_key_sha256 }}
+          STENSIBLY_SERVICE_SECRET: ${{ secrets.STENSIBLY_SERVICE_SECRET }}
           STENSIBLY_WORKSPACE: default
         run: |
           set -euo pipefail
@@ -112,9 +113,11 @@ jobs:
           [[ "$deployment_name" =~ ^[a-z0-9-]+$ ]] \
             || { echo "Protected Convex deployment identity is malformed" >&2; exit 1; }
           export CONVEX_URL="https://${deployment_name}.convex.cloud"
-          export STENSIBLY_SERVICE_SECRET="$(bunx convex env get STENSIBLY_SERVICE_SECRET --prod)"
           test -n "$STENSIBLY_SERVICE_SECRET" \
+            && [[ "$STENSIBLY_SERVICE_SECRET" != *$'\n'* ]] \
+            && [[ "$STENSIBLY_SERVICE_SECRET" != *$'\r'* ]] \
             || { echo "Protected Stensibly service secret is unavailable" >&2; exit 1; }
+          echo "::add-mask::$STENSIBLY_SERVICE_SECRET"
 
           minted_id=""
           revoke_on_failure() {
@@ -165,6 +168,7 @@ jobs:
         if: ${{ failure() && inputs.operation == 'mint' && steps.mint.outputs.token_id != '' }}
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          STENSIBLY_SERVICE_SECRET: ${{ secrets.STENSIBLY_SERVICE_SECRET }}
           TOKEN_ID: ${{ steps.mint.outputs.token_id }}
           STENSIBLY_WORKSPACE: default
         run: |
@@ -173,13 +177,18 @@ jobs:
           deployment_prefix="${CONVEX_DEPLOY_KEY%%|*}"
           deployment_name="${deployment_prefix#*:}"
           export CONVEX_URL="https://${deployment_name}.convex.cloud"
-          export STENSIBLY_SERVICE_SECRET="$(bunx convex env get STENSIBLY_SERVICE_SECRET --prod)"
+          test -n "$STENSIBLY_SERVICE_SECRET" \
+            && [[ "$STENSIBLY_SERVICE_SECRET" != *$'\n'* ]] \
+            && [[ "$STENSIBLY_SERVICE_SECRET" != *$'\r'* ]] \
+            || { echo "Protected Stensibly service secret is unavailable" >&2; exit 1; }
+          echo "::add-mask::$STENSIBLY_SERVICE_SECRET"
           STENSIBLY_BACKEND=convex bun src/tokens.ts revoke "$TOKEN_ID" >/dev/null
 
       - name: Revoke exact runner credential
         if: ${{ inputs.operation == 'revoke' }}
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          STENSIBLY_SERVICE_SECRET: ${{ secrets.STENSIBLY_SERVICE_SECRET }}
           TOKEN_ID: ${{ inputs.token_id }}
           STENSIBLY_WORKSPACE: default
         run: |
@@ -188,7 +197,11 @@ jobs:
           deployment_prefix="${CONVEX_DEPLOY_KEY%%|*}"
           deployment_name="${deployment_prefix#*:}"
           export CONVEX_URL="https://${deployment_name}.convex.cloud"
-          export STENSIBLY_SERVICE_SECRET="$(bunx convex env get STENSIBLY_SERVICE_SECRET --prod)"
+          test -n "$STENSIBLY_SERVICE_SECRET" \
+            && [[ "$STENSIBLY_SERVICE_SECRET" != *$'\n'* ]] \
+            && [[ "$STENSIBLY_SERVICE_SECRET" != *$'\r'* ]] \
+            || { echo "Protected Stensibly service secret is unavailable" >&2; exit 1; }
+          echo "::add-mask::$STENSIBLY_SERVICE_SECRET"
           STENSIBLY_BACKEND=convex bun src/tokens.ts revoke "$TOKEN_ID" >/dev/null
           printf 'Revoked exact runner token ID `%s`.\n' "$TOKEN_ID" >> "$GITHUB_STEP_SUMMARY"
 
