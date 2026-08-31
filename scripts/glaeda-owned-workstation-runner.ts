@@ -17,7 +17,6 @@ const { values } = parseArgs({
     "profile-generation": { type: "string" },
     "node-id": { type: "string", default: "big-red" },
     "node-generation": { type: "string" },
-    "capability-snapshot": { type: "string" },
     "glaeda-runtime": { type: "string" },
     "os-class": { type: "string", default: process.platform === "darwin" ? "macos" : "linux" },
     architecture: { type: "string", default: process.arch === "arm64" ? "arm64" : "x86_64" },
@@ -40,7 +39,6 @@ Required:
   --canary-script PATH
   --profile-generation sha256:...
   --node-generation INTEGER
-  --capability-snapshot sha256:...
   --glaeda-runtime sha256:...
 
 The runner claims one exact Stensibly run, reserves the existing workstation
@@ -71,7 +69,6 @@ try {
     node: {
       id: required(values["node-id"], "--node-id"),
       generation: positiveInteger(values["node-generation"], "--node-generation"),
-      capabilitySnapshotSha256: required(values["capability-snapshot"], "--capability-snapshot"),
       osClass: osClass(values["os-class"]),
       architectureClass: architecture(values.architecture),
       glaedaRuntimeSha256: required(values["glaeda-runtime"], "--glaeda-runtime"),

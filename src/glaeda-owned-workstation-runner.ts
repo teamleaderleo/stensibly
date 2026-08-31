@@ -1,8 +1,14 @@
 import { canonicalJsonString } from "./idempotency-request-fingerprint.js";
 import {
   GlaedaGitHubCanaryClientV1,
+  inspectPython314InterpreterV1,
   type GlaedaCanaryProcessV1,
+  type Python314InterpreterEvidenceV1,
 } from "./glaeda-github-canary-client.js";
+import {
+  admitGlaedaCapabilityArtifactV1,
+  assertGlaedaCapabilitySourceIdentityV1,
+} from "./glaeda-owned-workstation-capability.js";
 import {
   GlaedaWorkstationAdapterV1,
   type GlaedaWorkstationAdapterResultV1,
@@ -21,7 +27,6 @@ const REQUEST_ID_PATTERN = /^[a-z0-9][a-z0-9-]{7,63}$/u;
 export interface GlaedaOwnedWorkstationNodeV1 {
   id: string;
   generation: number;
-  capabilitySnapshotSha256: string;
   osClass: "linux" | "macos";
   architectureClass: "x86_64" | "arm64";
   glaedaRuntimeSha256: string;
@@ -38,6 +43,8 @@ export interface ExecuteGlaedaOwnedWorkstationInputV1 {
   actor?: ActorInput;
   leaseSeconds?: number;
   canaryProcess?: GlaedaCanaryProcessV1;
+  inspectPythonInterpreter?: (path: string) => Promise<Python314InterpreterEvidenceV1>;
+  now?: () => Date;
 }
 
 export type ExecuteGlaedaOwnedWorkstationResultV1 =
@@ -84,6 +91,22 @@ export async function executeGlaedaOwnedWorkstationRunV1(
   if (request.profileGeneration !== input.profileGeneration) {
     throw new Error("Glaeda artifact profile generation does not match the claimed run");
   }
+  assertGlaedaCapabilitySourceIdentityV1({
+    commitOid: request.sourceCommitOid,
+    treeOid: request.sourceTreeOid,
+  });
+  const python = await input.inspectPythonInterpreter(input.pythonInterpreterPath);
+  const capability = admitGlaedaCapabilityArtifactV1(claimed.context.artifacts, {
+    node: input.node,
+    profileGeneration: request.profileGeneration,
+    source: {
+      repository: request.sourceRepository,
+      commitOid: request.sourceCommitOid,
+      treeOid: request.sourceTreeOid,
+    },
+    python,
+    now: input.now(),
+  });
 
   const running = await input.runner.call<RunnerRecord>("transition_runner_run", {
     id: claimed.run.id,
@@ -108,11 +131,19 @@ export async function executeGlaedaOwnedWorkstationRunV1(
       transportGeneration: request.transportGeneration,
       profileGeneration: request.profileGeneration,
     },
+    now: input.now,
     ...(input.canaryProcess ? { process: input.canaryProcess } : {}),
   });
   const ledger = new HttpWorkstationCommandLedgerV1(input.runner);
   const adapter = new GlaedaWorkstationAdapterV1({ ledger, client: canary, actor });
-  const command = commandFor(input, claimed, running, request, actor);
+  const command = commandFor(
+    input,
+    claimed,
+    running,
+    request,
+    capability.snapshotSha256,
+    actor,
+  );
   const prepared = await adapter.prepare(command);
   let dispatched = await adapter.dispatch(prepared);
 
@@ -233,9 +264,13 @@ interface ExactRequestArtifact {
   sourceTreeOid: string;
 }
 
-interface NormalizedInput extends Omit<ExecuteGlaedaOwnedWorkstationInputV1, "actor" | "leaseSeconds"> {
+interface NormalizedInput extends Omit<ExecuteGlaedaOwnedWorkstationInputV1,
+  "actor" | "inspectPythonInterpreter" | "leaseSeconds" | "now"
+> {
   actor: ActorInput;
+  inspectPythonInterpreter: (path: string) => Promise<Python314InterpreterEvidenceV1>;
   leaseSeconds: number;
+  now: () => Date;
 }
 
 function normalizeInput(input: ExecuteGlaedaOwnedWorkstationInputV1): NormalizedInput {
@@ -255,13 +290,14 @@ function normalizeInput(input: ExecuteGlaedaOwnedWorkstationInputV1): Normalized
     node: {
       id: text(node.id, "node ID"),
       generation: integer(node.generation, 1, Number.MAX_SAFE_INTEGER, "node generation"),
-      capabilitySnapshotSha256: sha256(node.capabilitySnapshotSha256, "capability snapshot"),
       osClass: node.osClass,
       architectureClass: node.architectureClass,
       glaedaRuntimeSha256: sha256(node.glaedaRuntimeSha256, "Glaeda runtime"),
     },
     actor,
+    inspectPythonInterpreter: input.inspectPythonInterpreter ?? inspectPython314InterpreterV1,
     leaseSeconds: integer(input.leaseSeconds ?? 900, 30, 86_400, "lease seconds"),
+    now: input.now ?? (() => new Date()),
     ...(input.canaryProcess ? { canaryProcess: input.canaryProcess } : {}),
   };
 }
@@ -329,6 +365,7 @@ function commandFor(
   claimed: ClaimedRunEnvelope,
   running: RunnerRecord,
   request: ExactRequestArtifact,
+  capabilitySnapshotSha256: string,
   actor: ActorInput,
 ): GlaedaWorkstationCommandV1 {
   const identity = shortDigest(canonicalJsonString({
@@ -338,6 +375,7 @@ function commandFor(
     requestCommitOid: request.requestCommitOid,
     requestDigest: request.requestDigest,
     node: input.node,
+    capabilitySnapshotSha256,
   }));
   return {
     version: 1,
@@ -353,7 +391,10 @@ function commandFor(
     },
     commandId: `glaeda-${identity}`,
     idempotencyKey: `glaeda-workstation:${identity}`,
-    node: input.node,
+    node: {
+      ...input.node,
+      capabilitySnapshotSha256,
+    },
     source: {
       repository: request.sourceRepository,
       commitOid: request.sourceCommitOid,

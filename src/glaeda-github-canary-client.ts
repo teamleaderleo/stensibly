@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import {
@@ -38,6 +39,12 @@ export interface GlaedaCanaryProcessResultV1 {
   exitCode: number;
   stdout: string;
   stderr: string;
+}
+
+export interface Python314InterpreterEvidenceV1 {
+  executableSha256: string;
+  path: string;
+  version: string;
 }
 
 export type GlaedaCanaryProcessV1 = (input: {
@@ -259,6 +266,12 @@ export async function runGlaedaCanaryProcessV1(
 
 /** Resolve and fail closed on the node-local runtime before touching a Glaeda request. */
 export async function admitPython314InterpreterV1(path: string): Promise<string> {
+  return (await inspectPython314InterpreterV1(path)).path;
+}
+
+export async function inspectPython314InterpreterV1(
+  path: string,
+): Promise<Python314InterpreterEvidenceV1> {
   const configured = absolutePath(path, "Python interpreter path");
   let resolved: string;
   try {
@@ -283,18 +296,22 @@ export async function admitPython314InterpreterV1(path: string): Promise<string>
       new Response(probe.stderr).text(),
     ]);
     if (exitCode !== 0) throw new Error("Python interpreter version probe failed");
-    admitPython314VersionV1(`${stdout}\n${stderr}`);
-    return resolved;
+    const version = admitPython314VersionV1(`${stdout}\n${stderr}`);
+    const executableSha256 = `sha256:${createHash("sha256").update(new Uint8Array(
+      await Bun.file(resolved).arrayBuffer(),
+    )).digest("hex")}`;
+    return { executableSha256, path: resolved, version };
   } finally {
     clearTimeout(timeout);
   }
 }
 
-export function admitPython314VersionV1(raw: string): void {
+export function admitPython314VersionV1(raw: string): string {
   const match = /^Python (\d+)\.(\d+)\.(\d+)(?:[+a-z0-9.-]*)?$/iu.exec(raw.trim());
   if (match === null || match[1] !== "3" || match[2] !== "14") {
     throw new Error("Glaeda workstation execution requires Python 3.14.x");
   }
+  return raw.trim().slice("Python ".length);
 }
 
 interface CanaryObservation {
