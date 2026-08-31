@@ -100,6 +100,19 @@ describe("ChatGPT curated publication preflight", () => {
       }
       expect(annotationMismatches).toEqual([]);
 
+      const attachArtifactSchema = listedByName.get("attach_artifact")?.inputSchema;
+      const metadataSchema = (attachArtifactSchema?.properties as Record<string, unknown>)
+        ?.metadata as Record<string, unknown> | undefined;
+      expect(metadataSchema?.propertyNames).toEqual(expect.objectContaining({
+        minLength: 1,
+        maxLength: 80,
+      }));
+      expect(metadataSchema?.additionalProperties).toEqual(expect.objectContaining({
+        $ref: expect.stringContaining("#/definitions/"),
+      }));
+      expect(JSON.stringify(attachArtifactSchema)).toContain('"maxLength":2000');
+      expect(JSON.stringify(attachArtifactSchema)).toContain('"maxItems":50');
+
       const contract = compileMcpPublishedContract(
         listed.tools.map((tool) => ({
           name: tool.name,

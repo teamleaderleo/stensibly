@@ -2,6 +2,7 @@ import { McpServer as ModernMcpServer } from "@modelcontextprotocol/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { artifactKinds } from "./artifact-contracts.js";
+import { artifactMetadataSchema } from "./artifact-metadata.js";
 import {
   completionContinuationLedger,
   continuationDraftSchema,
@@ -199,7 +200,7 @@ function configureMcpServer(
         label: z.string().trim().min(1).max(240),
         uri: z.string().trim().min(1).max(4096),
         mimeType: z.string().trim().min(1).max(255).optional(),
-        metadata: z.record(z.string(), z.unknown()).default({}),
+        metadata: artifactMetadataSchema.default({}),
         idempotencyKey: idempotencySchema(),
       },
       annotations: { destructiveHint: false, idempotentHint: false },

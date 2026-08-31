@@ -15,7 +15,7 @@
         "destructiveHint": false
       },
       "justifications": {
-        "read_only_justification": "Attaches a durable artifact reference to an existing Stensibly work item.",
+        "read_only_justification": "Attaches a durable artifact reference with bounded, credential-rejecting metadata to an existing Stensibly work item.",
         "open_world_justification": "Changes only the private Stensibly workspace and does not publish the referenced content externally.",
         "destructive_justification": "Adds a reference without deleting or overwriting existing work records."
       }

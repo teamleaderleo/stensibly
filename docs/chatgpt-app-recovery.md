@@ -7,7 +7,7 @@ This runbook covers the #490 failure mode where ChatGPT discovers Stensibly acti
 Normal hosted ChatGPT publication uses the reviewed **`published_default`** profile with **21** outcome-level MCP tools. The complete current list lives in [`docs/chatgpt-app-actions.json`](chatgpt-app-actions.json), which is the release receipt and canonical owner for the published action set.
 
 ```text
-published ChatGPT tool contract: sha256:e4fdf6767b4e9d283903b2fadd46b1189febcbad8060a507ae71dc3a2eb99e78
+published ChatGPT tool contract: sha256:e7b8d61bb4339b1b45dc5bb244291555b18eb0e2240996dea12f8a8c1c76589a
 names-only diagnostic:            sha256:91919251f55e23b57292b2eb470bedfb8d86080da8a56c1df97641de9aec18b4
 ```
 
