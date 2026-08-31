@@ -19,7 +19,7 @@ export const workerBriefCapabilityClasses = [
   "economy",
 ] as const;
 
-export const workerBriefPresentations = ["explicit", "terse"] as const;
+export const workerBriefPresentations = ["explicit", "terse", "terse-lazy-policy"] as const;
 
 export const workerBriefProviderAvailability = [
   "available",
@@ -591,6 +591,7 @@ export function presentWorkerBriefV1(
   }
 
   const identity = brief.identity;
+  const lazyPolicy = presentation === "terse-lazy-policy";
   const core = {
     semanticDigest: brief.semanticDigest,
     grantsAuthority: false as const,
@@ -667,19 +668,24 @@ export function presentWorkerBriefV1(
   sections.push(Object.freeze({
     id: "policy" as const,
     title: "Operating policy",
-    lines: Object.freeze([
-      `allowed local operations: ${listOrNone(brief.policy.allowedLocalOperations)}`,
-      `approval gated operations: ${listOrNone(brief.policy.approvalGatedOperations)}`,
-      ...brief.policy.requiredChecks.map((check) => `required check: ${check}`),
-      `evidence expectations: ${brief.policy.evidenceExpectations}`,
-      `escalation conditions: ${brief.policy.escalationConditions}`,
-      ...(presentation === "explicit"
-        ? [
-          `contract snapshot: ${brief.policy.contractSnapshotSha256}`,
-          `contract source: ${brief.policy.contractSourcePath}@${brief.policy.contractContentSha256}`,
-        ]
-        : []),
-    ]),
+    lines: Object.freeze(lazyPolicy
+      ? [
+        `source: ${brief.policy.contractSourcePath}@${brief.policy.contractContentSha256}`,
+        "load only before an authority, validation, evidence, or escalation decision depends on it",
+      ]
+      : [
+        `allowed local operations: ${listOrNone(brief.policy.allowedLocalOperations)}`,
+        `approval gated operations: ${listOrNone(brief.policy.approvalGatedOperations)}`,
+        ...brief.policy.requiredChecks.map((check) => `required check: ${check}`),
+        `evidence expectations: ${brief.policy.evidenceExpectations}`,
+        `escalation conditions: ${brief.policy.escalationConditions}`,
+        ...(presentation === "explicit"
+          ? [
+            `contract snapshot: ${brief.policy.contractSnapshotSha256}`,
+            `contract source: ${brief.policy.contractSourcePath}@${brief.policy.contractContentSha256}`,
+          ]
+          : []),
+      ]),
   }));
   sections.push(Object.freeze({
     id: "execution" as const,
@@ -750,7 +756,9 @@ export function presentWorkerBriefV1(
     presentation,
     title: presentation === "explicit"
       ? "Worker brief (explicit)"
-      : "Worker brief (terse)",
+      : presentation === "terse"
+        ? "Worker brief (terse)"
+        : "Worker brief (terse, lazy policy)",
     ...core,
     sections: Object.freeze(clippedSections),
     invariantFingerprint: sha256(stableJson(core)),

@@ -527,6 +527,28 @@ describe("presentations", () => {
     expect(explicitRender.length).toBeGreaterThan(terseRender.length);
   });
 
+  test("lazy-policy presentation preserves invariants and defers policy prose explicitly", () => {
+    const brief = compileWorkerBriefV1(baseInput());
+    const terse = presentWorkerBriefV1(brief, "terse");
+    const lazy = presentWorkerBriefV1(brief, "terse-lazy-policy");
+    const rendered = renderWorkerBriefPresentationV1(lazy);
+
+    expect(lazy.invariantFingerprint).toBe(terse.invariantFingerprint);
+    expect(lazy.invariant).toEqual(terse.invariant);
+    expect(lazy.grantsAuthority).toBe(false);
+    expect(rendered).toContain("Worker brief (terse, lazy policy)");
+    expect(rendered).toContain(
+      `source: ${brief.policy.contractSourcePath}@${brief.policy.contractContentSha256}`,
+    );
+    expect(rendered).toContain(
+      "load only before an authority, validation, evidence, or escalation decision depends on it",
+    );
+    expect(rendered).not.toContain("allowed local operations:");
+    expect(rendered).not.toContain("approval gated operations:");
+    expect(rendered).not.toContain("evidence expectations:");
+    expect(rendered).not.toContain("escalation conditions:");
+  });
+
   test("invariant pins stop, escalation, evidence, and validation truth across tiers", () => {
     const input = inputWithManyNonGoals();
     input.recipe = implementBoundedIssueRecipeV1(contractSnapshot());
