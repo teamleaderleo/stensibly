@@ -162,22 +162,26 @@ describe("runner concurrency limits", () => {
       }, new Date("2026-07-25T12:00:20.000Z"));
       expect(nextAvailableProject?.id).toBe(beta.id);
 
-      expect(claimRunnerWork(store, {
+      const exactClaim = {
         actor: runnerC,
         runnerType: "generic-mcp",
         runnerProfile: "default",
         runId: alphaSecond.id,
         concurrency,
-      }, new Date("2026-07-25T12:00:30.000Z"))).toBeNull();
+        idempotencyKey: "claim-alpha-second-after-capacity",
+      };
+      expect(claimRunnerWork(
+        store,
+        exactClaim,
+        new Date("2026-07-25T12:00:30.000Z"),
+      )).toBeNull();
 
       finishStartingRun(store, first!, runnerA);
-      const exactAfterRelease = claimRunnerWork(store, {
-        actor: runnerC,
-        runnerType: "generic-mcp",
-        runnerProfile: "default",
-        runId: alphaSecond.id,
-        concurrency,
-      }, new Date("2026-07-25T12:02:10.000Z"));
+      const exactAfterRelease = claimRunnerWork(
+        store,
+        exactClaim,
+        new Date("2026-07-25T12:02:10.000Z"),
+      );
       expect(exactAfterRelease?.id).toBe(alphaSecond.id);
     } finally {
       store.close();

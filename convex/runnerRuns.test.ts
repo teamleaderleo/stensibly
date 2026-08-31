@@ -77,7 +77,7 @@ describe("hosted runner ledger parity", () => {
       claimGeneration: 0,
     });
     expect(state.events.filter((event: any) => event.type === "run.starting")).toHaveLength(1);
-    expect(state.commands).toHaveLength(2);
+    expect(state.commands).toHaveLength(1);
 
     const heldT = convexTest(schema, modules);
     const held = await seedRun(heldT, {
@@ -257,15 +257,29 @@ describe("hosted runner ledger parity", () => {
     const globalT = convexTest(schema, modules);
     await seedRun(globalT, { project: "alpha", title: "Global first" });
     await seedRun(globalT, { project: "beta", title: "Global second" });
-    expect(await globalT.mutation(convexApi.runnerRuns.claim, claimInput({
+    const globalFirst = await globalT.mutation(convexApi.runnerRuns.claim, claimInput({
       project: "alpha",
       concurrency: { globalLimit: 1, projectLimit: 1 },
-    }))).not.toBeNull();
-    expect(await globalT.mutation(convexApi.runnerRuns.claim, claimInput({
+    })) as any;
+    expect(globalFirst).not.toBeNull();
+    const betaClaim = claimInput({
       actor: runnerB,
       project: "beta",
       concurrency: { globalLimit: 1, projectLimit: 1 },
-    }))).toBeNull();
+      idempotencyKey: "claim-beta-after-capacity",
+    });
+    expect(await globalT.mutation(convexApi.runnerRuns.claim, betaClaim)).toBeNull();
+    await globalT.run(async (ctx) => {
+      const row = (await ctx.db.query("queuedRuns").collect())
+        .find((entry) => entry.externalId === globalFirst.id);
+      if (!row) throw new Error("Claimed global-capacity fixture disappeared");
+      await ctx.db.patch(row._id, {
+        status: "succeeded",
+        leaseOwnerExternalId: undefined,
+        leaseExpiresAt: undefined,
+      });
+    });
+    expect(await globalT.mutation(convexApi.runnerRuns.claim, betaClaim)).not.toBeNull();
   });
 
   test("rejects expired authority and rolls back when item ownership diverges", async () => {

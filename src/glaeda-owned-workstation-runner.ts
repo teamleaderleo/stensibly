@@ -87,26 +87,24 @@ export async function executeGlaedaOwnedWorkstationRunV1(
   });
   if (claimed === null) return { outcome: "idle" };
   admitClaimedRun(claimed, input, actor);
-  const request = admitRequestArtifact(claimed.context.artifacts);
-  if (request.profileGeneration !== input.profileGeneration) {
-    throw new Error("Glaeda artifact profile generation does not match the claimed run");
-  }
-  assertGlaedaCapabilitySourceIdentityV1({
-    commitOid: request.sourceCommitOid,
-    treeOid: request.sourceTreeOid,
-  });
-  const python = await input.inspectPythonInterpreter(input.pythonInterpreterPath);
-  const capability = admitGlaedaCapabilityArtifactV1(claimed.context.artifacts, {
-    node: input.node,
-    profileGeneration: request.profileGeneration,
-    source: {
-      repository: request.sourceRepository,
-      commitOid: request.sourceCommitOid,
-      treeOid: request.sourceTreeOid,
+  const { request, capability } = await admitBeforePhysicalDispatch(input, claimed).catch(
+    async (error: unknown) => {
+      try {
+        await input.runner.call("transition_runner_run", {
+          id: claimed.run.id,
+          actor,
+          command: "block",
+          expectedGeneration: claimed.run.generation,
+          expectedLeaseGeneration: claimed.run.leaseGeneration,
+          checkpoint: "Owned workstation admission refused before physical dispatch.",
+          idempotencyKey: `block-glaeda-admission:${shortDigest(claimed.run.id)}`,
+        });
+      } catch {
+        throw new Error("Owned workstation admission refused and its claim could not be released");
+      }
+      throw error;
     },
-    python,
-    now: input.now(),
-  });
+  );
 
   const running = await input.runner.call<RunnerRecord>("transition_runner_run", {
     id: claimed.run.id,
@@ -180,6 +178,33 @@ export async function executeGlaedaOwnedWorkstationRunV1(
   }
 
   return finishSucceeded(input.runner, input, actor, running, command, dispatched, canary);
+}
+
+async function admitBeforePhysicalDispatch(
+  input: NormalizedInput,
+  claimed: ClaimedRunEnvelope,
+) {
+  const request = admitRequestArtifact(claimed.context.artifacts);
+  if (request.profileGeneration !== input.profileGeneration) {
+    throw new Error("Glaeda artifact profile generation does not match the claimed run");
+  }
+  assertGlaedaCapabilitySourceIdentityV1({
+    commitOid: request.sourceCommitOid,
+    treeOid: request.sourceTreeOid,
+  });
+  const python = await input.inspectPythonInterpreter(input.pythonInterpreterPath);
+  const capability = admitGlaedaCapabilityArtifactV1(claimed.context.artifacts, {
+    node: input.node,
+    profileGeneration: request.profileGeneration,
+    source: {
+      repository: request.sourceRepository,
+      commitOid: request.sourceCommitOid,
+      treeOid: request.sourceTreeOid,
+    },
+    python,
+    now: input.now(),
+  });
+  return { request, capability };
 }
 
 async function finishSucceeded(
