@@ -40,6 +40,62 @@ runner profile:  repo-query/v1
 profile version: <the exact profileGeneration above>
 ```
 
+The same item context must also contain exactly one bounded physical capability artifact:
+
+```json
+{
+  "kind": "other",
+  "uri": "urn:stensibly:glaeda-capability:sha256:<snapshot digest>",
+  "metadata": {
+    "schema": "glaeda-owned-workstation-capability-artifact/v1",
+    "snapshotSha256": "sha256:<snapshot digest>",
+    "snapshot": {
+      "schema": "glaeda-owned-workstation-capability/v1",
+      "advisoryOnly": true,
+      "authorizesDispatch": false,
+      "authorizesExecution": false,
+      "observedAt": "<canonical UTC timestamp>",
+      "expiresAt": "<no more than 300 seconds after observation>",
+      "node": {
+        "id": "big-red",
+        "generation": 1,
+        "osClass": "linux",
+        "architectureClass": "x86_64"
+      },
+      "producer": {
+        "glaedaRuntimeSha256": "sha256:...",
+        "workspaceCapabilitySha256": "sha256:...",
+        "python": { "version": "3.14.4", "executableSha256": "sha256:..." }
+      },
+      "profiles": [
+        { "id": "repo-query/v1", "class": "repo_query", "versionSha256": "sha256:..." }
+      ],
+      "projects": [{
+        "repository": "teamleaderleo/glaeda",
+        "source": { "commitOid": "<40 hex>", "treeOid": "<40 hex>" },
+        "sourceObjectClass": "exact_commit_and_tree_present",
+        "heatClass": "resident_hot",
+        "verificationProfiles": ["glaeda.doctor", "glaeda.required"]
+      }],
+      "admission": {
+        "availabilityClass": "available",
+        "activeWorkloadsClass": "unobserved",
+        "pressureClass": "unobserved"
+      }
+    }
+  }
+}
+```
+
+The digest covers canonical JSON plus one trailing newline, matching Glaeda's generator. The
+snapshot is at most 4096 bytes and is primary Stensibly task context, not a new workstation table
+or coordination ledger. A GitHub copy may mirror evidence but is never required for admission.
+The runner refuses missing, duplicate, stale, future, unavailable, authority-bearing, or
+generation-drifted snapshots. It also resolves and hashes the node-local Python executable and
+revalidates the exact source, profile, Glaeda runtime, and physical node before reserving a command.
+The capability observation is advisory evidence only; Stensibly dispatch plus the existing command
+reservation remains authority for physical work.
+
 The runner maps that project-level contract onto either `big-red` (`linux`/`x86_64`) or `air-blue`
 (`macos`/`arm64`). Node generation, capability snapshot digest, and Glaeda runtime digest remain
 physical-node facts; changing them does not change the repository query vocabulary.
@@ -77,7 +133,6 @@ bun run glaeda:workstation -- \
   --profile-generation 'sha256:...' \
   --node-id big-red \
   --node-generation 1 \
-  --capability-snapshot 'sha256:...' \
   --glaeda-runtime 'sha256:...' \
   --os-class linux \
   --architecture x86_64

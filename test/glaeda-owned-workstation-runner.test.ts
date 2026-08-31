@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { GlaedaCanaryProcessV1 } from "../src/glaeda-github-canary-client.ts";
+import {
+  fingerprintGlaedaCapabilitySnapshotV1,
+  GLAEDA_CAPABILITY_ARTIFACT_SCHEMA,
+} from "../src/glaeda-owned-workstation-capability.ts";
 import { executeGlaedaOwnedWorkstationRunV1 } from "../src/glaeda-owned-workstation-runner.ts";
 import { runnerAdapterCommandOutcomeSha256 } from "../src/runner-adapter-command-contracts.ts";
 import { RunnerMcpHttpClient } from "../src/runner-mcp-http-client.ts";
@@ -13,6 +17,8 @@ const requestCommitOid = "1".repeat(40);
 const sourceCommitOid = "2".repeat(40);
 const sourceTreeOid = "3".repeat(40);
 const actorId = "service:big-red-glaeda";
+const pythonEvidence = { executableSha256: sha("9"), path: "/usr/bin/python3.14", version: "3.14.4" };
+const now = () => new Date("2026-08-31T05:00:00.000Z");
 
 describe("owned Glaeda workstation runner", () => {
   test("claims one exact run, fences physical dispatch, settles, and succeeds with a bounded ref", async () => {
@@ -40,12 +46,13 @@ describe("owned Glaeda workstation runner", () => {
       node: {
         id: "big-red",
         generation: 7,
-        capabilitySnapshotSha256: sha("d"),
         osClass: "linux",
         architectureClass: "x86_64",
         glaedaRuntimeSha256: runtimeDigest,
       },
       canaryProcess,
+      inspectPythonInterpreter: async () => pythonEvidence,
+      now,
     });
 
     expect(calls.map((call) => call.name)).toEqual([
@@ -168,12 +175,13 @@ describe("owned Glaeda workstation runner", () => {
       node: {
         id: "big-red",
         generation: 7,
-        capabilitySnapshotSha256: sha("d"),
         osClass: "linux" as const,
         architectureClass: "x86_64" as const,
         glaedaRuntimeSha256: runtimeDigest,
       },
       canaryProcess: process,
+      inspectPythonInterpreter: async () => pythonEvidence,
+      now,
     };
 
     await expect(executeGlaedaOwnedWorkstationRunV1(input)).rejects.toThrow(
@@ -224,7 +232,7 @@ function responseFor(name: string, args: Record<string, unknown>): unknown {
         claimGeneration: 4,
         claimedBy: actorId,
       },
-      context: { artifacts: [requestArtifact()] },
+      context: { artifacts: [requestArtifact(), capabilityArtifact()] },
     };
   }
   if (name === "transition_runner_run" && args.command === "run") {
@@ -354,6 +362,54 @@ function requestArtifact() {
       sourceRepository: "teamleaderleo/glaeda",
       sourceCommitOid,
       sourceTreeOid,
+    },
+  };
+}
+
+function capabilityArtifact() {
+  const snapshot = {
+    admission: {
+      activeWorkloadsClass: "unobserved",
+      availabilityClass: "available",
+      pressureClass: "unobserved",
+    },
+    advisoryOnly: true,
+    authorizesDispatch: false,
+    authorizesExecution: false,
+    expiresAt: "2026-08-31T05:03:00.000Z",
+    node: {
+      architectureClass: "x86_64",
+      generation: 7,
+      id: "big-red",
+      osClass: "linux",
+    },
+    observedAt: "2026-08-31T05:00:00.000Z",
+    producer: {
+      glaedaRuntimeSha256: runtimeDigest,
+      python: {
+        executableSha256: pythonEvidence.executableSha256,
+        version: pythonEvidence.version,
+      },
+      workspaceCapabilitySha256: sha("7"),
+    },
+    profiles: [{ class: "repo_query", id: "repo-query/v1", versionSha256: profileGeneration }],
+    projects: [{
+      heatClass: "resident_hot",
+      repository: "teamleaderleo/glaeda",
+      source: { commitOid: sourceCommitOid, treeOid: sourceTreeOid },
+      sourceObjectClass: "exact_commit_and_tree_present",
+      verificationProfiles: ["glaeda.doctor", "glaeda.required"],
+    }],
+    schema: "glaeda-owned-workstation-capability/v1",
+  };
+  const snapshotSha256 = fingerprintGlaedaCapabilitySnapshotV1(snapshot);
+  return {
+    kind: "other",
+    uri: `urn:stensibly:glaeda-capability:${snapshotSha256}`,
+    metadata: {
+      schema: GLAEDA_CAPABILITY_ARTIFACT_SCHEMA,
+      snapshot,
+      snapshotSha256,
     },
   };
 }
