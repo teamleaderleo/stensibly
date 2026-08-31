@@ -195,7 +195,11 @@ async function admitBeforePhysicalDispatch(
   const python = await input.inspectPythonInterpreter(input.pythonInterpreterPath);
   const capability = admitGlaedaCapabilityArtifactV1(claimed.context.artifacts, {
     node: input.node,
-    profileGeneration: request.profileGeneration,
+    profile: {
+      id: "repo-query/v1",
+      class: "repo_query",
+      versionSha256: request.profileGeneration,
+    },
     source: {
       repository: request.sourceRepository,
       commitOid: request.sourceCommitOid,

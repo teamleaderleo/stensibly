@@ -8,6 +8,28 @@ The bridge deliberately has no daemon-owned queue, workstation table, or GitHub 
 One invocation claims one already-dispatched Stensibly run and exits with one bounded control
 receipt.
 
+`repo-query/v1` retains the immutable glaeda-dispatch request/result pair as its proven bootstrap
+and recovery transport. `verify-focused/v1` does not add another mailbox round trip. Its one commit
+artifact directly binds the exact GitHub source commit/tree, profile generation, `big-red-focused`
+resource class, 600-second deadline, `credentialless_project` identity, and canonical request
+digest. The existing Stensibly run plus workstation command reservation remains its only work and
+replay authority.
+
+On Big Red, the fixed Glaeda profile materializes only the exact shallow commit, bounds that source
+to 512 MiB/100,000 entries, and executes repository-owned `scripts/verify focused`. Bubblewrap
+provides a read-only source, private PID/user/network/mount namespaces, disabled nested user
+namespaces, a cleared allowlisted environment, no network, and read-only package/toolchain inputs.
+Writable build, Cargo-home, project-home, and temporary state are size-bounded tmpfs mounts inside
+an 8 GiB/4 CPU/512 task systemd service with a 600-second runtime ceiling. Source output is bounded
+to 1 MiB in a private pipe; the terminal receipt retains only bytes and digest. Source code receives
+no runner/control token, publisher credential, SSH agent, sudo/admin authority, or unrelated
+writable project.
+
+The Glaeda command state publishes one private canonical receipt before returning. An exact
+Stensibly settlement-response loss reserves the same command and a fresh one-shot process invokes
+Glaeda with `--reconcile-only`; a matching receipt settles without source execution. Missing or
+ambiguous physical state refuses redispatch.
+
 ## Exact work contract
 
 The Stensibly item context must contain exactly one commit artifact with this metadata:
@@ -113,7 +135,7 @@ bun run tokens create-runner -- \
   --actor-id service:big-red-glaeda \
   --runner-type glaeda-workstation \
   --adapter-id glaeda-workstation \
-  --profiles repo-query/v1 \
+  --profiles repo-query/v1,verify-focused/v1 \
   --output-file /protected/runner-credentials/big-red-glaeda.token
 ```
 

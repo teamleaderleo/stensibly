@@ -26,7 +26,11 @@ export interface GlaedaCapabilityTargetV1 {
     architectureClass: "x86_64" | "arm64";
     glaedaRuntimeSha256: string;
   };
-  profileGeneration: string;
+  profile: {
+    id: "repo-query/v1" | "verify-focused/v1";
+    class: "repo_query" | "verify_focused";
+    versionSha256: string;
+  };
   source: {
     repository: string;
     commitOid: string;
@@ -55,6 +59,13 @@ export function admitGlaedaCapabilityArtifactV1(
   artifacts: unknown[],
   target: GlaedaCapabilityTargetV1,
 ): AdmittedGlaedaCapabilityV1 {
+  if (
+    !(
+      (target.profile.id === "repo-query/v1" && target.profile.class === "repo_query")
+      || (target.profile.id === "verify-focused/v1" && target.profile.class === "verify_focused")
+    )
+    || !SHA256_PATTERN.test(target.profile.versionSha256)
+  ) throw new Error("Glaeda capability target profile is invalid");
   const candidates = artifacts.map((value) => capabilityArtifact(value)).filter(
     (value): value is { snapshot: Record<string, unknown>; snapshotSha256: string } => value !== null,
   );
@@ -137,9 +148,9 @@ export function admitGlaedaCapabilityArtifactV1(
   const profiles = boundedArray(snapshot.profiles, 1, 8, "Glaeda capability profiles");
   const matchingProfiles = profiles.filter((value) => {
     const profile = exactRecord(value, ["class", "id", "versionSha256"], "Glaeda capability profile");
-    return profile.id === "repo-query/v1"
-      && profile.class === "repo_query"
-      && profile.versionSha256 === target.profileGeneration;
+    return profile.id === target.profile.id
+      && profile.class === target.profile.class
+      && profile.versionSha256 === target.profile.versionSha256;
   });
   if (matchingProfiles.length !== 1) {
     throw new Error("Glaeda capability does not support the exact requested profile");
@@ -151,11 +162,20 @@ export function admitGlaedaCapabilityArtifactV1(
       "heatClass", "repository", "source", "sourceObjectClass", "verificationProfiles",
     ], "Glaeda capability project");
     const source = exactRecord(project.source, ["commitOid", "treeOid"], "Glaeda capability source");
-    boundedStrings(project.verificationProfiles, 1, 8, "verification profiles");
+    const verificationProfiles = boundedStrings(
+      project.verificationProfiles,
+      1,
+      8,
+      "verification profiles",
+    );
     return project.repository === target.source.repository
       && source.commitOid === target.source.commitOid
       && source.treeOid === target.source.treeOid
       && project.sourceObjectClass === "exact_commit_and_tree_present"
+      && (
+        target.profile.id === "repo-query/v1"
+        || verificationProfiles.includes(target.profile.id)
+      )
       && ["resident_cold", "resident_hot"].includes(text(project.heatClass, "heat class"));
   });
   if (matchingProjects.length !== 1) {

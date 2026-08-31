@@ -15,7 +15,7 @@ const target = {
     architectureClass: "arm64" as const,
     glaedaRuntimeSha256: sha("a"),
   },
-  profileGeneration: sha("c"),
+  profile: { id: "repo-query/v1" as const, class: "repo_query" as const, versionSha256: sha("c") },
   source,
   python: { executableSha256: sha("b"), version: "3.14.6" },
   now: new Date("2026-08-31T05:01:00.000Z"),
@@ -31,6 +31,27 @@ describe("owned workstation capability artifact admission", () => {
       heatClass: "resident_hot",
     });
     expect(Object.isFrozen(admitted)).toBe(true);
+  });
+
+  test("admits the same snapshot contract for an exact verify-focused profile", () => {
+    const value = snapshot();
+    value.profiles = [{
+      class: "verify_focused",
+      id: "verify-focused/v1",
+      versionSha256: sha("e"),
+    }];
+    (value.projects as Array<Record<string, unknown>>)[0]!.verificationProfiles = [
+      "verify-focused/v1",
+    ];
+    const admitted = admitGlaedaCapabilityArtifactV1([artifact(value)], {
+      ...target,
+      profile: {
+        id: "verify-focused/v1",
+        class: "verify_focused",
+        versionSha256: sha("e"),
+      },
+    });
+    expect(admitted.heatClass).toBe("resident_hot");
   });
 
   test("refuses stale, future, overlong, and authority-bearing snapshots", () => {
@@ -59,6 +80,26 @@ describe("owned workstation capability artifact admission", () => {
     (changed.metadata as Record<string, unknown>).snapshotSha256 = sha("0");
     expect(() => admitGlaedaCapabilityArtifactV1([changed], target)).toThrow(/digest changed/);
     expect(() => admitGlaedaCapabilityArtifactV1([artifact(), artifact()], target)).toThrow(/exactly one/);
+  });
+
+  test("refuses a node-wide profile that the exact project did not advertise", () => {
+    const value = snapshot();
+    value.profiles = [{
+      class: "verify_focused",
+      id: "verify-focused/v1",
+      versionSha256: sha("e"),
+    }];
+    const candidate = artifact(value);
+    expect(() => admitGlaedaCapabilityArtifactV1([candidate], {
+      ...target,
+      profile: {
+        id: "verify-focused/v1",
+        class: "verify_focused",
+        versionSha256: sha("e"),
+      },
+    })).toThrow(
+      "does not contain the exact resident source",
+    );
   });
 });
 
