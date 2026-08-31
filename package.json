@@ -21,6 +21,7 @@
     "glaeda:verify-focused": "bun scripts/glaeda-verify-focused-runner.ts",
     "glaeda:verify-required": "bun scripts/glaeda-verify-focused-runner.ts --verification-profile required",
     "plugin:preflight": "bun scripts/chatgpt-plugin-preflight.ts",
+    "plugin:efficiency": "bun scripts/chatgpt-surface-efficiency.ts",
     "verify:hosted": "bun src/verify-hosted-cli.ts",
     "verify:oauth": "bun src/verify-oauth-hosted.ts",
     "verify:oauth-abuse": "bun src/verify-oauth-abuse.ts",

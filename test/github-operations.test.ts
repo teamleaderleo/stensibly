@@ -31,9 +31,16 @@ describe("GitHub outcome operations", () => {
     expect(result.operationSurface).toEqual([
       "github_repo_health", "github_branch_tidy", "github_ci_diagnose", "github_land_pr",
     ]);
+    expect(result.operationAvailability.github_repo_health).toEqual({
+      capability: "present",
+      binding: "configured",
+      probe: "passed",
+      blockedBy: null,
+    });
     expect(result.operationAvailability.github_land_pr).toEqual({
       capability: "present",
-      binding: "ready",
+      binding: "configured",
+      probe: "not_run",
       blockedBy: null,
       candidatePrerequisites: [
         "current_runner_lease",
@@ -75,6 +82,7 @@ describe("GitHub outcome operations", () => {
     expect(result.operationAvailability.github_land_pr).toMatchObject({
       capability: "present",
       binding: "blocked",
+      probe: "blocked",
       blockedBy: "project_attachment",
     });
     fixture.close();

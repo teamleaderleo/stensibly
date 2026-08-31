@@ -12,6 +12,7 @@ import {
   type McpCapabilityScope,
 } from "./mcp-capability-policy.js";
 import type { McpRequestContext } from "./mcp-context.js";
+import type { McpToolObserver } from "./mcp-tool-observation.js";
 import {
   type SuccessfulMcpReadObservation,
 } from "./mcp-successful-read-observation.js";
@@ -41,6 +42,7 @@ export interface McpHttpOptions {
   ledger: WorkLedger;
   authenticator: ApiTokenAuthenticator;
   mcpSetupFirstReadRecorder?: Pick<McpSetupFirstReadRecorder, "recordSetupFirstRead">;
+  onToolCall?: McpToolObserver;
   waitUntil?: (promise: Promise<unknown>) => void;
   createServer?: typeof createMcpServer;
   createModernServer?: typeof createModernMcpServer;
@@ -157,7 +159,7 @@ async function handleLegacyMcpRequest(
   try {
     server = (options.createServer ?? createMcpServer)(
       options.ledger,
-      mcpRequestContext(options, principal),
+      mcpRequestContext(options, principal, observedRequestId(body)),
     );
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
@@ -201,7 +203,7 @@ async function handleModernMcpRequest(
       factoryEntered = true;
       const server = (options.createModernServer ?? createModernMcpServer)(
         options.ledger,
-        mcpRequestContext(options, principal),
+        mcpRequestContext(options, principal, observedRequestId(body)),
       );
       serverConstructed = true;
       return server;
@@ -250,12 +252,18 @@ async function handleModernMcpRequest(
 function mcpRequestContext(
   options: McpHttpOptions,
   principal: TokenPrincipal,
+  rpcRequestId: string | null,
 ): McpRequestContext {
   const recorder = options.mcpSetupFirstReadRecorder;
-  if (!recorder || !principal.oauthAccountId) return { principal };
+  const base = {
+    principal,
+    requestId: rpcRequestId,
+    ...(options.onToolCall ? { onToolCall: options.onToolCall } : {}),
+  };
+  if (!recorder || !principal.oauthAccountId) return base;
   const accountId = principal.oauthAccountId;
   return {
-    principal,
+    ...base,
     onSuccessfulReadToolCall: (observation) => {
       const recording = (async () => {
         const project = await resolveSuccessfulReadProject(
@@ -517,6 +525,13 @@ function stringArgument(args: Record<string, unknown>, key: string): string | un
 function requestId(payload: unknown): unknown {
   if (!isRecord(payload) || Array.isArray(payload)) return null;
   return payload.id ?? null;
+}
+
+function observedRequestId(payload: unknown): string | null {
+  const value = requestId(payload);
+  if (typeof value === "string" && value.length <= 128) return value;
+  if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
+  return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

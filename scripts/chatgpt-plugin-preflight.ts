@@ -191,11 +191,6 @@ export async function runChatGptPluginPreflight(): Promise<ChatGptPluginPrefligh
         `${listed.tools.length - outputSchemaCount} public tools omit outputSchema; add structured result contracts before first review for stronger host validation.`,
       );
     }
-    if (genericOutputSchemaCount > 0) {
-      warnings.push(
-        `${genericOutputSchemaCount} public tools use the generic JSON result envelope; replace it with precise per-tool schemas for stronger field-level validation.`,
-      );
-    }
     if (titleCount < listed.tools.length) {
       warnings.push(
         `${listed.tools.length - titleCount} public tools omit a human-readable title; add titles before first review to improve tool selection and reviewability.`,

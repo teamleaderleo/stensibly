@@ -14,7 +14,12 @@ import {
   mcpToolManifestForLedger,
   type McpToolManifestIdentity,
 } from "./mcp-diagnostics.js";
+import {
+  expandPublicMcpInput,
+  publicMcpInputSchema,
+} from "./public-mcp-input-schemas.js";
 import { publicMcpOutputSchema } from "./public-mcp-output-schemas.js";
+import { compactPublicMcpResult } from "./public-mcp-result.js";
 
 export interface McpExposureRegistrationPlan {
   readonly profile: McpCapabilityExposureProfile;
@@ -139,42 +144,79 @@ function withCanonicalSubmissionMetadata(
   if (!title) {
     throw new RangeError(`MCP publication title is missing for ${toolName}`);
   }
+  const description = publicToolDescriptions[toolName];
+  if (!description) {
+    throw new RangeError(`MCP publication description is missing for ${toolName}`);
+  }
+  const handler = args[1];
+  if (typeof handler !== "function") {
+    throw new RangeError(`MCP tool registration handler is invalid: ${toolName}`);
+  }
   return [
     {
       ...config,
       title,
+      description,
+      inputSchema: publicMcpInputSchema(toolName, config.inputSchema),
       outputSchema: config.outputSchema ?? publicMcpOutputSchema(toolName),
       annotations: {
         ...existing,
         ...canonical,
       },
     },
-    ...args.slice(1),
+    async (input: unknown, extra: unknown) => compactPublicMcpResult(
+      await handler(expandPublicMcpInput(toolName, input), extra),
+    ),
+    ...args.slice(2),
   ];
 }
 
 const publicToolTitles: Readonly<Record<string, string>> = Object.freeze({
-  attach_artifact: "Attach Artifact",
-  block_work: "Block Work",
-  claim_work: "Claim Work",
-  complete_work: "Complete Work",
-  create_item: "Create Item",
-  dispatch_work: "Dispatch Work",
-  get_brief: "Get Project Brief",
-  get_project_attachment: "Get Project Attachment",
-  get_runner_context: "Get Runner Context",
-  github_add_issue_comment: "Add GitHub Issue Comment",
-  github_ci_diagnose: "Diagnose GitHub CI",
-  github_create_issue: "Create GitHub Issue",
-  github_get_issue: "Get GitHub Issue",
-  github_land_pr: "Land GitHub Pull Request",
-  github_publish_change: "Publish GitHub Change",
-  github_repo_health: "Check GitHub Repository Health",
-  github_search_issues: "Search GitHub Issues",
-  github_update_issue: "Update GitHub Issue",
-  handoff_work: "Hand Off Work",
-  list_work: "List Work",
-  unblock_work: "Unblock Work",
+  attach_artifact: "Attach",
+  block_work: "Block",
+  claim_work: "Claim",
+  complete_work: "Complete",
+  create_item: "Create",
+  dispatch_work: "Dispatch",
+  get_brief: "Brief",
+  get_project_attachment: "Policy",
+  get_runner_context: "Run Context",
+  github_add_issue_comment: "Comment",
+  github_ci_diagnose: "CI",
+  github_create_issue: "New Issue",
+  github_get_issue: "Issue",
+  github_land_pr: "Land PR",
+  github_publish_change: "Publish Change",
+  github_repo_health: "Repo Health",
+  github_search_issues: "Find Issues",
+  github_update_issue: "Update Issue",
+  handoff_work: "Handoff",
+  list_work: "Work",
+  unblock_work: "Unblock",
+});
+
+const publicToolDescriptions: Readonly<Record<string, string>> = Object.freeze({
+  attach_artifact: "Attach one durable evidence reference to an item.",
+  block_work: "Block claimed work and release its lease at the current generation.",
+  claim_work: "Claim ready work for a bounded lease.",
+  complete_work: "Complete claimed work at the current generation.",
+  create_item: "Create one project work item.",
+  dispatch_work: "Claim one exact item generation and dispatch one runner profile.",
+  get_brief: "Read a bounded project work snapshot.",
+  get_project_attachment: "Read accepted project policy and attachment recovery state.",
+  get_runner_context: "Read the bounded canonical item, run, source, and receipt packet.",
+  github_add_issue_comment: "Add one idempotent comment to a bound GitHub issue.",
+  github_ci_diagnose: "Join PR head, statuses, runs, failed jobs, and optional failed steps.",
+  github_create_issue: "Create one idempotent issue in a bound GitHub repository.",
+  github_get_issue: "Read one body-free GitHub issue snapshot with revision evidence.",
+  github_land_pr: "Land one exact PR after authority, revision, CI, and review fences pass.",
+  github_publish_change: "Create an exact branch and file change, then open a draft PR.",
+  github_repo_health: "Read bound repository identity, head, health, and operation readiness.",
+  github_search_issues: "Search issues inside one bound GitHub repository.",
+  github_update_issue: "Update one issue behind its exact source-revision fence.",
+  handoff_work: "Release claimed work with one summary and next action.",
+  list_work: "List work by optional project and status.",
+  unblock_work: "Return blocked work to ready at the current generation.",
 });
 
 function toolManifestIdentity(tools: readonly string[]): McpToolManifestIdentity {

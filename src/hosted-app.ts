@@ -26,6 +26,7 @@ import { createHostedSetupStatusObserver } from "./hosted-setup-status.js";
 import type { WorkLedger } from "./ledger.js";
 import { compileMcpExposureRegistrationPlan } from "./mcp-exposure-registration.js";
 import { handleMcpHttpRequest } from "./mcp-http.js";
+import type { McpToolObserver } from "./mcp-tool-observation.js";
 import { createMcpServer, createModernMcpServer } from "./mcp.js";
 import {
   createMcpOAuth,
@@ -80,6 +81,7 @@ export interface HostedAppOptions {
   hostedAuth?: HostedAuthOptions;
   mcpOAuth?: McpOAuthOptions;
   mcpSetupFirstReadRecorder?: Pick<McpSetupFirstReadRecorder, "recordSetupFirstRead">;
+  onMcpToolCall?: McpToolObserver;
   providerCapacity?: HostedProviderCapacityOptions;
   setupStatus?: HostedSetupStatusMountOptions;
   repositorySetupObservations?: ProjectRepositorySetupObservationLedger;
@@ -175,6 +177,7 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
       ...(options.mcpSetupFirstReadRecorder
         ? { mcpSetupFirstReadRecorder: options.mcpSetupFirstReadRecorder }
         : {}),
+      onToolCall: options.onMcpToolCall ?? logMcpToolObservation,
     });
     const challenge = oauthChallenges
       ? oauthChallengeForResponse(context.req.header("authorization"), response, oauthChallenges)
@@ -220,6 +223,10 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
     code: "not_found",
   }, 404));
   return app;
+}
+
+function logMcpToolObservation(observation: Parameters<McpToolObserver>[0]): void {
+  console.log(JSON.stringify(observation));
 }
 
 export function createHostedAppFromEnv(
