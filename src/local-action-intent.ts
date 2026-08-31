@@ -13,6 +13,9 @@ const credentialText = /(?:stn\.tok_|github_pat_|gh[pousr]_|sk-(?:proj-)?|Bearer
 const safeText = (max: number) => z.string().trim().min(1).max(max)
   .refine((value) => !unsafeText.test(value), "contains unsafe text")
   .refine((value) => !credentialText.test(value), "must not contain credential-shaped text");
+const literalText = (max: number) => z.string().max(max)
+  .refine((value) => !unsafeText.test(value), "contains unsafe text")
+  .refine((value) => !credentialText.test(value), "must not contain credential-shaped text");
 const identifier = safeText(240).regex(/^[A-Za-z0-9][A-Za-z0-9._:/#@-]*$/u);
 const profileId = safeText(160).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u);
 const gitOid = z.string().regex(/^[a-f0-9]{40}$/u);
@@ -43,23 +46,76 @@ const sourceSchema = z.object({
   }
 });
 
-const relativePath = safeText(512).transform((value, context) => {
-  const normalized = value.replaceAll("\\", "/");
-  const segments = normalized.split("/");
+const relativePath = literalText(512).transform((value, context) => {
+  if (value.length === 0 || value.includes("\\")) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "relative cwd is invalid and must use / separators" });
+    return z.NEVER;
+  }
+  const segments = value.split("/");
   if (
-    normalized.startsWith("/")
-    || normalized.endsWith("/")
+    value.startsWith("/")
+    || value.endsWith("/")
     || segments.some((segment) => !segment || segment === "." || segment === "..")
   ) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "relative cwd is invalid" });
     return z.NEVER;
   }
-  return normalized;
+  return value;
 });
 
-const argvSchema = z.array(safeText(2_048)).min(1).max(64).superRefine((argv, context) => {
+const posixShellExecutables = new Set([
+  "sh",
+  "bash",
+  "dash",
+  "zsh",
+  "ksh",
+  "mksh",
+  "csh",
+  "tcsh",
+  "fish",
+]);
+const powerShellExecutables = new Set(["pwsh", "powershell", "powershell.exe"]);
+const powerShellInlineCommandArguments = new Set([
+  "-c",
+  "-command",
+  "-cwa",
+  "-commandwithargs",
+  "-e",
+  "-ec",
+  "-enc",
+  "-encodedcommand",
+]);
+const cmdExecutables = new Set(["cmd", "cmd.exe"]);
+
+function containsInlineShellCommand(argv: readonly string[]): boolean {
+  const executable = argv[0]?.toLowerCase() ?? "";
+  const args = argv.slice(1);
+  if (posixShellExecutables.has(executable)) {
+    return args.some((argument) =>
+      argument === "--command"
+      || argument === "--init-command"
+      || /^-[A-Za-z]*c[A-Za-z]*$/u.test(argument)
+      || (executable === "fish" && argument === "-C")
+    );
+  }
+  if (powerShellExecutables.has(executable)) {
+    return args.some((argument) => powerShellInlineCommandArguments.has(argument.toLowerCase()));
+  }
+  if (cmdExecutables.has(executable)) {
+    return args.some((argument) => ["/c", "/k"].includes(argument.toLowerCase()));
+  }
+  return false;
+}
+
+const argvSchema = z.array(literalText(2_048)).min(1).max(64).superRefine((argv, context) => {
   if (!/^[A-Za-z0-9][A-Za-z0-9._+-]*$/u.test(argv[0] ?? "")) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: [0], message: "executable must be a bare executable name without a path" });
+  }
+  if (containsInlineShellCommand(argv)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "inline shell command strings are not permitted; use argv or a reviewed repository script/profile",
+    });
   }
   const bytes = argv.reduce((total, value) => total + new TextEncoder().encode(value).byteLength, 0);
   if (bytes > 16 * 1_024) {

@@ -65,7 +65,7 @@ describe("local action intent", () => {
     expect(first.fingerprint).not.toBe(second.fingerprint);
   });
 
-  test("refuses shell/path escape shapes but leaves argv arguments literal", () => {
+  test("refuses shell/path escape shapes but leaves non-shell argv arguments literal", () => {
     const base = commandIntent();
     expect(() => compileLocalActionIntentV1({
       ...base,
@@ -75,10 +75,55 @@ describe("local action intent", () => {
       ...base,
       command: { ...base.command, cwd: { kind: "repository_subdir", relativePath: "../outside" } },
     })).toThrow("relative cwd is invalid");
+    expect(() => compileLocalActionIntentV1({
+      ...base,
+      command: { ...base.command, cwd: { kind: "repository_subdir", relativePath: "dir\\child" } },
+    })).toThrow("must use / separators");
     expect(compileLocalActionIntentV1({
       ...base,
       command: { ...base.command, argv: ["python3", "script.py", "*.ts", "; rm -rf /"] },
     }).command?.argv.at(-1)).toBe("; rm -rf /");
+  });
+
+  test("preserves exact argv and repository-relative cwd bytes instead of trimming them", () => {
+    const base = commandIntent();
+    const argv = ["python3", "script.py", "", " leading ", "trailing "];
+    const compiled = compileLocalActionIntentV1({
+      ...base,
+      command: {
+        ...base.command,
+        argv,
+        cwd: { kind: "repository_subdir", relativePath: " dir " },
+      },
+    });
+    expect(compiled.command?.argv).toEqual(argv);
+    expect(compiled.command?.cwd.relativePath).toBe(" dir ");
+  });
+
+  test("refuses direct inline shell command-string modes", () => {
+    const base = commandIntent();
+    for (const argv of [
+      ["sh", "-c", "echo nope"],
+      ["bash", "-lc", "echo nope"],
+      ["zsh", "-fc", "echo nope"],
+      ["fish", "--command", "echo nope"],
+      ["fish", "-C", "echo nope"],
+      ["pwsh", "-Command", "Write-Output nope"],
+      ["pwsh", "-c", "Write-Output nope"],
+      ["powershell.exe", "-EncodedCommand", "ZQBjAGgAbwAgAG4AbwBwAGUA"],
+      ["powershell.exe", "-enc", "ZQBjAGgAbwAgAG4AbwBwAGUA"],
+      ["cmd.exe", "/c", "echo nope"],
+    ]) {
+      expect(() => compileLocalActionIntentV1({
+        ...base,
+        command: { ...base.command, argv },
+      })).toThrow("inline shell command strings are not permitted");
+    }
+
+    expect(compileLocalActionIntentV1({
+      ...base,
+      command: { ...base.command, argv: ["bash", "scripts/checked-in-task.sh", "--flag"] },
+    }).command?.argv).toEqual(["bash", "scripts/checked-in-task.sh", "--flag"]);
   });
 
   test("separates command execution from named profile execution", () => {
