@@ -39,7 +39,7 @@ describe("ChatGPT app action snapshot", () => {
       }))
       .digest("hex")}`;
 
-    expect(snapshot.snapshotVersion).toBe(21);
+    expect(snapshot.snapshotVersion).toBe(22);
     expect(snapshot.manifestVersion).toBe(MCP_TOOL_MANIFEST_VERSION);
     expect(snapshot.toolCount).toBe(21);
     expect(snapshot.toolCount).toBe(selection.toolNames.length);

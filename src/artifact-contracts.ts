@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { artifactMetadataSchema } from "./artifact-metadata.js";
 import { actorSchema } from "./schemas.js";
 
 export const artifactKinds = [
@@ -19,7 +20,7 @@ export const attachArtifactSchema = z.object({
   label: z.string().trim().min(1).max(240),
   uri: z.string().trim().min(1).max(4096),
   mimeType: z.string().trim().min(1).max(255).optional(),
-  metadata: z.record(z.string(), z.unknown()).default({}),
+  metadata: artifactMetadataSchema.default({}),
 });
 
 export type ArtifactKind = (typeof artifactKinds)[number];
