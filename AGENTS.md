@@ -24,9 +24,7 @@ status prose.
 
 Before substantive work:
 
-1. When authenticated `enrol_worker` is available, enrol with the project and one
-   stable per-chat `workerSessionId`, omit `callsign`, and use exactly the returned
-   callsign, sigil, lease generation, and `workerRef`. An explicit callsign is an operator override/fallback.
+1. When authenticated worker enrolment is available, call `enrol_worker(project, workerSessionId)` with one stable per-chat `workerSessionId`, omit `callsign`, and use exactly the returned callsign, sigil, lease generation, and `workerRef`. An explicit callsign is an operator override/fallback.
 2. Read `STENSIBLY.md` and the current issue or assignment.
 3. Inspect current repository, pull-request, provider, and overlapping-work state before
    creating another candidate.
@@ -96,7 +94,7 @@ review.
 
 ## External effects and recovery
 
-Use the owning command/receipt/reconciliation contract for provider writes:
+External/provider writes use the owning command/receipt/reconciliation boundary:
 
 - bind exact target, inputs, current authority generation, and idempotency identity
   before dispatch;
@@ -113,7 +111,8 @@ the provider rather than creating a parallel status ledger. See
 
 ## Continuation, privacy, and human prerequisites
 
-Recover from canonical work/provider records plus the smallest purpose-bound context or
+Future work should resume from durable conditions rather than worker polling. Recover
+from canonical work/provider records plus the smallest purpose-bound context or
 continuation packet. Preserve only facts a successor cannot cheaply reconstruct: a
 non-obvious decision, exact irreversible/ambiguous effect identity, current candidate
 when it is the work product, unresolved blocker, and one next action or clearing
@@ -137,5 +136,5 @@ Next: remaining action or clearing condition
 ```
 
 Include exact revision, receipt, or source identity when it changes review or recovery.
-Use Git history for superseded process wording and move repeated machine-decidable rules
-into typed state, deterministic checks, generated projections, or safer APIs.
+Use Git history for superseded process wording. Move repeated rules into software when possible:
+typed state, deterministic checks, generated projections, or safer APIs.
