@@ -61,7 +61,7 @@ describe("hosted gateway", () => {
     expect(await health.json()).toMatchObject({
       ok: true,
       backend: "convex",
-      surfaces: ["api-v1", "mcp"],
+      surfaces: ["api-v1", "mcp", "runner-mcp"],
     });
 
     const denied = await app.request("/api/v1/items");
@@ -143,6 +143,28 @@ describe("hosted gateway", () => {
       }),
     });
     expect(listed.status).toBe(200);
+  });
+
+  test("serves the private runner MCP from the same ledger and token authority", async () => {
+    const discovered = await app.request("/runner/mcp", {
+      method: "POST",
+      headers: mcpHeaders(),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/list",
+        params: {},
+      }),
+    });
+
+    expect(discovered.status).toBe(200);
+    const discovery = await discovered.json() as {
+      result?: { tools?: Array<{ name?: string }> };
+    };
+    const names = discovery.result?.tools?.map((tool) => tool.name) ?? [];
+    expect(names).toContain("claim_runner_work");
+    expect(names).toContain("reserve_workstation_adapter_command");
+    expect(names).toContain("settle_runner_adapter_command");
   });
 
   test("applies exact-origin CORS only to the REST surface", async () => {

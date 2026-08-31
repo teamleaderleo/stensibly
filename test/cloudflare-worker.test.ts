@@ -24,7 +24,7 @@ describe("Cloudflare Worker entrypoint", () => {
       ok: true,
       service: "stensibly",
       backend: "convex",
-      surfaces: ["api-v1", "mcp"],
+      surfaces: ["api-v1", "mcp", "runner-mcp"],
     });
   });
 
