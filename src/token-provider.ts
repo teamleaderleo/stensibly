@@ -6,8 +6,10 @@ import {
 import type { FunctionReference } from "convex/server";
 import { convexApi } from "../convex/refs.js";
 import type { ConvexCaller } from "./convex-ledger.js";
-import type {
-  CreatedToken,
+import {
+  normalizeRunnerCredentialGrant,
+  type CreatedToken,
+  type RunnerCredentialGrantV1,
   TokenPrincipal,
   TokenRecord,
   TokenScope,
@@ -17,6 +19,7 @@ export interface CreateTokenInput {
   name: string;
   scopes: TokenScope[];
   projects?: string[] | null;
+  runnerGrant?: RunnerCredentialGrantV1;
 }
 
 export interface ApiTokenAuthenticator {
@@ -62,6 +65,13 @@ export class ConvexTokenProvider implements ApiTokenManager {
     }
     const scopes = normalizeScopes(input.scopes);
     const projects = normalizeProjects(input.projects);
+    const runnerGrant = normalizeRunnerCredentialGrant(input.runnerGrant);
+    if (runnerGrant && (projects === null || projects.length !== 1)) {
+      throw new RangeError("Runner credential requires exactly one project");
+    }
+    if (runnerGrant && (scopes.length !== 1 || scopes[0] !== "write")) {
+      throw new RangeError("Runner credential scope must be exactly write");
+    }
     const id = `tok_${randomUUID().replaceAll("-", "")}`;
     const secret = randomBytes(32).toString("base64url");
     const token = `stn.${id}.${secret}`;
@@ -73,6 +83,7 @@ export class ConvexTokenProvider implements ApiTokenManager {
         secretHash: hashSecret(secret),
         scopes,
         ...(projects === null ? {} : { projects }),
+        ...(runnerGrant ? { runnerGrant } : {}),
       }),
     ) as TokenRecord;
     return { ...record, token };

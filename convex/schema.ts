@@ -102,6 +102,21 @@ const continuationCommand = v.union(
 const reservationMode = v.union(v.literal("exclusive"), v.literal("shared"));
 const reservationStatus = v.union(v.literal("active"), v.literal("released"), v.literal("expired"));
 const tokenScope = v.union(v.literal("read"), v.literal("write"), v.literal("admin"));
+const runnerCredentialTool = v.union(
+  v.literal("claim_runner_work"),
+  v.literal("heartbeat_runner_run"),
+  v.literal("transition_runner_run"),
+  v.literal("reserve_workstation_adapter_command"),
+  v.literal("settle_runner_adapter_command"),
+);
+const runnerCredentialGrant = v.object({
+  version: v.literal(1),
+  actorId: v.string(),
+  runnerType: v.string(),
+  adapterId: v.string(),
+  profiles: v.array(v.string()),
+  tools: v.array(runnerCredentialTool),
+});
 const mcpOAuthScope = v.union(
   v.literal("read"),
   v.literal("write"),
@@ -819,6 +834,7 @@ export default defineSchema({
     secretHash: v.string(),
     scopes: v.array(tokenScope),
     projects: v.optional(v.array(v.string())),
+    runnerGrant: v.optional(runnerCredentialGrant),
     createdAt: v.number(),
     revokedAt: v.optional(v.number()),
   })

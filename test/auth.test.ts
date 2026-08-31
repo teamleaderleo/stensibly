@@ -86,6 +86,46 @@ describe("API tokens", () => {
     expect(authenticateApiToken(store, created.token)).toBeNull();
   });
 
+  test("persists one exact runner-only grant without widening project or scope", () => {
+    const runnerGrant = {
+      version: 1 as const,
+      actorId: "service:big-red-glaeda",
+      runnerType: "glaeda-workstation",
+      adapterId: "glaeda-workstation",
+      profiles: ["repo-query/v1"],
+      tools: [
+        "claim_runner_work",
+        "transition_runner_run",
+        "reserve_workstation_adapter_command",
+        "settle_runner_adapter_command",
+      ] as const,
+    };
+    const created = createApiToken(store, {
+      name: "Big Red Glaeda",
+      scopes: ["write"],
+      projects: ["glaeda"],
+      runnerGrant: { ...runnerGrant, tools: [...runnerGrant.tools] },
+    });
+    expect(authenticateApiToken(store, created.token)).toMatchObject({
+      tokenId: created.id,
+      scopes: ["write"],
+      projects: ["glaeda"],
+      runnerGrant,
+    });
+    expect(() => createApiToken(store, {
+      name: "Overbroad runner",
+      scopes: ["read", "write"],
+      projects: ["glaeda"],
+      runnerGrant: { ...runnerGrant, tools: [...runnerGrant.tools] },
+    })).toThrow("scope must be exactly write");
+    expect(() => createApiToken(store, {
+      name: "Cross-project runner",
+      scopes: ["write"],
+      projects: null,
+      runnerGrant: { ...runnerGrant, tools: [...runnerGrant.tools] },
+    })).toThrow("exactly one project");
+  });
+
   test("applies action and project scopes", () => {
     const created = createApiToken(store, {
       name: "Project reader",

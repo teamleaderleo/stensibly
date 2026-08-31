@@ -83,6 +83,14 @@ export function createHttpAuthMiddleware(
       }
       if (!principal) return unauthorized(context, false);
 
+      if (principal.runnerGrant) {
+        context.header(FAILURE_CATEGORY_HEADER, "authorization_failure");
+        return context.json({
+          error: "Runner credentials are accepted only by the runner endpoint",
+          code: "runner_credential_wrong_audience",
+        }, 403);
+      }
+
       context.set("principal", { kind: "api_token", ...principal });
       context.set("authenticationMode", "bearer");
       await next();

@@ -9,8 +9,18 @@ import {
 } from "./lib/domain";
 import { mutation, query } from "./lib/server";
 import { serviceArgs } from "./lib/validators";
+import { normalizeRunnerCredentialGrant, runnerCredentialTools } from "../src/token-contracts";
 
 const tokenScope = v.union(v.literal("read"), v.literal("write"), v.literal("admin"));
+const runnerCredentialTool = v.union(...runnerCredentialTools.map((tool) => v.literal(tool)));
+const runnerCredentialGrant = v.object({
+  version: v.literal(1),
+  actorId: v.string(),
+  runnerType: v.string(),
+  adapterId: v.string(),
+  profiles: v.array(v.string()),
+  tools: v.array(runnerCredentialTool),
+});
 
 export const register = mutation({
   args: {
@@ -20,6 +30,7 @@ export const register = mutation({
     secretHash: v.string(),
     scopes: v.array(tokenScope),
     projects: v.optional(v.array(v.string())),
+    runnerGrant: v.optional(runnerCredentialGrant),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -35,6 +46,13 @@ export const register = mutation({
     if (existing) throw new Error(`Token ${externalId} already exists`);
     const scopes = normalizeScopes(args.scopes);
     const projects = normalizeProjects(args.projects);
+    const runnerGrant = normalizeRunnerCredentialGrant(args.runnerGrant);
+    if (runnerGrant && (projects === undefined || projects.length !== 1)) {
+      throw new Error("Runner credential requires exactly one project");
+    }
+    if (runnerGrant && (scopes.length !== 1 || scopes[0] !== "write")) {
+      throw new Error("Runner credential scope must be exactly write");
+    }
     const now = Date.now();
     const id = await ctx.db.insert("apiTokens", {
       workspaceId: workspace._id,
@@ -43,6 +61,7 @@ export const register = mutation({
       secretHash: assertHash(args.secretHash),
       scopes,
       projects,
+      runnerGrant,
       createdAt: now,
     });
     const token = await ctx.db.get("apiTokens", id);
@@ -79,6 +98,7 @@ export const authenticate = query({
       name: token.name,
       scopes: token.scopes,
       projects: token.projects ?? null,
+      ...(token.runnerGrant ? { runnerGrant: token.runnerGrant } : {}),
     };
   },
 });
@@ -149,6 +169,7 @@ function publicToken(token: any) {
     name: token.name,
     scopes: token.scopes,
     projects: token.projects ?? null,
+    ...(token.runnerGrant ? { runnerGrant: token.runnerGrant } : {}),
     createdAt: new Date(token.createdAt).toISOString(),
     revokedAt: token.revokedAt === undefined ? null : new Date(token.revokedAt).toISOString(),
   };
