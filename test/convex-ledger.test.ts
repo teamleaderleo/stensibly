@@ -349,6 +349,22 @@ describe("Convex work ledger", () => {
         idempotencyKey: "reserve-lazy-command-1",
       },
     });
+    await ledger.reserveWorkstationCommand({
+      itemClaimGeneration: 4,
+      authority: {
+        holderId: actor.id,
+        expiresAt: "2026-09-01T00:00:00.000Z",
+      },
+      reservation: {
+        ...input,
+        adapterId: "glaeda-workstation",
+        profileId: "repo-query-v1",
+        profileVersion: `sha256:${"e".repeat(64)}`,
+        commandId: "glaeda-command-1",
+        commandFingerprint: `sha256:${"f".repeat(64)}`,
+        idempotencyKey: "reserve-glaeda-command-1",
+      },
+    });
     const settlement = {
       commandId: input.commandId,
       commandFingerprint: input.commandFingerprint,
@@ -380,6 +396,20 @@ describe("Convex work ledger", () => {
       commandId: "lazy-command-1",
       commandFingerprint: `sha256:${"d".repeat(64)}`,
       idempotencyKey: "reserve-lazy-command-1",
+      itemClaimGeneration: 4,
+      authorityHolderId: actor.id,
+      authorityExpiresAt: "2026-09-01T00:00:00.000Z",
+    });
+    expect(call(client, "workstationCommands:reserve", "mutation").args).toEqual({
+      serviceSecret: "private-service-secret",
+      workspace: "shared-work",
+      ...input,
+      adapterId: "glaeda-workstation",
+      profileId: "repo-query-v1",
+      profileVersion: `sha256:${"e".repeat(64)}`,
+      commandId: "glaeda-command-1",
+      commandFingerprint: `sha256:${"f".repeat(64)}`,
+      idempotencyKey: "reserve-glaeda-command-1",
       itemClaimGeneration: 4,
       authorityHolderId: actor.id,
       authorityExpiresAt: "2026-09-01T00:00:00.000Z",

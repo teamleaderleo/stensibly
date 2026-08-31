@@ -2,13 +2,16 @@ import { canonicalJsonString } from "./idempotency-request-fingerprint.js";
 import {
   admitRunnerAdapterCommandSettlementRecord,
   RunnerAdapterCommandConflictError,
-  type ReserveRunnerAdapterCommandInput,
   type RunnerAdapterCommandReservation,
   type RunnerAdapterCommandSettlementRecord,
-  type RunnerAdapterCommandOutcomeV1,
 } from "./runner-adapter-command-contracts.js";
 import type { ActorInput } from "./schemas.js";
 import { sha256Hex } from "./sha256.js";
+import type {
+  WorkstationCommandAuthorityV1,
+  WorkstationCommandLedgerV1,
+  WorkstationCommandReservationInputV1,
+} from "./workstation-command-adapter.js";
 
 export const LAZY_WORKSTATION_ADAPTER_V1 = 1 as const;
 export const LAZY_WORKSTATION_ADAPTER_ID = "lazy-commander" as const;
@@ -19,10 +22,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const SAFE_PROJECT_PATTERN = /^[a-z0-9][a-z0-9_-]*$/u;
 const SAFE_PROFILE_PATTERN = /^[a-z][a-z0-9-]{0,79}$/u;
 
-export interface LazyWorkstationAuthorityV1 {
-  holderId: string;
-  expiresAt: string;
-}
+export type LazyWorkstationAuthorityV1 = WorkstationCommandAuthorityV1;
 
 export interface LazyOwnerProfileRequestV1 {
   profileId: string;
@@ -71,21 +71,13 @@ export interface PreparedLazyWorkstationCommandV1
   checkedProfile: LazyOwnerProfileCheckV1;
 }
 
-export interface LazyWorkstationReservationInputV1 {
-  itemClaimGeneration: number;
-  authority: LazyWorkstationAuthorityV1;
-  reservation: ReserveRunnerAdapterCommandInput;
-}
+export type LazyWorkstationReservationInputV1 = WorkstationCommandReservationInputV1;
 
-export interface LazyWorkstationCommandLedgerV1 {
+export interface LazyWorkstationCommandLedgerV1
+  extends Omit<WorkstationCommandLedgerV1, "reserveWorkstationCommand"> {
   reserveLazyWorkstationCommand(
     input: LazyWorkstationReservationInputV1,
   ): Promise<RunnerAdapterCommandReservation>;
-  settleRunnerAdapterCommand(input: {
-    commandId: string;
-    commandFingerprint: string;
-    outcome: RunnerAdapterCommandOutcomeV1;
-  }): Promise<{ outcome: "settled" | "replayed"; settlement: RunnerAdapterCommandSettlementRecord }>;
 }
 
 export interface LazyOwnerProfileClientV1 {

@@ -397,6 +397,86 @@ describe("hosted runner profile version provenance", () => {
     })).rejects.toThrow(/claim generation or authority changed/);
   });
 
+  test("hosted Glaeda reservations reuse the exact workstation fence and command ledger", async () => {
+    const t = convexTest(schema, modules);
+    const glaedaVersion = `sha256:${"8".repeat(64)}`;
+    const seeded = await seedQueuedRun(t, {
+      project: "glaeda-hosted",
+      title: "Fence hosted Glaeda query authority",
+      runnerProfileVersion: glaedaVersion,
+      runnerType: "glaeda-workstation",
+      runnerProfile: "repo-query-v1",
+    });
+    const claimed = await t.mutation(convexApi.runnerRuns.claim, claimInput({
+      project: "glaeda-hosted",
+      runId: seeded.runId,
+      runnerType: "glaeda-workstation",
+      runnerProfile: "repo-query-v1",
+      runnerProfileVersion: glaedaVersion,
+      idempotencyKey: "claim-hosted-glaeda-reservation",
+    })) as any;
+    const authority = await t.run(async (ctx) => {
+      const item = (await ctx.db.query("items").collect())
+        .find((entry) => entry.externalId === seeded.itemId);
+      if (!item || item.claimExpiresAt === undefined) {
+        throw new Error("Glaeda item claim disappeared");
+      }
+      return {
+        generation: item.claimGeneration,
+        expiresAt: new Date(item.claimExpiresAt).toISOString(),
+      };
+    });
+    const input = {
+      ...baseArgs,
+      itemClaimGeneration: authority.generation,
+      authorityHolderId: runner.id,
+      authorityExpiresAt: authority.expiresAt,
+      project: "glaeda-hosted",
+      itemId: seeded.itemId,
+      runId: seeded.runId,
+      runGeneration: claimed.generation as number,
+      leaseGeneration: claimed.leaseGeneration as number,
+      actor: runner,
+      adapterId: "glaeda-workstation",
+      profileId: "repo-query-v1",
+      profileVersion: glaedaVersion,
+      requestFingerprint: `sha256:${"9".repeat(64)}`,
+      commandId: "hosted-glaeda-command",
+      commandFingerprint: `sha256:${"a".repeat(64)}`,
+      idempotencyKey: "reserve-hosted-glaeda-command",
+    };
+    const reserved = await t.mutation(convexApi.workstationCommands.reserve, input) as any;
+    expect(reserved).toMatchObject({ outcome: "reserved", dispatchAuthorized: true });
+
+    await t.run(async (ctx) => {
+      const item = (await ctx.db.query("items").collect())
+        .find((entry) => entry.externalId === seeded.itemId);
+      if (!item) throw new Error("Glaeda item disappeared before replay test");
+      await ctx.db.patch(item._id, {
+        claimGeneration: authority.generation + 1,
+        claimedByExternalId: undefined,
+        claimExpiresAt: undefined,
+      });
+    });
+    const replay = await t.mutation(convexApi.workstationCommands.reserve, {
+      ...input,
+      commandId: "ignored-glaeda-replay-command",
+      commandFingerprint: `sha256:${"b".repeat(64)}`,
+    }) as any;
+    expect(replay).toMatchObject({ outcome: "replayed", dispatchAuthorized: false });
+    expect(replay.command.commandId).toBe(input.commandId);
+
+    await expect(t.mutation(convexApi.workstationCommands.reserve, {
+      ...input,
+      idempotencyKey: "reserve-hosted-glaeda-stale-claim",
+      commandId: "hosted-glaeda-stale-claim",
+      commandFingerprint: `sha256:${"c".repeat(64)}`,
+    })).rejects.toThrow(/claim generation or authority changed/);
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query("runnerAdapterCommands").collect()).toHaveLength(1);
+    });
+  });
+
   test("fresh hosted reservations fail closed when durable profile provenance differs", async () => {
     const cases = [
       {
@@ -482,6 +562,7 @@ async function seedQueuedRun(
     title: string;
     runnerProfileVersion?: string;
     runnerType?: string;
+    runnerProfile?: string;
   },
 ) {
   const item = await createItem(t, input.title, input.project, 80, supervisor);
@@ -506,7 +587,7 @@ async function seedQueuedRun(
       actorId: actor._id,
       actorExternalId: actor.externalId,
       runnerType: input.runnerType ?? "generic-mcp",
-      runnerProfile: "codex-default",
+      runnerProfile: input.runnerProfile ?? "codex-default",
       ...(input.runnerProfileVersion
         ? { runnerProfileVersion: input.runnerProfileVersion }
         : {}),
