@@ -155,6 +155,13 @@ export class ConvexWorkLedger implements
     });
   }
 
+  async probeBackend(): Promise<void> {
+    await this.client.query(
+      convexApi.historyCapabilities.get,
+      this.args({}),
+    );
+  }
+
   async getBrief(project: string, limit: number) {
     return await this.client.query(
       convexApi.projects.brief,

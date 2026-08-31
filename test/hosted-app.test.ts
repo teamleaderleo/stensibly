@@ -81,6 +81,7 @@ describe("hosted gateway", () => {
     expect(await health.json()).toMatchObject({
       ok: true,
       backend: "convex",
+      backendProbe: "not_configured",
       surfaces: ["api-v1", "mcp", "runner-mcp"],
     });
 
@@ -96,6 +97,40 @@ describe("hosted gateway", () => {
     expect(body.items).toEqual([
       expect.objectContaining({ project: "scrapbook" }),
     ]);
+  });
+
+  test("separates shallow gateway health from cached backend readiness", async () => {
+    let attempts = 0;
+    const readyApp = createHostedApp({
+      ledger: new SqliteWorkLedger(store),
+      authenticator: new FixedAuthenticator(),
+      backendReadiness: async () => {
+        attempts += 1;
+        throw new Error("provider detail must not cross the boundary");
+      },
+    });
+
+    const health = await readyApp.request("/health");
+    expect(health.status).toBe(200);
+    expect(await health.json()).toMatchObject({
+      ok: true,
+      backendProbe: "separate",
+    });
+
+    for (let index = 0; index < 2; index += 1) {
+      const readiness = await readyApp.request("/ready");
+      expect(readiness.status).toBe(503);
+      expect(readiness.headers.get(FAILURE_CATEGORY_HEADER)).toBe("convex_failure");
+      expect(await readiness.json()).toEqual({
+        ok: false,
+        service: "stensibly",
+        backend: "convex",
+        backendStatus: "unavailable",
+        code: "backend_unavailable",
+        retryable: true,
+      });
+    }
+    expect(attempts).toBe(1);
   });
 
   test("serves the curated published MCP profile from the same ledger and authenticator", async () => {

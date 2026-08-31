@@ -244,6 +244,10 @@ describe("production Worker release guard", () => {
     );
     expect(harness.cleanupCalls()).toBe(1);
     expect(harness.activeVersion()).toBe(VERSION_A);
+    expect(harness.fetches).toContain("https://candidate.example.workers.dev/ready");
+    expect(harness.fetches).toContain(
+      "https://stensibly-api.leoli-082000.workers.dev/health",
+    );
   });
 
   test("waits for official-domain routing convergence without rolling back a healthy candidate", async () => {
@@ -427,6 +431,7 @@ function recoveryHarness(
 ): {
   dependencies: ReleaseDependencies;
   commands: string[];
+  fetches: string[];
   activeVersion(): string;
   cleanupCalls(): number;
   healthAttempts(): number;
@@ -436,6 +441,7 @@ function recoveryHarness(
   officialRecoveryAttempts(): number;
 } {
   const commands: string[] = [];
+  const fetches: string[] = [];
   let activeVersion = VERSION_A;
   let deploymentId = DEPLOYMENT_A;
   let healthAttempts = 0;
@@ -492,6 +498,7 @@ function recoveryHarness(
       throw new Error(`Unexpected command: ${rendered}`);
     },
     async fetch(input) {
+      fetches.push(input);
       healthAttempts += 1;
       if (input.startsWith("https://candidate.example.workers.dev")) {
         return new Response("healthy", {
@@ -594,6 +601,7 @@ function recoveryHarness(
   return {
     dependencies,
     commands,
+    fetches,
     activeVersion: () => activeVersion,
     cleanupCalls: () => cleanupCalls,
     healthAttempts: () => healthAttempts,

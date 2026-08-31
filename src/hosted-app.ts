@@ -71,6 +71,7 @@ export interface HostedSetupStatusMountOptions {
 export interface HostedAppOptions {
   ledger: WorkLedger;
   authenticator: ApiTokenAuthenticator;
+  backendReadiness?: () => Promise<void>;
   workspace?: string | null;
   allowedOrigins?: string[];
   allowedHosts?: string[];
@@ -93,6 +94,9 @@ export interface HostedAppFromEnvDependencies {
 
 export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
   const app = new Hono<StensiblyEnv>();
+  const backendReadiness = options.backendReadiness
+    ? cacheBackendReadiness(options.backendReadiness)
+    : null;
   const allowedOrigins = options.allowedOrigins ?? [];
   const sessionOrigins = options.hostedAuth?.allowedReturnOrigins ?? [];
   const hostedSession = hostedSessionOptions(options.hostedAuth);
@@ -141,8 +145,38 @@ export function createHostedApp(options: HostedAppOptions): Hono<StensiblyEnv> {
     ok: true,
     service: "stensibly",
     backend: "convex",
+    backendProbe: backendReadiness ? "separate" : "not_configured",
     surfaces: hostedSurfaces(options),
   }));
+  app.get("/ready", async (context) => {
+    if (!backendReadiness) {
+      return context.json({
+        ok: true,
+        service: "stensibly",
+        backend: "convex",
+        backendStatus: "not_configured",
+      });
+    }
+    try {
+      await backendReadiness();
+      return context.json({
+        ok: true,
+        service: "stensibly",
+        backend: "convex",
+        backendStatus: "ready",
+      });
+    } catch {
+      context.header(FAILURE_CATEGORY_HEADER, "convex_failure");
+      return context.json({
+        ok: false,
+        service: "stensibly",
+        backend: "convex",
+        backendStatus: "unavailable",
+        code: "backend_unavailable",
+        retryable: true,
+      }, 503);
+    }
+  });
   if (options.hostedAuth) app.route("/auth", createHostedAuth(options.hostedAuth));
   if (options.mcpOAuth) app.route("/", createMcpOAuth(options.mcpOAuth));
   if (options.providerCapacity) {
@@ -256,6 +290,7 @@ export function createHostedAppFromEnv(
   return createHostedApp({
     ledger,
     authenticator,
+    backendReadiness: () => ledger.probeBackend(),
     workspace: ledger.workspace,
     allowedOrigins: splitList(env.STENSIBLY_ALLOWED_ORIGINS),
     allowedHosts: splitList(env.STENSIBLY_ALLOWED_HOSTS),
@@ -276,6 +311,34 @@ export function createHostedAppFromEnv(
         }
       : {}),
   });
+}
+
+function cacheBackendReadiness(
+  probe: () => Promise<void>,
+  now: () => number = Date.now,
+  ttlMilliseconds = 30_000,
+): () => Promise<void> {
+  let cached: { ready: boolean; expiresAt: number } | null = null;
+  let inFlight: Promise<void> | null = null;
+  return async () => {
+    if (cached && cached.expiresAt > now()) {
+      if (cached.ready) return;
+      throw new Error("Hosted backend is unavailable");
+    }
+    if (inFlight) return await inFlight;
+    inFlight = probe().then(
+      () => {
+        cached = { ready: true, expiresAt: now() + ttlMilliseconds };
+      },
+      () => {
+        cached = { ready: false, expiresAt: now() + ttlMilliseconds };
+        throw new Error("Hosted backend is unavailable");
+      },
+    ).finally(() => {
+      inFlight = null;
+    });
+    return await inFlight;
+  };
 }
 
 export function hostedProviderCapacityFromEnv(
