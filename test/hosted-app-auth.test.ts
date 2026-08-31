@@ -118,7 +118,7 @@ describe("hosted gateway auth mount", () => {
 
     const health = await app.request("/health");
     expect(await health.json()).toMatchObject({
-      surfaces: ["api-v1", "mcp", "auth"],
+      surfaces: ["api-v1", "mcp", "runner-mcp", "auth"],
     });
     const started = await app.request("/auth/github/start");
     expect(started.status).toBe(302);
