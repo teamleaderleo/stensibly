@@ -77,13 +77,11 @@ export function claimRunnerWork(
     }
 
     if (!globalCapacityAvailable(store, timestamp, input.concurrency.globalLimit)) {
-      storeReplay(store, input.idempotencyKey, requestJson, null, timestamp);
       return null;
     }
 
     const candidate = selectCandidate(store, input, timestamp);
     if (!candidate) {
-      storeReplay(store, input.idempotencyKey, requestJson, null, timestamp);
       return null;
     }
 

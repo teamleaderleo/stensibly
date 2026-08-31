@@ -123,7 +123,6 @@ export const claim = mutation({
     await reconcileExpiredRuns(ctx, workspace._id, now);
     const capacity = await readWorkspaceCapacity(ctx, workspace._id, now, input.globalLimit);
     if (!capacity.available) {
-      await storeCommand(ctx, workspace._id, input.idempotencyKey, "claim", request, null, now);
       return null;
     }
 
@@ -131,7 +130,6 @@ export const claim = mutation({
       ? await findProject(ctx, workspace._id, input.project)
       : null;
     if (input.project && !project) {
-      await storeCommand(ctx, workspace._id, input.idempotencyKey, "claim", request, null, now);
       return null;
     }
     const candidatePools = await readClaimCandidates(ctx, {
@@ -160,7 +158,6 @@ export const claim = mutation({
       throw new Error(INCOMPLETE_CANDIDATE_SCAN);
     }
     if (!run) {
-      await storeCommand(ctx, workspace._id, input.idempotencyKey, "claim", request, null, now);
       return null;
     }
 

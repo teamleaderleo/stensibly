@@ -97,6 +97,51 @@ describe("owned Glaeda workstation runner", () => {
     });
   });
 
+  test("blocks and releases a claim when pre-dispatch capability admission refuses", async () => {
+    const calls: Array<{ name: string; arguments: Record<string, unknown> }> = [];
+    const client = new RunnerMcpHttpClient({
+      endpoint: "http://localhost/runner/mcp",
+      token: `stn.tok_${"3".repeat(32)}.${"C".repeat(43)}`,
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as {
+          id: number;
+          params: { name: string; arguments: Record<string, unknown> };
+        };
+        calls.push(body.params);
+        return toolResponse(body.id, responseFor(body.params.name, body.params.arguments));
+      },
+    });
+
+    await expect(executeGlaedaOwnedWorkstationRunV1({
+      runner: client,
+      project: "stensibly",
+      runId: "run-owned-workstation-1",
+      profileGeneration,
+      pythonInterpreterPath: "/usr/bin/python3.14",
+      canaryScriptPath: "/home/leo/Projects/glaeda-dispatch/big_red_canary.py",
+      node: {
+        id: "big-red",
+        generation: 7,
+        osClass: "linux",
+        architectureClass: "x86_64",
+        glaedaRuntimeSha256: runtimeDigest,
+      },
+      inspectPythonInterpreter: async () => ({ ...pythonEvidence, version: "3.14.5" }),
+      now,
+    })).rejects.toThrow(/Python runtime changed/);
+
+    expect(calls.map((call) => call.name)).toEqual([
+      "claim_runner_work",
+      "transition_runner_run",
+    ]);
+    expect(calls[1]!.arguments).toMatchObject({
+      command: "block",
+      expectedGeneration: 1,
+      expectedLeaseGeneration: 2,
+      checkpoint: "Owned workstation admission refused before physical dispatch.",
+    });
+  });
+
   test("restarts after physical result publication and reconciles without redispatch", async () => {
     const runnerCalls: string[] = [];
     const canaryActions: string[] = [];
@@ -243,6 +288,16 @@ function responseFor(name: string, args: Record<string, unknown>): unknown {
       leaseGeneration: 2,
       leaseOwnerId: actorId,
       leaseExpiresAt: "2026-08-31T06:00:00.000Z",
+    };
+  }
+  if (name === "transition_runner_run" && args.command === "block") {
+    return {
+      id: "run-owned-workstation-1",
+      status: "blocked",
+      generation: 2,
+      leaseGeneration: 2,
+      leaseOwnerId: null,
+      leaseExpiresAt: null,
     };
   }
   if (name === "reserve_workstation_adapter_command") {
