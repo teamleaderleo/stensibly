@@ -93,6 +93,14 @@ describe("ChatGPT curated publication preflight", () => {
           requireMcpCapabilityPolicy(toolName),
         );
         const actual = tool.annotations ?? {};
+        expect(tool.title).toEqual(expect.any(String));
+        expect(tool.outputSchema).toEqual({
+          type: "object",
+          properties: { data: {} },
+          required: ["data"],
+          $schema: "http://json-schema.org/draft-07/schema#",
+          additionalProperties: false,
+        });
         for (const key of submissionAnnotationKeys) {
           if (!Object.hasOwn(actual, key) || actual[key] !== expected[key]) {
             annotationMismatches.push(
@@ -102,6 +110,17 @@ describe("ChatGPT curated publication preflight", () => {
         }
       }
       expect(annotationMismatches).toEqual([]);
+
+      const structuredRead = await client.callTool({
+        name: "list_work",
+        arguments: {},
+      });
+      expect(structuredRead.isError).not.toBe(true);
+      expect(structuredRead.structuredContent).toEqual({ data: [] });
+      expect(structuredRead.content).toEqual([{
+        type: "text",
+        text: "[]",
+      }]);
 
       const attachArtifactSchema = listedByName.get("attach_artifact")?.inputSchema;
       const metadataSchema = (attachArtifactSchema?.properties as Record<string, unknown>)

@@ -8,12 +8,13 @@ describe("ChatGPT plugin publication preflight", () => {
     expect(report).toMatchObject({
       version: 1,
       status: "ready_for_portal_scan",
-      snapshotVersion: 24,
+      snapshotVersion: 25,
       profile: "published_default",
       toolCount: 21,
       toolContractVersion: 2,
       reviewedMetadataVersion: 3,
-      outputSchemaCount: 0,
+      outputSchemaCount: 21,
+      genericOutputSchemaCount: 21,
       titleCount: 21,
       positiveTestCaseCount: 5,
       negativeTestCaseCount: 3,
@@ -23,7 +24,7 @@ describe("ChatGPT plugin publication preflight", () => {
     expect(report.serverInstructionsFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(report.reviewedMetadataFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(report.warnings).toEqual([
-      expect.stringContaining("21 public tools omit outputSchema"),
+      expect.stringContaining("21 public tools use the generic JSON result envelope"),
     ]);
     expect(JSON.stringify(report)).not.toContain("Use the reviewed public tools");
   });

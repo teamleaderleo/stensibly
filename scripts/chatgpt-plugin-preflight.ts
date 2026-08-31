@@ -48,6 +48,7 @@ export interface ChatGptPluginPreflightReport {
   toolContractVersion: number;
   reviewedMetadataVersion: number;
   outputSchemaCount: number;
+  genericOutputSchemaCount: number;
   titleCount: number;
   positiveTestCaseCount: number;
   negativeTestCaseCount: number;
@@ -81,6 +82,9 @@ export async function runChatGptPluginPreflight(): Promise<ChatGptPluginPrefligh
     const submissionToolNames = Object.keys(submission.tools).sort();
     const outputSchemaCount = listed.tools.filter(
       (tool) => tool.outputSchema !== undefined,
+    ).length;
+    const genericOutputSchemaCount = listed.tools.filter(
+      (tool) => isGenericJsonEnvelopeSchema(tool.outputSchema),
     ).length;
     const titleCount = listed.tools.filter(
       (tool) => typeof tool.title === "string" && tool.title.trim().length > 0,
@@ -187,6 +191,11 @@ export async function runChatGptPluginPreflight(): Promise<ChatGptPluginPrefligh
         `${listed.tools.length - outputSchemaCount} public tools omit outputSchema; add structured result contracts before first review for stronger host validation.`,
       );
     }
+    if (genericOutputSchemaCount > 0) {
+      warnings.push(
+        `${genericOutputSchemaCount} public tools use the generic JSON result envelope; replace it with precise per-tool schemas for stronger field-level validation.`,
+      );
+    }
     if (titleCount < listed.tools.length) {
       warnings.push(
         `${listed.tools.length - titleCount} public tools omit a human-readable title; add titles before first review to improve tool selection and reviewability.`,
@@ -202,6 +211,7 @@ export async function runChatGptPluginPreflight(): Promise<ChatGptPluginPrefligh
       toolContractVersion: contract.publishedManifest.schemaVersion,
       reviewedMetadataVersion: contract.version,
       outputSchemaCount,
+      genericOutputSchemaCount,
       titleCount,
       positiveTestCaseCount: submission.test_cases.length,
       negativeTestCaseCount: submission.negative_test_cases.length,
@@ -235,6 +245,21 @@ function readJson<T>(path: URL): T {
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function isGenericJsonEnvelopeSchema(value: unknown): boolean {
+  if (!isRecord(value) || value.type !== "object" || value.additionalProperties !== false) {
+    return false;
+  }
+  if (!Array.isArray(value.required) || value.required.length !== 1 || value.required[0] !== "data") {
+    return false;
+  }
+  if (!isRecord(value.properties) || !isRecord(value.properties.data)) return false;
+  return Object.keys(value.properties.data).length === 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 if (import.meta.main) {
