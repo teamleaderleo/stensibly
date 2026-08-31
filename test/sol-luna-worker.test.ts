@@ -332,6 +332,9 @@ function cliArgs(options: SolLunaWorkerOptions): string[] {
     ...(options.editAuthority === undefined ? [] : ["--edit-authority", options.editAuthority]),
     ...(options.gitMetadataAuthority === undefined ? [] : ["--git-metadata-authority", options.gitMetadataAuthority]),
     ...(options.reasoningEffort === undefined ? [] : ["--reasoning-effort", options.reasoningEffort]),
+    ...(options.promptSurfaceProfile === undefined
+      ? []
+      : ["--prompt-surface-profile", options.promptSurfaceProfile]),
     ...(options.requiredCommands ?? []).flatMap((command) => ["--require-command", command]),
     "--codex-bin", options.codexBin ?? "codex",
     ...(options.timeoutMs === undefined ? [] : ["--timeout-ms", String(options.timeoutMs)]),
@@ -604,6 +607,33 @@ describe("disposable Sol/Luna Codex worker harness", () => {
     expect(args[args.indexOf("--output-schema") + 1]).toBe(setup.options.outputSchema);
     expect(await Bun.file(marker).exists()).toBe(false);
     expect((await Bun.file(setup.stdinPath).text())).toContain("Canonical brief bytes");
+  });
+
+  test("applies only an explicitly selected prompt-surface profile and receipts retirements", async () => {
+    const setup = await setupFakeCodex();
+    const exitCode = await runSolLunaCli(cliArgs({
+      ...setup.options,
+      promptSurfaceProfile: "closed-task",
+    }));
+    const args = await Bun.file(setup.argsPath).json() as string[];
+    const receipt = await readJson(join(setup.options.outputDir, "receipt.json"));
+    const child = receipt.child as Record<string, unknown>;
+    const commandShape = child.commandShape as Record<string, unknown>;
+
+    expect(exitCode).toBe(0);
+    expect(args).toContain("skills.include_instructions=false");
+    expect(args).toContain("features.plugins=false");
+    expect(args).toContain("features.apps=false");
+    expect(commandShape.promptSurface).toEqual({
+      profile: "closed-task",
+      contextRetirements: [
+        "skills-catalogue",
+        "plugin-instructions",
+        "app-instructions",
+        "recommended-plugin-catalogue",
+      ],
+      capabilityRetirements: ["plugins", "apps"],
+    });
   });
 
   test("retains evidence and marks a non-zero child as worker failure", async () => {

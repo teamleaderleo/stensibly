@@ -13,6 +13,11 @@ import {
   permissionProfileReceiptArgs,
   type CompiledCodexPermissionProfile,
 } from "./codex-permission-profile.js";
+import {
+  compileCodexPromptSurfaceProfile,
+  isCodexPromptSurfaceProfileName,
+  type CodexPromptSurfaceProfileName,
+} from "./codex-prompt-surface-profile.js";
 
 const CODEX_COMMAND = "codex";
 const CODEX_MODEL = "gpt-5.6-luna";
@@ -62,6 +67,8 @@ export interface SolLunaWorkerOptions {
   readonly editAuthority?: SolLunaEditAuthority;
   readonly gitMetadataAuthority?: SolLunaGitMetadataAuthority;
   readonly reasoningEffort?: SolLunaReasoningEffort;
+  /** Explicit model-visible catalogue/affordance profile. Never inferred from brief text. */
+  readonly promptSurfaceProfile?: CodexPromptSurfaceProfileName;
   /** Executable names the brief promises the worker may invoke. */
   readonly requiredCommands?: readonly string[];
   readonly codexBin?: string;
@@ -151,6 +158,11 @@ export interface SolLunaWorkerReceipt {
       readonly args: readonly string[];
       readonly stdin: "canonical-brief";
       readonly reasoningEffort: SolLunaReasoningEffort;
+      readonly promptSurface: {
+        readonly profile: CodexPromptSurfaceProfileName;
+        readonly contextRetirements: readonly string[];
+        readonly capabilityRetirements: readonly string[];
+      };
       readonly wallClockTimeoutMs: number;
       readonly shellEnvironment: {
         readonly inherit: "none";
@@ -359,6 +371,10 @@ function normalizeOptions(input: SolLunaWorkerOptions): Required<SolLunaWorkerOp
   }
   const reasoningEffort = input.reasoningEffort ?? DEFAULT_SOL_LUNA_REASONING_EFFORT;
   if (!isReasoningEffort(reasoningEffort)) throw new Error("reasoning effort must be low, medium, high, xhigh, or max");
+  const promptSurfaceProfile = input.promptSurfaceProfile ?? "full";
+  if (!isCodexPromptSurfaceProfileName(promptSurfaceProfile)) {
+    throw new Error("prompt surface profile must be full, skills-catalogue-muted, or closed-task");
+  }
   return {
     repository: resolve(requireText(input.repository, "repository")),
     brief: resolve(requireText(input.brief, "brief")),
@@ -371,6 +387,7 @@ function normalizeOptions(input: SolLunaWorkerOptions): Required<SolLunaWorkerOp
     editAuthority,
     gitMetadataAuthority,
     reasoningEffort,
+    promptSurfaceProfile,
     requiredCommands: normalizeRequiredCommands(input.requiredCommands),
     codexBin: requireText(input.codexBin ?? CODEX_COMMAND, "Codex executable"),
     timeoutMs: requirePositiveInteger(input.timeoutMs, "timeoutMs", DEFAULT_TIMEOUT_MS),
@@ -1246,6 +1263,7 @@ function commandShape(
   profile: CompiledCodexPermissionProfile | null,
 ): SolLunaWorkerReceipt["child"]["commandShape"] {
   const environment = { root: "<worker-runtime>", home: "<worker-home>", tmpdir: "<worker-tmpdir>" };
+  const promptSurface = compileCodexPromptSurfaceProfile(options.promptSurfaceProfile);
   return {
     executable: CODEX_COMMAND,
     args: [
@@ -1256,6 +1274,7 @@ function commandShape(
       CODEX_MODEL,
       ...(profile === null ? [] : permissionProfileReceiptArgs(profile)),
       ...configArgs(options.reasoningEffort, environment),
+      ...promptSurface.configArgs,
       ...(profile === null ? ["--sandbox", options.sandbox] : []),
       "--cd",
       "<repository>",
@@ -1267,6 +1286,11 @@ function commandShape(
     profileFingerprint: profile?.fingerprint ?? null,
     stdin: "canonical-brief",
     reasoningEffort: options.reasoningEffort,
+    promptSurface: {
+      profile: promptSurface.name,
+      contextRetirements: promptSurface.contextRetirements,
+      capabilityRetirements: promptSurface.capabilityRetirements,
+    },
     wallClockTimeoutMs: options.timeoutMs,
     shellEnvironment: { inherit: "none", path: SAFE_WORKER_PATH, home: environment.home, tmpdir: environment.tmpdir },
   };
@@ -1277,6 +1301,7 @@ function childArgs(
   environment: WorkerShellEnvironment,
   profile: CompiledCodexPermissionProfile | null,
 ): string[] {
+  const promptSurface = compileCodexPromptSurfaceProfile(options.promptSurfaceProfile);
   return [
     "exec",
     "--ephemeral",
@@ -1285,6 +1310,7 @@ function childArgs(
     CODEX_MODEL,
     ...(profile === null ? [] : permissionProfileConfigArgs(profile)),
     ...configArgs(options.reasoningEffort, environment),
+    ...promptSurface.configArgs,
     ...(profile === null ? ["--sandbox", options.sandbox] : []),
     "--cd",
     options.repository,
@@ -1691,6 +1717,7 @@ interface ParsedCliOptions {
   readonly editAuthority?: SolLunaEditAuthority;
   readonly gitMetadataAuthority?: SolLunaGitMetadataAuthority;
   readonly reasoningEffort?: SolLunaReasoningEffort;
+  readonly promptSurfaceProfile?: CodexPromptSurfaceProfileName;
   readonly requiredCommands?: readonly string[];
   readonly codexBin?: string;
   readonly timeoutMs?: number;
@@ -1705,6 +1732,7 @@ function usage(): string {
     "  [--confinement permission-profile|legacy-sandbox]",
     "  [--edit-authority read-only|workspace-write] [--git-metadata-authority none|write]",
     "  [--reasoning-effort low|medium|high|xhigh|max]",
+    "  [--prompt-surface-profile full|skills-catalogue-muted|closed-task]",
     "  [--require-command NAME]...",
     "  [--codex-bin PATH] [--timeout-ms MS] [--capture-cap-bytes BYTES]",
     "  [--git-timeout-ms MS]",
@@ -1772,7 +1800,11 @@ function parseCli(argv: readonly string[]): ParsedCliOptions {
   if (gitMetadataAuthority !== undefined && !isGitMetadataAuthority(gitMetadataAuthority)) throw new Error("--git-metadata-authority must be none or write");
   const reasoningEffort = values.get("reasoning-effort");
   if (reasoningEffort !== undefined && !isReasoningEffort(reasoningEffort)) throw new Error("--reasoning-effort must be low, medium, high, xhigh, or max");
-  const known = new Set([...required, "sandbox", "confinement", "edit-authority", "git-metadata-authority", "reasoning-effort", "codex-bin", "timeout-ms", "capture-cap-bytes", "git-timeout-ms"]);
+  const promptSurfaceProfile = values.get("prompt-surface-profile");
+  if (promptSurfaceProfile !== undefined && !isCodexPromptSurfaceProfileName(promptSurfaceProfile)) {
+    throw new Error("--prompt-surface-profile must be full, skills-catalogue-muted, or closed-task");
+  }
+  const known = new Set([...required, "sandbox", "confinement", "edit-authority", "git-metadata-authority", "reasoning-effort", "prompt-surface-profile", "codex-bin", "timeout-ms", "capture-cap-bytes", "git-timeout-ms"]);
   for (const key of values.keys()) {
     if (!known.has(key)) throw new Error(`unknown argument --${key}`);
   }
@@ -1792,6 +1824,7 @@ function parseCli(argv: readonly string[]): ParsedCliOptions {
     ...(editAuthority === undefined ? {} : { editAuthority }),
     ...(gitMetadataAuthority === undefined ? {} : { gitMetadataAuthority }),
     ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    ...(promptSurfaceProfile === undefined ? {} : { promptSurfaceProfile }),
     requiredCommands,
     codexBin: values.get("codex-bin"),
     ...(timeoutValue === undefined ? {} : { timeoutMs: parsePositiveIntegerCli(timeoutValue, "--timeout-ms") }),
