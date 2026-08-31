@@ -86,6 +86,12 @@ describe("MCP OAuth hardening", () => {
       signature: "signature",
     });
     expect(html).not.toContain("A refresh token keeps the connection active");
+    expect(html).toContain('touch-action:manipulation');
+    expect(html).toContain('name="decision" value="approve"');
+    expect(html).toContain('name="decision" value="deny"');
+    expect(html).toContain('<button class="approve" type="submit">Authorise</button>');
+    expect(html).toContain('<button type="submit">Cancel</button>');
+    expect(html).not.toContain('<button class="approve" name="decision"');
   });
 
   test("redirects scope errors only after validating the client redirect", async () => {
