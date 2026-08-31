@@ -153,7 +153,7 @@ const policyInputs: readonly McpCapabilityPolicyInput[] = [
   writePolicy(
     "github_add_issue_comment",
     directProject,
-    "additive",
+    "destructive",
     "bounded_write",
     "none",
     "core",
@@ -180,7 +180,7 @@ const policyInputs: readonly McpCapabilityPolicyInput[] = [
   writePolicy(
     "github_create_issue",
     directProject,
-    "additive",
+    "destructive",
     "bounded_write",
     "none",
     "core",

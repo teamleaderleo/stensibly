@@ -106,7 +106,7 @@ describe("MCP published contract", () => {
       readOnlyHint: true,
     });
     expect(contract.publishedManifest.tools[1]!.annotations).toEqual({
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
       readOnlyHint: false,
