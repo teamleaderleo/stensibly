@@ -1,0 +1,50 @@
+name: Lumen 1160 Cedar trigger
+
+on:
+  push:
+    branches:
+      - lumen/1146-execution-recipes
+    paths:
+      - .github/workflows/lumen-1160-cedar-trigger.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lumen-1160-cedar-trigger
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: lumen/1146-execution-recipes
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Trigger exact Cedar recipe publisher
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          HEAD_REF: lumen/1146-execution-recipes
+          CEDAR_BLOB: 734ceacb0e68e5b84c9bedac2761d642abaf51f5
+          LUMEN_REPAIR_BLOB: c8c94a58119aa52a10e58a3ffdf90ec335e02a43
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD:.github/workflows/cedar-1160-final-publisher.yml)" = "$CEDAR_BLOB"
+          test "$(git rev-parse HEAD:.github/workflows/lumen-1160-bounded-repair.yml)" = "$LUMEN_REPAIR_BLOB"
+          printf '\n# Lumen exact trigger %s\n' "$EXPECTED_HEAD" \
+            >> .github/workflows/cedar-1160-final-publisher.yml
+          git rm .github/workflows/lumen-1160-cedar-trigger.yml
+          git add .github/workflows/cedar-1160-final-publisher.yml
+          git diff --cached --check
+          git config user.name "Lumen"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Trigger execution recipe current-main publisher"
+          git fetch origin "refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+          test "$(git rev-parse refs/remotes/origin/${HEAD_REF})" = "$EXPECTED_HEAD"
+          git push --force-with-lease="refs/heads/${HEAD_REF}:${EXPECTED_HEAD}" origin "HEAD:refs/heads/${HEAD_REF}"
