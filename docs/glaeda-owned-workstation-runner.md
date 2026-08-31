@@ -53,7 +53,7 @@ mode `0600`, and prints only the non-secret token record:
 ```sh
 bun run tokens create-runner -- \
   --name big-red-glaeda \
-  --project glaeda \
+  --project '<exact-project>' \
   --actor-id service:big-red-glaeda \
   --runner-type glaeda-workstation \
   --adapter-id glaeda-workstation \
@@ -69,7 +69,7 @@ owner-only token file and do not put the token on the command line or in logs:
 
 ```sh
 bun run glaeda:workstation -- \
-  --project stensibly \
+  --project '<exact-project>' \
   --run-id '<exact-run-id>' \
   --token-file '<owner-only-token-file>' \
   --python-interpreter '/usr/bin/python3.14' \
@@ -134,18 +134,20 @@ or arbitrary process output. The result commit is the separately inspectable bou
 
 ## Rotation, revocation, and recovery
 
-For Big Red, `.github/workflows/provision-owned-workstation-runner.yml` is the protected delivery
-surface. Mint accepts only a non-secret one-time RSA public key and its DER SHA-256 fingerprint,
-creates the exact runner grant inside the `production` environment, and uploads an immutable
-one-day artifact containing ciphertext plus non-secret token metadata. Decrypt only on Big Red into
-the final owner-only token path. The same workflow revokes one exact `tok_` ID without handling a
-raw token.
+For both nodes, `.github/workflows/provision-owned-workstation-runner.yml` is the protected delivery
+surface. Mint selects exactly one recipient (`big-red` or `air-blue`) and one project (`glaeda` or
+`stensibly`), accepts only that node's non-secret one-time RSA public key and DER SHA-256
+fingerprint, creates a runner grant with the matching service actor inside the `production`
+environment, and uploads an immutable one-day artifact containing ciphertext plus non-secret token
+metadata. Decrypt only on the selected node into its final owner-only token path. The credential's
+project must match the item/run it will claim; it never grants both projects. The same workflow
+revokes one exact `tok_` ID without handling a raw token.
 
 When a connected client cannot yet call the hosted control surface directly, the same workflow can
-mint `ephemeral_control`: one `glaeda`-project `read,write` token sealed to a separate one-time key.
+mint `ephemeral_control`: one selected-project `read,write` token sealed to a separate one-time key.
 Use it only in controller/publication logic, never the source-running process, and revoke its exact
-token ID as soon as the bounded dispatch/attachment operation is complete. This is a temporary
-client credential, not runner identity or physical execution authority.
+token ID as soon as the bounded dispatch/attachment operation is complete. It does not inherit the
+runner grant and is not physical execution authority.
 
 List token records in the protected operator environment with `bun run tokens list`; the token ID,
 grant, creation time, and revocation time are safe control metadata, while the raw token is never

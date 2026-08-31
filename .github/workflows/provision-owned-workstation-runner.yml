@@ -19,6 +19,22 @@ on:
         options:
           - runner
           - ephemeral_control
+      recipient_node:
+        description: Exact owned workstation receiving the sealed credential
+        required: true
+        default: big-red
+        type: choice
+        options:
+          - big-red
+          - air-blue
+      project:
+        description: One exact Stensibly project granted to the credential
+        required: true
+        default: glaeda
+        type: choice
+        options:
+          - glaeda
+          - stensibly
       recipient_public_key_base64:
         description: Base64 PEM RSA public key for mint (non-secret)
         required: false
@@ -67,6 +83,8 @@ jobs:
         env:
           OPERATION: ${{ inputs.operation }}
           CREDENTIAL_CLASS: ${{ inputs.credential_class }}
+          RECIPIENT_NODE: ${{ inputs.recipient_node }}
+          PROJECT: ${{ inputs.project }}
           RECIPIENT_PUBLIC_KEY_BASE64: ${{ inputs.recipient_public_key_base64 }}
           RECIPIENT_PUBLIC_KEY_SHA256: ${{ inputs.recipient_public_key_sha256 }}
           TOKEN_ID: ${{ inputs.token_id }}
@@ -74,6 +92,10 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$CONVEX_DEPLOY_KEY" || { echo "Missing protected Convex deploy key" >&2; exit 1; }
+          [[ "$RECIPIENT_NODE" =~ ^(big-red|air-blue)$ ]] \
+            || { echo "Request requires one exact owned workstation" >&2; exit 1; }
+          [[ "$PROJECT" =~ ^(glaeda|stensibly)$ ]] \
+            || { echo "Request requires one exact supported project" >&2; exit 1; }
           case "$OPERATION" in
             mint)
               [[ "$CREDENTIAL_CLASS" == runner || "$CREDENTIAL_CLASS" == ephemeral_control ]] \
@@ -95,12 +117,14 @@ jobs:
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
 
-      - name: Mint and seal Big Red credential
+      - name: Mint and seal exact workstation credential
         if: ${{ inputs.operation == 'mint' }}
         id: mint
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
           CREDENTIAL_CLASS: ${{ inputs.credential_class }}
+          RECIPIENT_NODE: ${{ inputs.recipient_node }}
+          PROJECT: ${{ inputs.project }}
           RECIPIENT_PUBLIC_KEY_BASE64: ${{ inputs.recipient_public_key_base64 }}
           RECIPIENT_PUBLIC_KEY_SHA256: ${{ inputs.recipient_public_key_sha256 }}
           STENSIBLY_SERVICE_SECRET: ${{ secrets.STENSIBLY_SERVICE_SECRET }}
@@ -144,9 +168,9 @@ jobs:
 
           if [[ "$CREDENTIAL_CLASS" == runner ]]; then
             STENSIBLY_BACKEND=convex bun src/tokens.ts create-runner \
-              --name big-red-glaeda \
-              --project glaeda \
-              --actor-id service:big-red-glaeda \
+              --name "${RECIPIENT_NODE}-${PROJECT}-runner" \
+              --project "$PROJECT" \
+              --actor-id "service:${RECIPIENT_NODE}-glaeda" \
               --runner-type glaeda-workstation \
               --adapter-id glaeda-workstation \
               --profiles repo-query/v1 \
@@ -154,9 +178,9 @@ jobs:
               > "$credential_root/metadata.json"
           else
             STENSIBLY_BACKEND=convex bun src/tokens.ts create \
-              --name "big-red-glaeda-control-${GITHUB_RUN_ID}" \
+              --name "${RECIPIENT_NODE}-${PROJECT}-control-${GITHUB_RUN_ID}" \
               --scopes read,write \
-              --projects glaeda \
+              --projects "$PROJECT" \
               > "$credential_root/created.json"
             jq -er '.token | select(test("^stn\\.tok_[a-f0-9]{32}\\.[A-Za-z0-9_-]{40,100}$"))' \
               "$credential_root/created.json" > "$credential_root/credential.token"
@@ -181,7 +205,7 @@ jobs:
         if: ${{ inputs.operation == 'mint' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: big-red-stensibly-credential-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ inputs.recipient_node }}-${{ inputs.project }}-stensibly-credential-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/owned-workstation-runner/metadata.json
             ${{ runner.temp }}/owned-workstation-runner/recipient-public-key.sha256
@@ -235,6 +259,8 @@ jobs:
         env:
           TOKEN_ID: ${{ steps.mint.outputs.token_id }}
           CREDENTIAL_CLASS: ${{ inputs.credential_class }}
+          RECIPIENT_NODE: ${{ inputs.recipient_node }}
+          PROJECT: ${{ inputs.project }}
           RECIPIENT_PUBLIC_KEY_SHA256: ${{ inputs.recipient_public_key_sha256 }}
         run: |
           {
@@ -242,6 +268,8 @@ jobs:
             echo
             echo "- Token ID: \`$TOKEN_ID\`"
             echo "- Credential class: \`$CREDENTIAL_CLASS\`"
+            echo "- Recipient node: \`$RECIPIENT_NODE\`"
+            echo "- Project: \`$PROJECT\`"
             echo "- Recipient public-key SHA-256: \`$RECIPIENT_PUBLIC_KEY_SHA256\`"
             echo "- Raw token printed or uploaded: \`false\`"
             echo "- Artifact retention: \`1 day\`"
