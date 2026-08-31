@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { attachArtifact } from "../src/artifacts.ts";
+import { attachArtifact, listArtifacts } from "../src/artifacts.ts";
 import {
   buildRunnerContextPacket,
   getRunnerContextPacket,
@@ -130,6 +130,68 @@ describe("runner context packets", () => {
     const second = buildRunnerContextPacket(detail, { now: generatedAt });
     expect(second).toEqual(first);
     expect(first.sourceReferences).toContain("dependency:item_dependency");
+  });
+
+  test("preserves one bounded Glaeda capability artifact without depth truncation", () => {
+    const item = store.createItem({
+      project: "glaeda",
+      kind: "task",
+      title: "Run one exact owned-workstation query",
+      priority: 50,
+      actor: leo,
+    });
+    const snapshot = {
+      admission: {
+        activeWorkloadsClass: "unobserved",
+        availabilityClass: "available",
+        pressureClass: "unobserved",
+      },
+      advisoryOnly: true,
+      authorizesDispatch: false,
+      authorizesExecution: false,
+      expiresAt: "2026-08-31T05:03:00.000Z",
+      node: { architectureClass: "arm64", generation: 1, id: "air-blue", osClass: "macos" },
+      observedAt: "2026-08-31T05:00:00.000Z",
+      producer: {
+        glaedaRuntimeSha256: `sha256:${"a".repeat(64)}`,
+        python: { executableSha256: `sha256:${"b".repeat(64)}`, version: "3.14.6" },
+        workspaceCapabilitySha256: `sha256:${"c".repeat(64)}`,
+      },
+      profiles: [{ class: "repo_query", id: "repo-query/v1", versionSha256: `sha256:${"d".repeat(64)}` }],
+      projects: [{
+        heatClass: "resident_hot",
+        repository: "teamleaderleo/glaeda",
+        source: { commitOid: "1".repeat(40), treeOid: "2".repeat(40) },
+        sourceObjectClass: "exact_commit_and_tree_present",
+        verificationProfiles: ["glaeda.doctor", "glaeda.required"],
+      }],
+      schema: "glaeda-owned-workstation-capability/v1",
+    };
+    const metadata = {
+      schema: "glaeda-owned-workstation-capability-artifact/v1",
+      snapshot,
+      snapshotSha256: `sha256:${"e".repeat(64)}`,
+    };
+    attachArtifact(store, {
+      itemId: item.id,
+      actor: runner,
+      kind: "other",
+      label: "Air Blue capability",
+      uri: `urn:stensibly:glaeda-capability:${metadata.snapshotSha256}`,
+      metadata,
+    });
+
+    const packet = buildRunnerContextPacket({
+      item,
+      control: projectItemControl({ item, now: generatedAt }),
+      events: [],
+      artifacts: listArtifacts(store, item.id),
+      runs: [],
+      dependencies: [],
+    }, { now: generatedAt });
+
+    expect(packet.artifacts[0]?.metadata).toEqual(metadata);
+    expect(JSON.stringify(packet)).not.toContain("[TRUNCATED]");
   });
 
   test("serves scoped packets over REST and validates limits", async () => {
