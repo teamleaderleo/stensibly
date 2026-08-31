@@ -101,6 +101,10 @@ jobs:
             mint)
               [[ "$CREDENTIAL_CLASS" == runner || "$CREDENTIAL_CLASS" == ephemeral_control ]] \
                 || { echo "Mint requires an exact credential class" >&2; exit 1; }
+              if [[ "$PROJECT" == quarry && "$CREDENTIAL_CLASS" != runner ]]; then
+                echo "Quarry pilot requires the runner credential class" >&2
+                exit 1
+              fi
               test -n "$RECIPIENT_PUBLIC_KEY_BASE64" || { echo "Mint requires a recipient public key" >&2; exit 1; }
               [[ "$RECIPIENT_PUBLIC_KEY_SHA256" =~ ^[a-f0-9]{64}$ ]] \
                 || { echo "Mint requires an exact lowercase SHA-256 public-key fingerprint" >&2; exit 1; }
