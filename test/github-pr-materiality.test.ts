@@ -32,6 +32,7 @@ describe("GitHub PR materiality", () => {
       actionClass: "exact_head_changed",
       routingLevel: "attention",
       invalidatesExactHeadEvidence: true,
+      invalidatesReviewEvidence: true,
       settlesCandidate: false,
     });
     expect(classifyGitHubPrMaterialityV1(pullRequest("converted_to_draft")))
@@ -39,6 +40,7 @@ describe("GitHub PR materiality", () => {
         actionClass: "review_suspended",
         routingLevel: "attention",
         invalidatesExactHeadEvidence: false,
+        invalidatesReviewEvidence: false,
       });
   });
 
@@ -76,12 +78,13 @@ describe("GitHub PR materiality", () => {
       .toMatchObject({ actionClass: "routine", routingLevel: "record" });
   });
 
-  test("treats dismissed reviews as stale exact review evidence", () => {
+  test("invalidates dismissed review evidence without pretending the head changed", () => {
     expect(classifyGitHubPrMaterialityV1(review("dismissed", "dismissed")))
       .toMatchObject({
         actionClass: "review_invalidated",
         routingLevel: "attention",
-        invalidatesExactHeadEvidence: true,
+        invalidatesExactHeadEvidence: false,
+        invalidatesReviewEvidence: true,
       });
   });
 
