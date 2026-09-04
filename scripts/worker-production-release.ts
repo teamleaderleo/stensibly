@@ -230,6 +230,9 @@ export async function runProductionRelease(
     await writeGithubOutputs(options.githubOutput, { promoted: "true" });
     await assertCandidateActive(upload.versionId, dependencies);
     await verifyProduction(upload.versionId, options, dependencies);
+    await dependencies.run("bun", ["run", "scripts/verify-commander-read.ts"], {
+      env: { VERIFY_PROJECT: options.project ?? "stensibly", EXPECTED_WORKER_VERSION: upload.versionId },
+    });
     return {
       baselineDeploymentId: baseline.id,
       candidateVersionId: upload.versionId,

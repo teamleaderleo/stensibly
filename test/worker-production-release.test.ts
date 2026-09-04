@@ -261,9 +261,26 @@ describe("production Worker release guard", () => {
     expect(result.recovered).toBe(false);
     expect(harness.activeVersion()).toBe(VERSION_B);
     expect(harness.officialPromotionAttempts()).toBe(12);
+    expect(harness.commands).toContain("bun run scripts/verify-commander-read.ts");
     expect(harness.commands.some((command) => command.includes(
       `wrangler versions deploy ${VERSION_A}@100%`,
     ))).toBe(false);
+  });
+
+  test("restores the baseline when exact-version commander readback fails", async () => {
+    const harness = recoveryHarness(true, { officialPromotionLagAttempts: 0, fallbackPromotionLagAttempts: 0 });
+    const run = harness.dependencies.run;
+    harness.dependencies.run = async (command, args, options) => {
+      if (args.includes("scripts/verify-commander-read.ts")) {
+        expect(options?.env).toEqual({ VERIFY_PROJECT: "stensibly", EXPECTED_WORKER_VERSION: VERSION_B });
+        throw new Error("Commander readback failed");
+      }
+      return run(command, args, options);
+    };
+    await expect(withCredentialEnvironment(() => runProductionRelease({
+      expectedSha: SHA, oauthExpectation: "enabled",
+    }, harness.dependencies))).rejects.toThrow("previous deployment was restored");
+    expect(harness.activeVersion()).toBe(VERSION_A);
   });
 
   test("waits for fallback-domain routing convergence without rolling back a healthy candidate", async () => {
