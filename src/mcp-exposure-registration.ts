@@ -202,7 +202,7 @@ const publicToolDescriptions: Readonly<Record<string, string>> = Object.freeze({
   complete_work: "Complete claimed work at the current generation.",
   create_item: "Create one project work item.",
   dispatch_work: "Claim one exact item generation and dispatch one runner profile.",
-  get_brief: "Read a bounded project work snapshot.",
+  get_brief: "Read attention, blockers, results and ready candidates with exact refs. Provider readiness is unverified. Reuse previousFingerprint for unchanged reads.",
   get_project_attachment: "Read accepted project policy and attachment recovery state.",
   get_runner_context: "Read the bounded canonical item, run, source, and receipt packet.",
   github_add_issue_comment: "Add one idempotent comment to a bound GitHub issue.",
