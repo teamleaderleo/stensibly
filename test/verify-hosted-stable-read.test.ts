@@ -83,6 +83,11 @@ describe("hosted MCP stable read verification", () => {
       headers: { "x-request-id": "structured-scope", [PROCESSING_STAGE_HEADER]: "response_produced", [WORKER_VERSION_ID_HEADER]: "worker-version-1" },
     });
     expect(await verifyHostedStableRead(options, scopeFetch)).toMatchObject({ ok: false, detail: "MCP list_work scope did not match the requested project" });
+    const oversized = compactPublicMcpResult(await asToolResult(async () => [{ ...readyItems()[0], summary: "x".repeat(600_000) }]));
+    const largeFetch: FetchLike = async () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 3, result: oversized }), {
+      headers: { "x-request-id": "structured-large", [PROCESSING_STAGE_HEADER]: "response_produced", [WORKER_VERSION_ID_HEADER]: "worker-version-1" },
+    });
+    expect(await verifyHostedStableRead(options, largeFetch)).toMatchObject({ ok: false, detail: "MCP list_work structured result exceeded 512 KiB" });
   });
 
   test("executes one published list_work read and retains only bounded receipts", async () => {

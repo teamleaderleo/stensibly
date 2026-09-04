@@ -163,6 +163,9 @@ function readSurvey(
     }
     parsed = structured.data;
     fingerprintText = JSON.stringify(parsed);
+    if (Buffer.byteLength(fingerprintText, "utf8") > MAXIMUM_SURVEY_TEXT_BYTES) {
+      throw new Error("MCP list_work structured result exceeded 512 KiB");
+    }
   }
 
   if (Array.isArray(parsed)) {
