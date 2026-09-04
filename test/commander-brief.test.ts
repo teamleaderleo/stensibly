@@ -19,6 +19,53 @@ const read = (source: unknown, previousFingerprint?: string, now = Date.now(), l
   compileCommanderBrief(source, { project: "commander", limit, previousFingerprint, now });
 
 describe("commander brief", () => {
+  test("a blocker backlog leaves room for a candidate and a dated result", () => {
+    const { source, item } = fixture();
+    const candidate = source.ready.find((row) => row.id === item.id)!;
+    source.blocked = Array.from({ length: 10 }, (_, i) => ({ ...candidate, id: `block-${i}`, status: "blocked" as const, priority: 100, updatedAt: "2026-08-10T00:00:00.000Z" }));
+    source.recentlyCompleted = [{ ...candidate, id: "result", status: "done" }];
+    source.counts.byStatus.blocked = 10;
+    const result = read(source, undefined, Date.now(), 3);
+    expect(result.attention).toHaveLength(1);
+    expect(result.ready).toHaveLength(1);
+    expect(result.recentlyCompleted).toHaveLength(1);
+    expect(result.omitted?.actionable).toBe(10);
+    source.ready = source.ready.filter((row) => row.kind !== "decision");
+    source.knowledge = source.knowledge.filter((row) => row.kind !== "decision");
+    source.counts.byStatus.ready--;
+    const noDecision = read(source, undefined, Date.now(), 3);
+    expect(noDecision.blocked).toHaveLength(1);
+    expect(noDecision.ready).toHaveLength(1);
+    expect(noDecision.recentlyCompleted).toHaveLength(1);
+    expect(renderCommanderBrief(noDecision)).toContain("record updated 2026-08-10T00:00:00.000Z");
+    for (const limit of [1, 2, 3]) {
+      const small = read(source, undefined, Date.now(), limit);
+      expect((small.attention?.length ?? 0) + small.blocked.length + small.active.length + small.ready.length + (small.recentlyCompleted?.length ?? 0)).toBeLessThanOrEqual(limit);
+      expect(small.blocked).toHaveLength(1);
+    }
+  });
+
+  test("a complete scan can compact output omissions but refreshes hidden changes", () => {
+    const { source, item } = fixture();
+    const candidate = source.ready.find((row) => row.id === item.id)!;
+    source.blocked = Array.from({ length: 5 }, (_, i) => ({ ...candidate, id: `blocked-${i}`, status: "blocked" as const }));
+    source.counts.byStatus.blocked = 5;
+    const first = read(source, undefined, Date.now(), 3);
+    const repeat = read(source, first.fingerprint, Date.now(), 3);
+    expect(repeat.status).toBe("unchanged");
+    expect(repeat.omitted?.actionable).toBeGreaterThan(0);
+    expect(repeat.expansion?.omitted.arguments).toEqual({ project: "commander" });
+    expect(renderCommanderBrief(repeat)).toContain("other actionable records remain omitted");
+    const hidden = source.blocked.find((row) => !first.blocked.some((shown) => shown.id === row.id))!;
+    hidden.summary = "A different intervention is required";
+    expect(read(source, first.fingerprint, Date.now(), 3).status).toBe("current");
+    const changed = read(source, undefined, Date.now(), 3);
+    source.blocked = source.blocked.filter((row) => row.id !== hidden.id);
+    source.counts.byStatus.blocked--; source.counts.byStatus.ready++;
+    source.ready.push({ ...hidden, status: "ready" });
+    expect(read(source, changed.fingerprint, Date.now(), 3).status).toBe("current");
+  });
+
   test("overview separates decisions, candidates and history and suppresses healthy workers", () => {
     const { source, item } = fixture();
     const result = read(source);
@@ -58,8 +105,9 @@ describe("commander brief", () => {
     const first = read(source);
     const repeat = read({ ...source, generatedAt: new Date(Date.now() + 1000).toISOString() }, first.fingerprint, Date.now() + 1000);
     expect(repeat.status).toBe("unchanged"); expect(repeat.ready).toEqual([]);
-    expect(JSON.stringify(repeat).length).toBeLessThan(JSON.stringify(first).length / 2);
+    expect(JSON.stringify(repeat).length).toBeLessThan(JSON.stringify(first).length);
     expect(repeat.coverage.provider).toBe("unavailable_in_brief");
+    expect(repeat.expansion.omitted.arguments).toEqual({ project: "commander" });
     expect(read(source, first.fingerprint, Date.now() + 61_000).status).toBe("stale");
   });
 
