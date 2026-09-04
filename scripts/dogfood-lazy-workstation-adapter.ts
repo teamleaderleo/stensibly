@@ -72,6 +72,7 @@ class CrashAfterObservationClient implements LazyOwnerProfileClientV1 {
 }
 
 async function main(): Promise<void> {
+  process.umask(0o077);
   const args = options(process.argv.slice(2));
   const repositoryRoot = resolve(args["repository-root"]);
   const database = resolve(args.database);
