@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { compactPublicMcpResult } from "../src/public-mcp-result.ts";
+import { asToolResult } from "../src/mcp-tool-result.ts";
 import { describe, expect, test } from "bun:test";
 import {
   PROCESSING_STAGE_HEADER,
@@ -65,6 +67,29 @@ function toolResponse(
 }
 
 describe("hosted MCP stable read verification", () => {
+  test("verifies the real large public structured result and rejects a changed digest or scope", async () => {
+    const items = Array.from({ length: 20 }, (_, index) => ({ ...readyItems()[0], id: `item_${index}`, summary: "bounded evidence ".repeat(20) }));
+    const result = compactPublicMcpResult(await asToolResult(async () => items)) as any;
+    expect(JSON.parse(result.content[0].text).structured).toBe(true);
+    const fetchImpl: FetchLike = async () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 3, result }), {
+      headers: { "x-request-id": "structured-read", [PROCESSING_STAGE_HEADER]: "response_produced", [WORKER_VERSION_ID_HEADER]: "worker-version-1" },
+    });
+    const options = { endpoint: "https://api.stensibly.com", token, origin: "https://www.stensibly.com", project: "stensibly" };
+    expect(await verifyHostedStableRead(options, fetchImpl)).toMatchObject({ ok: true });
+    result.structuredContent.data[0].project = "other";
+    expect(await verifyHostedStableRead(options, fetchImpl)).toMatchObject({ ok: false, detail: "MCP list_work structured result did not match its digest" });
+    const wrongScope = compactPublicMcpResult(await asToolResult(async () => result.structuredContent.data));
+    const scopeFetch: FetchLike = async () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 3, result: wrongScope }), {
+      headers: { "x-request-id": "structured-scope", [PROCESSING_STAGE_HEADER]: "response_produced", [WORKER_VERSION_ID_HEADER]: "worker-version-1" },
+    });
+    expect(await verifyHostedStableRead(options, scopeFetch)).toMatchObject({ ok: false, detail: "MCP list_work scope did not match the requested project" });
+    const oversized = compactPublicMcpResult(await asToolResult(async () => [{ ...readyItems()[0], summary: "x".repeat(600_000) }]));
+    const largeFetch: FetchLike = async () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 3, result: oversized }), {
+      headers: { "x-request-id": "structured-large", [PROCESSING_STAGE_HEADER]: "response_produced", [WORKER_VERSION_ID_HEADER]: "worker-version-1" },
+    });
+    expect(await verifyHostedStableRead(options, largeFetch)).toMatchObject({ ok: false, detail: "MCP list_work structured result exceeded 512 KiB" });
+  });
+
   test("executes one published list_work read and retains only bounded receipts", async () => {
     let calls = 0;
     const items = readyItems("stensibly");
