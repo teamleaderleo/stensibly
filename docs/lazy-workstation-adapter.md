@@ -91,5 +91,7 @@ bun scripts/dogfood-lazy-workstation-adapter.ts \
 ```
 
 The dogfood intentionally refuses existing database, observation, or report
-paths. This makes a run auditable and prevents accidental reuse of an old raw
-observation directory.
+paths. It creates the SQLite ledger and sidecars under a process-wide `0077`
+umask and writes observations and the report with private modes. This makes a
+run auditable, keeps its local ledger private, and prevents accidental reuse of
+an old raw observation directory.
