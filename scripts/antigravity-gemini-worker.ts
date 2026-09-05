@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import {
   chmod,
+  lstat,
+  readlink,
+  symlink,
   mkdir,
   open,
   readFile,
@@ -55,6 +58,7 @@ export interface AntigravityWorkerOptions {
   readonly nodeGeneration: number;
   readonly assignedRole?: string;
   readonly agyBin?: string;
+  readonly subscriptionAuthFile?: string;
   readonly timeoutMs?: number;
   readonly captureCapBytes?: number;
   readonly attempt?: number;
@@ -169,6 +173,8 @@ export interface AntigravityWorkerReceipt {
       readonly keys: readonly string[];
       readonly apiKeyVariablesForwarded: false;
       readonly isolatedHome: true;
+      readonly subscriptionAuth: "native-keyring" | "explicit-file-link";
+      readonly protectedAuthRecoveryRequired: boolean;
     };
     readonly effectivePermissionMode: string | null;
   };
@@ -226,6 +232,7 @@ interface NormalizedOptions {
   readonly nodeGeneration: number;
   readonly assignedRole: string;
   readonly agyBin: string;
+  readonly subscriptionAuthFile: string | null;
   readonly timeoutMs: number;
   readonly captureCapBytes: number;
   readonly attempt: number;
@@ -286,6 +293,7 @@ async function normalizeOptions(input: AntigravityWorkerOptions): Promise<Normal
     nodeId: requireText(input.nodeId, "nodeId"),
     nodeGeneration: requirePositiveInteger(input.nodeGeneration, "nodeGeneration"),
     assignedRole: requireText(input.assignedRole ?? "implementation-worker", "assignedRole"),
+    subscriptionAuthFile: input.subscriptionAuthFile ? await admitSubscriptionAuthFile(input.subscriptionAuthFile, repository, outputDir) : null,
     agyBin: resolve(input.agyBin ?? join(process.env.HOME ?? "", ".local/bin/agy")),
     timeoutMs: requirePositiveInteger(input.timeoutMs, "timeoutMs", DEFAULT_TIMEOUT_MS),
     captureCapBytes: requirePositiveInteger(
@@ -295,6 +303,42 @@ async function normalizeOptions(input: AntigravityWorkerOptions): Promise<Normal
     ),
     attempt: requirePositiveInteger(input.attempt, "attempt", 1),
   };
+}
+
+/** Metadata-only admission: credential bytes never enter the wrapper. */
+export async function admitSubscriptionAuthFile(path: string, repository: string, outputDir: string): Promise<string> {
+  try {
+    const candidate = resolve(path);
+    if (await realpath(candidate) !== candidate || within(candidate, repository) || within(candidate, outputDir))
+      throw new Error();
+    const info = await lstat(candidate);
+    if (!info.isFile() || info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0)
+      throw new Error();
+    for (let directory = dirname(candidate); ; directory = dirname(directory)) {
+      const entry = await lstat(directory);
+      if (!entry.isDirectory() || (entry.uid !== 0 && entry.uid !== process.getuid?.()) || (entry.mode & 0o022) !== 0)
+        throw new Error();
+      if (dirname(directory) === directory) break;
+    }
+    return candidate;
+  } catch {
+    throw new Error("Subscription auth file must be a private operator-owned regular file outside task paths with trusted canonical ancestors");
+  }
+}
+
+export async function mountSubscriptionAuthFile(runtimeHome: string, source: string): Promise<string> {
+  const directory = join(runtimeHome, ".gemini", "antigravity-cli");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const target = join(directory, "antigravity-oauth-token");
+  await symlink(source, target);
+  return target;
+}
+
+/** In-place provider refresh writes through; atomic replacement requires protected recovery. */
+export async function subscriptionAuthLinkIntact(target: string, source: string): Promise<boolean> {
+  try {
+    return (await lstat(target)).isSymbolicLink() && await readlink(target) === source;
+  } catch { return false; }
 }
 
 function sha256(bytes: Uint8Array | string): string {
@@ -779,6 +823,8 @@ export async function runAntigravityGeminiWorker(
 
   const runtimeHome = join(options.outputDir, ".agy-home");
   await mkdir(runtimeHome, { mode: 0o700 });
+  let authLink: string | null = null;
+  let protectedAuthRecoveryRequired = false;
   const env = antigravityEnvironment({ ...process.env, HOME: runtimeHome });
   const briefBytes = await readFile(options.brief);
   const before = await gitSnapshot(options.repository);
@@ -807,6 +853,7 @@ export async function runAntigravityGeminiWorker(
     });
 
   try {
+    if (options.subscriptionAuthFile) authLink = await mountSubscriptionAuthFile(runtimeHome, options.subscriptionAuthFile);
     const versionCapture = await preflight(["--version"], 16 * 1024);
     version = versionCapture.exitCode === 0
       ? new TextDecoder().decode(versionCapture.stdout).trim().slice(0, 100)
@@ -882,10 +929,16 @@ export async function runAntigravityGeminiWorker(
     harnessError = appendError(harnessError, error);
   }
 
-  try {
-    await rm(runtimeHome, { recursive: true, force: true });
-  } catch (error) {
-    harnessError = appendError(harnessError, `unable to remove isolated Antigravity home: ${String(error)}`);
+  if (authLink && options.subscriptionAuthFile && !await subscriptionAuthLinkIntact(authLink, options.subscriptionAuthFile)) {
+    protectedAuthRecoveryRequired = true;
+    harnessError = appendError(harnessError, "Subscription auth link changed during provider execution; protected runtime retained for explicit recovery");
+  }
+  if (!protectedAuthRecoveryRequired) {
+    try {
+      await rm(runtimeHome, { recursive: true, force: true });
+    } catch {
+      harnessError = appendError(harnessError, "unable to remove isolated Antigravity home");
+    }
   }
 
   let after = await gitSnapshot(options.repository);
@@ -943,6 +996,8 @@ export async function runAntigravityGeminiWorker(
         keys: ANTIGRAVITY_ENVIRONMENT_KEYS.filter(key => env[key] !== undefined),
         apiKeyVariablesForwarded: false,
         isolatedHome: true,
+        subscriptionAuth: options.subscriptionAuthFile ? "explicit-file-link" : "native-keyring",
+        protectedAuthRecoveryRequired,
       },
       effectivePermissionMode: parsed.init?.permissionMode ?? null,
     },
@@ -991,7 +1046,7 @@ function usage(): string {
     "Usage: bun scripts/antigravity-gemini-worker.ts",
     "  --repository PATH --brief PATH --output-dir PATH --run-id ID",
     "  --node-id ID --node-generation INTEGER",
-    "  [--assigned-role ROLE] [--agy-bin PATH] [--timeout-ms INTEGER] [--capture-cap-bytes INTEGER] [--attempt INTEGER]",
+    "  [--subscription-auth-file PATH] [--assigned-role ROLE] [--agy-bin PATH] [--timeout-ms INTEGER] [--capture-cap-bytes INTEGER] [--attempt INTEGER]",
   ].join("\n");
 }
 
@@ -1007,7 +1062,7 @@ function parseCli(argv: readonly string[]): AntigravityWorkerOptions {
   }
   const required = ["--repository", "--brief", "--output-dir", "--run-id", "--node-id", "--node-generation"];
   for (const key of required) if (!values.has(key)) throw new Error(`missing ${key}\n${usage()}`);
-  const known = new Set([...required, "--assigned-role", "--agy-bin", "--timeout-ms", "--capture-cap-bytes", "--attempt"]);
+  const known = new Set([...required, "--assigned-role", "--agy-bin", "--subscription-auth-file", "--timeout-ms", "--capture-cap-bytes", "--attempt"]);
   for (const key of values.keys()) if (!known.has(key)) throw new Error(`unknown option: ${key}`);
   const integer = (key: string): number | undefined => {
     const value = values.get(key);
@@ -1023,6 +1078,7 @@ function parseCli(argv: readonly string[]): AntigravityWorkerOptions {
     nodeId: values.get("--node-id")!,
     nodeGeneration: integer("--node-generation")!,
     ...(values.has("--assigned-role") ? { assignedRole: values.get("--assigned-role")! } : {}),
+    ...(values.has("--subscription-auth-file") ? { subscriptionAuthFile: values.get("--subscription-auth-file")! } : {}),
     ...(values.has("--agy-bin") ? { agyBin: values.get("--agy-bin")! } : {}),
     ...(values.has("--timeout-ms") ? { timeoutMs: integer("--timeout-ms")! } : {}),
     ...(values.has("--capture-cap-bytes") ? { captureCapBytes: integer("--capture-cap-bytes")! } : {}),

@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, symlink, unlink, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ANTIGRAVITY_ENVIRONMENT_KEYS,
   antigravityEnvironment,
+  admitSubscriptionAuthFile,
+  mountSubscriptionAuthFile,
+  subscriptionAuthLinkIntact,
   buildAntigravityArgs,
   parseAntigravityStream,
   parseQuotaText,
@@ -31,7 +34,7 @@ async function command(cwd: string, args: readonly string[]): Promise<string> {
   return stdout.trim();
 }
 
-async function setupFakeAgy(mode: "ready" | "auth-failed" | "exit-failed" | "signal-failed" = "ready") {
+async function setupFakeAgy(mode: "ready" | "auth-failed" | "exit-failed" | "signal-failed" | "auth-replaced" = "ready") {
   const root = await mkdtemp(join(tmpdir(), "antigravity-worker-test-"));
   roots.push(root);
   const repository = join(root, "repository");
@@ -54,7 +57,7 @@ async function setupFakeAgy(mode: "ready" | "auth-failed" | "exit-failed" | "sig
   await command(repository, ["git", "remote", "add", "origin", "git@github.com:teamleaderleo/example.git"]);
 
   const source = `#!/usr/bin/env bun
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 const args = process.argv.slice(2);
 writeFileSync(${JSON.stringify(argsLog)}, JSON.stringify(args));
 if (args.includes("--version")) { console.log("1.1.22"); process.exit(0); }
@@ -81,6 +84,10 @@ console.log(JSON.stringify({event:"step_update",step_update:{conversation_id:"co
 console.log(JSON.stringify({event:"step_update",step_update:{conversation_id:"conv-1",step_index:1,state:"DONE",step_type:"tool",tool_name:"write_to_file",duration_seconds:0.1}}));
 console.log(JSON.stringify({event:"step_update",step_update:{conversation_id:"conv-1",step_index:2,state:"DONE",step_type:"agent_response",duration_seconds:0.2,usage:{input_tokens:12,output_tokens:8,thinking_tokens:3,cache_read_tokens:4,total_tokens:20}}}));
 console.log(JSON.stringify({event:"result",result:{conversation_id:"conv-1",status:"SUCCESS",response:"done",duration_seconds:0.4,num_turns:1,structured_output:{status:"complete",summary:"Changed the file",changed_paths:["README.md"],verification_attempts:[],remaining_limits:["External verification required"]},usage:{input_tokens:12,output_tokens:8,thinking_tokens:3,cache_read_tokens:4,total_tokens:20}}}));
+if (${JSON.stringify(mode)} === "auth-replaced") {
+  const auth = process.env.HOME + "/.gemini/antigravity-cli/antigravity-oauth-token";
+  unlinkSync(auth); writeFileSync(auth, "fictional-new-profile", { mode: 0o600 });
+}
 if (${JSON.stringify(mode)} === "exit-failed") process.exit(7);
 if (${JSON.stringify(mode)} === "signal-failed") process.kill(process.pid, "SIGTERM");
 `;
@@ -302,3 +309,84 @@ for (const mode of ["exit-failed", "signal-failed"] as const) {
     else expect(receipt.child.signal).toBe("SIGTERM");
   });
 }
+
+async function setupAuthFixture() {
+  const setup = await setupFakeAgy();
+  const auth = join(setup.root, "subscription-profile");
+  await writeFile(auth, "fictional-profile-before", { mode: 0o600 });
+  return { ...setup, auth };
+}
+
+test("explicit auth link preserves source refresh and cleans only the disposable home", async () => {
+  const setup = await setupAuthFixture();
+  const admitted = await admitSubscriptionAuthFile(setup.auth, setup.repository, setup.outputDir);
+  const home = join(setup.root, "isolated-home");
+  await mkdir(home, { mode: 0o700 });
+  const target = await mountSubscriptionAuthFile(home, admitted);
+  expect(await subscriptionAuthLinkIntact(target, admitted)).toBe(true);
+  await writeFile(target, "fictional-profile-refreshed");
+  expect(await readFile(setup.auth, "utf8")).toBe("fictional-profile-refreshed");
+  await rm(home, { recursive: true });
+  expect((await lstat(setup.auth)).isFile()).toBe(true);
+  expect(await readFile(setup.auth, "utf8")).toBe("fictional-profile-refreshed");
+});
+
+test("atomic profile replacement is classified for protected recovery", async () => {
+  const setup = await setupAuthFixture();
+  const home = join(setup.root, "isolated-home");
+  await mkdir(home, { mode: 0o700 });
+  const target = await mountSubscriptionAuthFile(home, setup.auth);
+  await unlink(target);
+  await writeFile(target, "fictional-new-profile", { mode: 0o600 });
+  expect(await subscriptionAuthLinkIntact(target, setup.auth)).toBe(false);
+  expect(await readFile(setup.auth, "utf8")).toBe("fictional-profile-before");
+});
+
+test("auth admission rejects shared, symlinked, workspace and writable-parent profiles", async () => {
+  const setup = await setupAuthFixture();
+  await chmod(setup.auth, 0o644);
+  await expect(admitSubscriptionAuthFile(setup.auth, setup.repository, setup.outputDir)).rejects.toThrow("private operator-owned");
+  await chmod(setup.auth, 0o600);
+  const link = join(setup.root, "profile-link");
+  await symlink(setup.auth, link);
+  await expect(admitSubscriptionAuthFile(link, setup.repository, setup.outputDir)).rejects.toThrow("private operator-owned");
+  await expect(admitSubscriptionAuthFile(setup.auth, setup.root, setup.outputDir)).rejects.toThrow("private operator-owned");
+  await chmod(setup.root, 0o777);
+  await expect(admitSubscriptionAuthFile(setup.auth, setup.repository, setup.outputDir)).rejects.toThrow("private operator-owned");
+  await chmod(setup.root, 0o700);
+});
+
+test("worker records auth mechanism without source path or profile bytes and preserves source", async () => {
+  const setup = await setupAuthFixture();
+  const run = await runAntigravityGeminiWorker({
+    repository: setup.repository, brief: setup.brief, outputDir: setup.outputDir,
+    runId: "explicit-auth", nodeId: "big-red", nodeGeneration: 1,
+    agyBin: setup.agyBin, subscriptionAuthFile: setup.auth,
+  });
+  const receiptText = await readFile(run.receiptPath, "utf8");
+  const receipt = JSON.parse(receiptText);
+  expect(receipt.success).toBe(true);
+  expect(receipt.invocation.environment.subscriptionAuth).toBe("explicit-file-link");
+  expect(receipt.invocation.environment.protectedAuthRecoveryRequired).toBe(false);
+  expect(receiptText).not.toContain(setup.auth);
+  expect(receiptText).not.toContain("fictional-profile-before");
+  expect(await readFile(setup.auth, "utf8")).toBe("fictional-profile-before");
+  await expect(lstat(join(setup.outputDir, ".agy-home"))).rejects.toThrow();
+});
+
+test("worker retains an atomically refreshed auth profile for explicit recovery", async () => {
+  const setup = await setupFakeAgy("auth-replaced");
+  const auth = join(setup.root, "subscription-profile");
+  await writeFile(auth, "fictional-original-profile", { mode: 0o600 });
+  const run = await runAntigravityGeminiWorker({
+    repository: setup.repository, brief: setup.brief, outputDir: setup.outputDir,
+    runId: "auth-refresh-recovery", nodeId: "big-red", nodeGeneration: 1,
+    agyBin: setup.agyBin, subscriptionAuthFile: auth,
+  });
+  const receipt = JSON.parse(await readFile(run.receiptPath, "utf8"));
+  expect(run.exitCode).not.toBe(0);
+  expect(receipt.success).toBe(false);
+  expect(receipt.invocation.environment.protectedAuthRecoveryRequired).toBe(true);
+  expect(await readFile(auth, "utf8")).toBe("fictional-original-profile");
+  expect(await readFile(join(setup.outputDir, ".agy-home/.gemini/antigravity-cli/antigravity-oauth-token"), "utf8")).toBe("fictional-new-profile");
+});
