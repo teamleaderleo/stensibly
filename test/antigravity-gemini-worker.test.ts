@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, lstat, symlink, unlink, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ANTIGRAVITY_ENVIRONMENT_KEYS,
@@ -35,7 +34,8 @@ async function command(cwd: string, args: readonly string[]): Promise<string> {
 }
 
 async function setupFakeAgy(mode: "ready" | "auth-failed" | "exit-failed" | "signal-failed" | "auth-replaced" = "ready") {
-  const root = await mkdtemp(join(tmpdir(), "antigravity-worker-test-"));
+  // Auth admission deliberately rejects shared writable ancestors such as /tmp.
+  const root = await mkdtemp(join(process.cwd(), ".antigravity-worker-test-"));
   roots.push(root);
   const repository = join(root, "repository");
   const outputParent = join(root, "attempts");
