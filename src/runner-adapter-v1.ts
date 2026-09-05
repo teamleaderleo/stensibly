@@ -1091,6 +1091,7 @@ function parseContextPacket(
     "generatedAt",
     "packetFingerprint",
     "item",
+    "claimHandoff",
     "intent",
     "events",
     "artifacts",

@@ -10,6 +10,7 @@ import {
   initializeMessage,
   mcpRequest,
   readJsonRpcResult,
+  toolCall,
   toolsListMessage,
 } from "./support/mcp-http.ts";
 
@@ -126,7 +127,9 @@ describe("hosted MCP reconnect lifecycle", () => {
 
     const finalApp = createApp();
     await initialize(finalApp);
-    const completed = await callTool<{
+    // The completed packet exceeds the 2 KiB text-compaction threshold, so the
+    // text copy carries a digest; read the canonical structured payload instead.
+    const completed = await callToolData<{
       item: { id: string; status: string; claimGeneration: number; summary: string };
     }>(finalApp, "get_runner_context", { id: created.id });
     expect(completed.item).toMatchObject({
@@ -175,4 +178,25 @@ async function callTool<T = unknown>(
   args: Record<string, unknown>,
 ): Promise<T> {
   return await callToolJson<T>(app, token, ++requestId, name, args);
+}
+
+async function callToolData<T = unknown>(
+  app: HostedApp,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<T> {
+  const response = await mcpRequest(app, token, toolCall(++requestId, name, args));
+  if (response.status !== 200) throw new Error(`Remote MCP tool ${name} returned ${response.status}`);
+  const result = await readJsonRpcResult<{
+    content: Array<{ type: string; text?: string }>;
+    structuredContent?: { data?: unknown };
+    isError?: boolean;
+  }>(response, requestId);
+  if (result.isError === true) {
+    throw new Error(`Remote MCP tool ${name} failed: ${result.content?.[0]?.text ?? "unknown"}`);
+  }
+  if (result.structuredContent && "data" in result.structuredContent) {
+    return result.structuredContent.data as T;
+  }
+  return JSON.parse(result.content?.[0]?.text ?? "null") as T;
 }

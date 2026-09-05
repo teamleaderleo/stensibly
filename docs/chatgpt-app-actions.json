@@ -1,13 +1,13 @@
 {
-  "snapshotVersion": 28,
+  "snapshotVersion": 29,
   "manifestVersion": 1,
   "toolContractVersion": 2,
   "reviewedMetadataVersion": 3,
   "toolCount": 21,
   "toolManifestFingerprint": "sha256:91919251f55e23b57292b2eb470bedfb8d86080da8a56c1df97641de9aec18b4",
-  "toolContractFingerprint": "sha256:a96b2ec6c32ed1abe36fdbdcc70bb8a00ca9069e6ee74a9f3534b8b738343360",
+  "toolContractFingerprint": "sha256:16602354a71c4c6274fe0e1877658e2e7ef55b80fc4f346bba055433ff91cffb",
   "serverInstructionsFingerprint": "sha256:482fa19b5a4451a0a2021b4d85802af48034de5512734e8a8a37e815c2d91bbe",
-  "reviewedMetadataFingerprint": "sha256:ffd3e57e6e561d2ed1cad6a245acf839aa2d24c96be7ab6e69164efe92a4514d",
+  "reviewedMetadataFingerprint": "sha256:edba60d570a064bfaefc7fcd478b6bf2fa703430760bb26cef9a4519f294d149",
   "tools": [
     "attach_artifact",
     "block_work",

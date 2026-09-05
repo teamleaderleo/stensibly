@@ -58,6 +58,13 @@ const dispatchResultSchema = z.object({
 const runnerContextSchema = z.object({
   packetFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   item: routingItemSchema,
+  claimHandoff: z.object({
+    claimGeneration: z.number().int(),
+    claimedBy: z.string().nullable(),
+    claimExpiresAt: z.string().nullable(),
+    leaseLive: z.boolean(),
+    useAs: z.literal("expectedClaimGeneration"),
+  }).passthrough(),
   sourceReferences: z.array(z.string()),
   characterCount: z.number().int(),
 }).passthrough();
