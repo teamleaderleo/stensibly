@@ -167,10 +167,14 @@ describe("runner context packets", () => {
       startedAt: "2026-09-01T05:26:40.293Z",
       endedAt: "2026-09-01T05:26:47.551Z",
     };
+    // Keep every fixture source before the terminal receipt, regardless of the
+    // wall-clock date on which this test is run.
+    item.createdAt = run.createdAt;
+    item.updatedAt = run.createdAt;
     const detail = {
-      item: { ...item, createdAt: generatedAt.toISOString(), updatedAt: generatedAt.toISOString() },
+      item,
       control: projectItemControl({ item, now: generatedAt }),
-      events: store.listEvents(item.id).map(event => ({ ...event, createdAt: generatedAt.toISOString() })),
+      events: store.listEvents(item.id).map((event) => ({ ...event, createdAt: run.createdAt })),
       artifacts: [{
         id: "artifact_verbose_history",
         itemId: item.id,

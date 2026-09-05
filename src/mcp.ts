@@ -24,6 +24,7 @@ import {
 } from "./mcp-exposure-registration.js";
 import { withSuccessfulMcpReadObservation } from "./mcp-successful-read-observation.js";
 import { asToolResult } from "./mcp-tool-result.js";
+import { compileCommanderBrief } from "./commander-brief.js";
 import { withMcpToolObservation } from "./mcp-tool-observation.js";
 import { registerOperationReceiptTools } from "./operation-receipt-mcp.js";
 import { registerProjectAttachmentTools } from "./project-attachment-mcp.js";
@@ -150,14 +151,17 @@ function configureMcpServer(
   server.registerTool(
     "get_brief",
     {
-      description: "Get a compact project briefing with counts, ready work, active claims, blockers, knowledge, recent completions, and recent artifacts.",
+      description: "Read current attention, blockers, recorded results and ready candidates with exact expansion references. Provider readiness is unverified. Pass previousFingerprint for a minimal unchanged read.",
       inputSchema: {
         project: projectSchema(),
         limit: z.number().int().min(1).max(100).default(10),
+        previousFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ project, limit }) => asToolResult(() => ledger.getBrief(project, limit)),
+    async ({ project, limit, previousFingerprint }) => asToolResult(async () => compileCommanderBrief(
+      await ledger.getBrief(project, 100), { project, limit, previousFingerprint },
+    )),
   );
 
   server.registerTool(

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { sha256, stableJson } from "./canonical-json.js";
 import {
   PROCESSING_STAGE_HEADER,
   WORKER_VERSION_CREATED_AT_HEADER,
@@ -153,6 +154,20 @@ function readSurvey(
     throw new Error("MCP survey_workspace returned invalid JSON text");
   }
 
+  let fingerprintText = block.text;
+  if (isRecord(parsed) && parsed.structured === true) {
+    const structured = isRecord(result.structuredContent) ? result.structuredContent : null;
+    if (!structured || !Array.isArray(structured.data)
+      || parsed.sha256 !== sha256(stableJson(structured.data))) {
+      throw new Error("MCP list_work structured result did not match its digest");
+    }
+    parsed = structured.data;
+    fingerprintText = JSON.stringify(parsed);
+    if (Buffer.byteLength(fingerprintText, "utf8") > MAXIMUM_SURVEY_TEXT_BYTES) {
+      throw new Error("MCP list_work structured result exceeded 512 KiB");
+    }
+  }
+
   if (Array.isArray(parsed)) {
     for (const item of parsed) {
       if (!isRecord(item)) {
@@ -166,7 +181,7 @@ function readSurvey(
       }
     }
     return Object.freeze({
-      fingerprint: `sha256:${createHash("sha256").update(block.text).digest("hex")}`,
+      fingerprint: `sha256:${createHash("sha256").update(fingerprintText).digest("hex")}`,
       total: parsed.length,
     });
   }

@@ -1,9 +1,13 @@
 import { sha256, stableJson } from "./canonical-json.js";
+import { renderCommanderBrief, type compileCommanderBrief } from "./commander-brief.js";
 
 export function compactPublicMcpResult(value: unknown): unknown {
   if (!isRecord(value) || value.isError === true) return value;
   const structured = ownValue(value, "structuredContent");
   if (!isRecord(structured) || !Object.hasOwn(structured, "data")) return value;
+  if (isRecord(structured.data) && structured.data.contract === "commander-brief/v1") {
+    return { ...value, content: [{ type: "text", text: renderCommanderBrief(structured.data as ReturnType<typeof compileCommanderBrief>) }] };
+  }
   const readable = JSON.stringify(structured.data);
   const text = typeof readable === "string" && utf8Bytes(readable) <= 2_048
     ? readable
