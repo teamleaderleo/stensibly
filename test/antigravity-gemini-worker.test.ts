@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, lstat, symlink, unlink, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, lstat, realpath, symlink, unlink, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import {
   ANTIGRAVITY_ENVIRONMENT_KEYS,
   antigravityEnvironment,
@@ -33,9 +34,38 @@ async function command(cwd: string, args: readonly string[]): Promise<string> {
   return stdout.trim();
 }
 
+/** Admission's own ancestor rule: operator-owned directories with no group/other write. */
+async function ancestorsAreTrusted(directory: string): Promise<boolean> {
+  for (let candidate = directory; ; candidate = dirname(candidate)) {
+    const entry = await lstat(candidate).catch(() => null);
+    if (!entry?.isDirectory() || (entry.uid !== 0 && entry.uid !== process.getuid?.()) || (entry.mode & 0o022) !== 0)
+      return false;
+    if (dirname(candidate) === candidate) return true;
+  }
+}
+
+/**
+ * Auth admission rejects shared writable ancestors, so the fixture root cannot be placed by
+ * assumption: a Linux `/tmp` is other-writable and a checkout created under umask 002 is
+ * group-writable, while a macOS per-user `TMPDIR` is private but reached through the `/var`
+ * symlink. Canonicalise each candidate and take the first that satisfies the rule itself.
+ */
+let fixtureBase: Promise<string> | null = null;
+function trustedFixtureBase(): Promise<string> {
+  return (fixtureBase ??= (async () => {
+    const rejected: string[] = [];
+    for (const candidate of [tmpdir(), process.env.XDG_RUNTIME_DIR, homedir(), process.cwd()]) {
+      if (!candidate) continue;
+      const canonical = await realpath(resolve(candidate)).catch(() => null);
+      if (canonical && await ancestorsAreTrusted(canonical)) return canonical;
+      rejected.push(candidate);
+    }
+    throw new Error(`No fixture base with private operator-owned ancestors: ${rejected.join(", ")}`);
+  })());
+}
+
 async function setupFakeAgy(mode: "ready" | "auth-failed" | "exit-failed" | "signal-failed" | "auth-replaced" = "ready") {
-  // Auth admission deliberately rejects shared writable ancestors such as /tmp.
-  const root = await mkdtemp(join(process.cwd(), ".antigravity-worker-test-"));
+  const root = await mkdtemp(join(await trustedFixtureBase(), ".antigravity-worker-test-"));
   roots.push(root);
   const repository = join(root, "repository");
   const outputParent = join(root, "attempts");
@@ -353,6 +383,9 @@ test("auth admission rejects shared, symlinked, workspace and writable-parent pr
   await expect(admitSubscriptionAuthFile(link, setup.repository, setup.outputDir)).rejects.toThrow("private operator-owned");
   await expect(admitSubscriptionAuthFile(setup.auth, setup.root, setup.outputDir)).rejects.toThrow("private operator-owned");
   await chmod(setup.root, 0o777);
+  await expect(admitSubscriptionAuthFile(setup.auth, setup.repository, setup.outputDir)).rejects.toThrow("private operator-owned");
+  // A group-writable ancestor alone is untrusted, as a checkout created under umask 002 is.
+  await chmod(setup.root, 0o775);
   await expect(admitSubscriptionAuthFile(setup.auth, setup.repository, setup.outputDir)).rejects.toThrow("private operator-owned");
   await chmod(setup.root, 0o700);
 });
