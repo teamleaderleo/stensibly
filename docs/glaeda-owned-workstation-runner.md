@@ -212,12 +212,13 @@ or arbitrary process output. The result commit is the separately inspectable bou
 ## Rotation, revocation, and recovery
 
 For both nodes, `.github/workflows/provision-owned-workstation-runner.yml` is the protected delivery
-surface. Mint selects exactly one recipient (`big-red` or `air-blue`) and one project (`glaeda` or
-`stensibly`), accepts only that node's non-secret one-time RSA public key and DER SHA-256
+surface. Mint selects exactly one recipient (`big-red` or `air-blue`) and one project (`glaeda`,
+`stensibly`, or the bounded `quarry` repo-query pilot), accepts only that node's non-secret one-time RSA public key and DER SHA-256
 fingerprint, creates a runner grant with the matching service actor inside the `production`
 environment, and uploads an immutable one-day artifact containing ciphertext plus non-secret token
 metadata. Decrypt only on the selected node into its final owner-only token path. The credential's
-project must match the item/run it will claim; it never grants both projects. The same workflow
+project must match the item/run it will claim; it never grants multiple projects. Quarry credentials
+grant only `repo-query/v1`; they do not inherit Glaeda's source-executing profiles. The same workflow
 revokes one exact `tok_` ID without handling a raw token.
 
 When a connected client cannot yet call the hosted control surface directly, the same workflow can
