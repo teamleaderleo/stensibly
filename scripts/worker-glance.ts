@@ -5,6 +5,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 export const WORKER_GLANCE_SCHEMA_VERSION = "worker-glance/1" as const;
 export const SOL_LUNA_RECEIPT_SCHEMA_VERSION = "sol-luna-worker-receipt/3" as const;
 export const PI_LUNA_RECEIPT_SCHEMA_VERSION = "pi-luna-worker-receipt/1" as const;
+export const ANTIGRAVITY_GEMINI_RECEIPT_SCHEMA_VERSION = "antigravity-gemini-worker-receipt/1" as const;
 export const WORKER_GLANCE_MAX_ARTIFACT_BYTES = 64 * 1024;
 export const WORKER_GLANCE_MAX_ROWS = 32;
 export const WORKER_GLANCE_MAX_PATHS = 4;
@@ -21,7 +22,7 @@ const NO_FOLLOW = fsConstants.O_NOFOLLOW;
 
 type JsonObject = Record<string, unknown>;
 
-export type WorkerGlanceBackend = "sol-luna" | "pi" | "unknown";
+export type WorkerGlanceBackend = "sol-luna" | "pi" | "antigravity" | "unknown";
 export type WorkerGlanceState = "terminal" | "running" | "missing" | "unknown";
 export type WorkerGlanceResultStatus = "success" | "failed" | "blocked" | "partial" | "running" | "unknown";
 export type WorkerGlanceVerificationPass = "passed" | "failed" | "mixed" | "ambiguous" | "unknown";
@@ -482,29 +483,50 @@ function normalizePiUsageRecord(value: unknown): JsonObject | null {
   };
 }
 
+function antigravityUsage(value: unknown): JsonObject | null {
+  if (!isObject(value)) return null;
+  const aliases: Readonly<Record<string, string>> = {
+    inputTokens: "inputTokens",
+    cachedInputTokens: "cachedInputTokens",
+    outputTokens: "outputTokens",
+    reasoningTokens: "reasoningTokens",
+  };
+  const projected: JsonObject = {};
+  for (const [source, target] of Object.entries(aliases)) {
+    const candidate = value[source];
+    if (candidate === null) continue;
+    if (!finiteNonNegativeInteger(candidate)) return null;
+    projected[target] = candidate;
+  }
+  return Object.keys(projected).length === 0 ? null : projected;
+}
+
 function adaptCurrentReceipt(value: JsonObject, resultPath: string): CurrentReceipt | null {
   const schemaVersion = property(value, "schemaVersion");
   const backend = schemaVersion === SOL_LUNA_RECEIPT_SCHEMA_VERSION
     ? "sol-luna"
     : schemaVersion === PI_LUNA_RECEIPT_SCHEMA_VERSION
       ? "pi"
+      : schemaVersion === ANTIGRAVITY_GEMINI_RECEIPT_SCHEMA_VERSION
+        ? "antigravity"
       : null;
   if (backend === null) return null;
 
   let structuralInvalid = false;
   const run = property(value, "run");
-  const git = property(value, "git");
+  const git = backend === "antigravity" ? property(value, "source") : property(value, "git");
   const child = property(value, "child");
   const codex = property(value, "codex");
   const pi = property(value, "pi");
   const invocation = property(value, "invocation");
   const artifacts = property(value, "artifacts");
-  const integration = property(value, "integration");
+  const integration = backend === "antigravity" ? property(value, "provisional") : property(value, "integration");
   if (!isObject(run) || !isObject(git) || !isObject(child) || !isObject(artifacts) || !isObject(integration)) {
     structuralInvalid = true;
   }
   if (backend === "sol-luna" && !isObject(codex)) structuralInvalid = true;
   if (backend === "pi" && (!isObject(pi) || !isObject(invocation))) structuralInvalid = true;
+  if (backend === "antigravity" && !isObject(invocation)) structuralInvalid = true;
 
   const runIdValue = isObject(run) ? property(run, "id") : null;
   const roleValue = isObject(run) ? property(run, "assignedRole") : null;
@@ -514,7 +536,7 @@ function adaptCurrentReceipt(value: JsonObject, resultPath: string): CurrentRece
   const idOrRoleOversized = runId.oversized || role.oversized;
 
   const changedPathsValue = isObject(git) ? property(git, "changedPaths") : null;
-  const commitsValue = isObject(git) ? property(git, "commitsMade") : null;
+  const commitsValue = backend === "antigravity" ? [] : (isObject(git) ? property(git, "commitsMade") : null);
   if (!stringArray(changedPathsValue) || !stringArray(commitsValue)) structuralInvalid = true;
   const changedPaths = stringArray(changedPathsValue) ? changedPathsValue : [];
   const commitCount = stringArray(commitsValue) ? commitsValue.length : null;
@@ -534,20 +556,32 @@ function adaptCurrentReceipt(value: JsonObject, resultPath: string): CurrentRece
 
   const rawTokenUsage = backend === "sol-luna"
     ? (isObject(codex) ? property(codex, "tokenUsage") : null)
-    : property(value, "usage");
+    : backend === "antigravity"
+      ? antigravityUsage(property(value, "usage"))
+      : property(value, "usage");
   const normalizedPiUsage = backend === "pi" && rawTokenUsage !== null
     ? normalizePiUsageRecord(rawTokenUsage)
     : null;
   const usageValid = rawTokenUsage === null
-    || (backend === "sol-luna" ? validUsageRecord(rawTokenUsage) : normalizedPiUsage !== null);
+    || (backend === "sol-luna"
+      ? validUsageRecord(rawTokenUsage)
+      : backend === "pi"
+        ? normalizedPiUsage !== null
+        : isObject(rawTokenUsage));
   if (!usageValid) structuralInvalid = true;
   const usage = usageValid
     ? backend === "pi" ? normalizedPiUsage : rawTokenUsage
     : null;
 
-  const workerSuccessIsProvisional = isObject(integration) ? property(integration, "workerSuccessIsProvisional") : null;
-  const integrationStatus = isObject(integration) ? property(integration, "status") : null;
-  const gatesAdjudicated = isObject(integration) ? property(integration, "gatesAdjudicated") : null;
+  const workerSuccessIsProvisional = backend === "antigravity"
+    ? true
+    : (isObject(integration) ? property(integration, "workerSuccessIsProvisional") : null);
+  const integrationStatus = backend === "antigravity"
+    ? (isObject(integration) && property(integration, "acceptedOutcome") === "unknown" ? "not_adjudicated" : null)
+    : (isObject(integration) ? property(integration, "status") : null);
+  const gatesAdjudicated = backend === "antigravity"
+    ? (isObject(integration) && property(integration, "verificationOutcome") === "unknown" ? false : null)
+    : (isObject(integration) ? property(integration, "gatesAdjudicated") : null);
   if (workerSuccessIsProvisional !== true || integrationStatus !== "not_adjudicated" || gatesAdjudicated !== false) {
     structuralInvalid = true;
   }
@@ -562,8 +596,9 @@ function adaptCurrentReceipt(value: JsonObject, resultPath: string): CurrentRece
 
   let resultArtifactClaim: CurrentReceipt["resultArtifactClaim"] = "unknown";
   let artifactReferenceInvalid = false;
-  if (isObject(artifacts) && Object.prototype.hasOwnProperty.call(artifacts, "finalWorkerResult")) {
-    const finalWorkerResult = property(artifacts, "finalWorkerResult");
+  const resultArtifactKey = backend === "antigravity" ? "workerResult" : "finalWorkerResult";
+  if (isObject(artifacts) && Object.prototype.hasOwnProperty.call(artifacts, resultArtifactKey)) {
+    const finalWorkerResult = property(artifacts, resultArtifactKey);
     if (finalWorkerResult === null) {
       resultArtifactClaim = "absent";
     } else if (isObject(finalWorkerResult)) {
@@ -828,7 +863,11 @@ async function projectRun(input: PreparedRun, options: NormalizedWorkerGlanceOpt
     return emptyRow(input, artifactBlocker(receiptRead.kind, "receipt"), receiptRead.kind === "missing" ? "missing" : "unknown");
   }
   const schemaVersion = property(receiptRead.value, "schemaVersion");
-  if (schemaVersion !== SOL_LUNA_RECEIPT_SCHEMA_VERSION && schemaVersion !== PI_LUNA_RECEIPT_SCHEMA_VERSION) {
+  if (
+    schemaVersion !== SOL_LUNA_RECEIPT_SCHEMA_VERSION
+    && schemaVersion !== PI_LUNA_RECEIPT_SCHEMA_VERSION
+    && schemaVersion !== ANTIGRAVITY_GEMINI_RECEIPT_SCHEMA_VERSION
+  ) {
     return emptyRow(input, "unknown_schema");
   }
   const resultPath = resolve(input.absoluteDirectory, RESULT_NAME);
