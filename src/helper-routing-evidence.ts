@@ -25,17 +25,19 @@ export function projectHelperRoutingEvidenceV1(value: unknown) {
     assertGlaedaWorkstationCheckMatchesCommandV1(command, check);
     const fingerprint = fingerprintGlaedaWorkstationCommandV1(command);
     if (result.commandFingerprint !== fingerprint) throw new Error("Adapter command fingerprint changed");
-    if (seen.has(fingerprint)) throw new Error("Duplicate adapter command; do not count replay as another task");
-    seen.add(fingerprint);
+    const taskRef = `stensibly:${encodeURIComponent(command.project)}/${encodeURIComponent(command.itemId)}/${encodeURIComponent(command.source.repository)}/${command.source.commitOid}/${command.source.treeOid}`;
+    if (seen.has(taskRef)) throw new Error("Duplicate parent work/source observation; reconcile its commands before task-level analysis");
+    seen.add(taskRef);
     const receipt = result.receipt === null ? null : admitGlaedaWorkstationReceiptV1(result.receipt);
     if (receipt) assertGlaedaWorkstationReceiptMatchesCommandV1(command, check, receipt);
     const terminal = receipt?.terminalClass ?? null;
     const verification = command.profile.class === "verify_focused" || command.profile.class === "verify_required";
     const succeeded = terminal === "succeeded" ? true : terminal === "failed" ? false : null;
     return {
-      task_ref: `stensibly:${encodeURIComponent(command.project)}/${encodeURIComponent(command.itemId)}/${encodeURIComponent(command.runId)}/${fingerprint}`,
+      task_ref: taskRef,
       evidence_refs: [
         `stensibly-command:${fingerprint}`,
+        `stensibly-run:${encodeURIComponent(command.project)}/${encodeURIComponent(command.runId)}`,
         `https://github.com/${command.source.repository}/commit/${command.source.commitOid}`,
         `git-tree:${command.source.treeOid}`,
         ...(receipt ? [`glaeda-result:${receipt.resultSha256}`] : []),
@@ -45,7 +47,7 @@ export function projectHelperRoutingEvidenceV1(value: unknown) {
       classification: { oracle_strength: null, semantic_ambiguity: null, coupling: null, failure_cost: null },
       outcomes: {
         provider_success: null,
-        process_completed: succeeded,
+        process_completed: null,
         verified: verification ? succeeded : null,
         accepted: null,
       },
@@ -55,7 +57,8 @@ export function projectHelperRoutingEvidenceV1(value: unknown) {
         `OBSERVED: exact ${command.profile.class} command; physical terminal class ${terminal ?? "unknown"}.`,
         "UNKNOWN: source-work acceptance, provider outcome, route, classification and total task accounting are not supplied by this execution receipt.",
         "UNKNOWN: refused, timed-out, cleanup-incomplete or absent physical receipts do not establish a completed process or a verification assertion result.",
-        "DERIVED: one record represents one exact command attempt, not accepted completion of its parent work item; distinct attempts are not automatically retries.",
+        "DERIVED: this is incomplete evidence about one parent work/source identity; command-process success does not establish completion of that parent work.",
+        "DERIVED: verified describes only the named check in this receipt, not all checks or acceptance required by the parent work.",
         ...(!receipt ? ["UNKNOWN: no physical receipt is present; a settlement-only replay is not reconstructed as fresh execution evidence."] : []),
       ],
     };

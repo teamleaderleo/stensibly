@@ -37,7 +37,7 @@ describe("helper routing receipt projection", () => {
   test("verification success preserves exact refs and leaves work acceptance/provider/accounting unknown", () => {
     const source = fixture();
     const task = projectHelperRoutingEvidenceV1(source).tasks[0]!;
-    expect(task.outcomes).toEqual({ provider_success: null, process_completed: true, verified: true, accepted: null });
+    expect(task.outcomes).toEqual({ provider_success: null, process_completed: null, verified: true, accepted: null });
     expect(task.evidence_refs).toContain(`glaeda-result:${sha("1")}`);
     expect(task.evidence_refs).toContain(`stensibly-command:${source.commandFingerprint}`);
     expect(Object.values(task.metrics).every((value) => value === null)).toBe(true);
@@ -47,7 +47,7 @@ describe("helper routing receipt projection", () => {
   test("query success does not become verification; failed verification remains failed", () => {
     expect(projectHelperRoutingEvidenceV1(fixture("repo_query")).tasks[0]!.outcomes.verified).toBeNull();
     expect(projectHelperRoutingEvidenceV1(fixture("verify_focused", "failed")).tasks[0]!.outcomes)
-      .toEqual({ provider_success: null, process_completed: false, verified: false, accepted: null });
+      .toEqual({ provider_success: null, process_completed: null, verified: false, accepted: null });
   });
   test("interrupted, refused, cleanup-incomplete and receipt-absent outcomes remain unknown", () => {
     for (const terminal of ["timed_out", "refused", "cleanup_incomplete"]) {
@@ -69,6 +69,19 @@ describe("helper routing receipt projection", () => {
     expect(child.exitCode).toBe(0);
     expect(child.stderr.toString()).toBe("");
     expect(JSON.parse(child.stdout.toString())).toEqual(projectHelperRoutingEvidenceV1(fixture()));
+  });
+  test("distinct commands for one parent cannot inflate task counts; distinct work items remain distinct", () => {
+    const first = fixture();
+    const next = fixture("repo_query");
+    expect(next.commandFingerprint).not.toBe(first.commandFingerprint);
+    expect(() => projectHelperRoutingEvidenceV1([first, next])).toThrow("Duplicate parent");
+    next.command.itemId = "item-2";
+    next.command.runId = "run-2";
+    const fingerprint = fingerprintGlaedaWorkstationCommandV1(next.command);
+    next.commandFingerprint = fingerprint;
+    next.check.commandFingerprint = fingerprint;
+    next.receipt.commandFingerprint = fingerprint;
+    expect(projectHelperRoutingEvidenceV1([first, next]).tasks).toHaveLength(2);
   });
   test("CLI errors never echo malformed private values", () => {
     const child = Bun.spawnSync([process.execPath, resolve(import.meta.dir, "../scripts/helper-routing-evidence.ts")], {
