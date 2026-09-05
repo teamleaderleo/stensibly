@@ -853,6 +853,8 @@ export async function runAntigravityGeminiWorker(
       );
       if (workerCapture.timedOut) harnessError = appendError(harnessError, "Antigravity worker timed out");
       if (workerCapture.spawnError) harnessError = appendError(harnessError, workerCapture.spawnError);
+      if (workerCapture.exitCode !== 0 || workerCapture.signal !== null)
+        harnessError = appendError(harnessError, `Antigravity worker process did not exit cleanly (exit ${workerCapture.exitCode ?? "unknown"}, signal ${workerCapture.signal ?? "none"})`);
       if (parsed.status !== "SUCCESS") harnessError = appendError(harnessError, parsed.error ?? `Antigravity status ${parsed.status ?? "unknown"}`);
       if (parsed.init?.model !== ANTIGRAVITY_MODEL)
         harnessError = appendError(harnessError, "Antigravity init did not confirm the pinned model");

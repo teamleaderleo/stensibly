@@ -31,7 +31,7 @@ async function command(cwd: string, args: readonly string[]): Promise<string> {
   return stdout.trim();
 }
 
-async function setupFakeAgy(mode: "ready" | "auth-failed" = "ready") {
+async function setupFakeAgy(mode: "ready" | "auth-failed" | "exit-failed" | "signal-failed" = "ready") {
   const root = await mkdtemp(join(tmpdir(), "antigravity-worker-test-"));
   roots.push(root);
   const repository = join(root, "repository");
@@ -81,6 +81,8 @@ console.log(JSON.stringify({event:"step_update",step_update:{conversation_id:"co
 console.log(JSON.stringify({event:"step_update",step_update:{conversation_id:"conv-1",step_index:1,state:"DONE",step_type:"tool",tool_name:"write_to_file",duration_seconds:0.1}}));
 console.log(JSON.stringify({event:"step_update",step_update:{conversation_id:"conv-1",step_index:2,state:"DONE",step_type:"agent_response",duration_seconds:0.2,usage:{input_tokens:12,output_tokens:8,thinking_tokens:3,cache_read_tokens:4,total_tokens:20}}}));
 console.log(JSON.stringify({event:"result",result:{conversation_id:"conv-1",status:"SUCCESS",response:"done",duration_seconds:0.4,num_turns:1,structured_output:{status:"complete",summary:"Changed the file",changed_paths:["README.md"],verification_attempts:[],remaining_limits:["External verification required"]},usage:{input_tokens:12,output_tokens:8,thinking_tokens:3,cache_read_tokens:4,total_tokens:20}}}));
+if (${JSON.stringify(mode)} === "exit-failed") process.exit(7);
+if (${JSON.stringify(mode)} === "signal-failed") process.kill(process.pid, "SIGTERM");
 `;
   await writeFile(agyBin, source, { mode: 0o700 });
   await chmod(agyBin, 0o700);
@@ -276,3 +278,27 @@ describe("fake Antigravity worker", () => {
     expect(run.receipt.usage.totalRecordedTokens).toBeNull();
   });
 });
+
+for (const mode of ["exit-failed", "signal-failed"] as const) {
+  test(`worker rejects a SUCCESS event followed by ${mode}`, async () => {
+    const setup = await setupFakeAgy(mode);
+    const run = await runAntigravityGeminiWorker({
+      repository: setup.repository,
+      brief: setup.brief,
+      outputDir: setup.outputDir,
+      runId: `test-${mode}`,
+      nodeId: "big-red",
+      nodeGeneration: 1,
+      agyBin: setup.agyBin,
+    });
+    const receipt = JSON.parse(await readFile(run.receiptPath, "utf8"));
+    expect(run.exitCode).not.toBe(0);
+    expect(receipt.workerResult.status).toBe("complete");
+    expect(receipt.success).toBe(false);
+    expect(receipt.child.outcome).toBe("worker_failed");
+    expect(receipt.harnessError).toContain("process did not exit cleanly");
+    expect(receipt.provisional.acceptedOutcome).toBe("unknown");
+    if (mode === "exit-failed") expect(receipt.child.exitCode).toBe(7);
+    else expect(receipt.child.signal).toBe("SIGTERM");
+  });
+}
