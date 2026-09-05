@@ -985,7 +985,7 @@ export async function runAntigravityGeminiWorker(
       accountSessionReady,
     },
     invocation: {
-      args: buildAntigravityArgs(options.repository),
+      args: buildAntigravityArgs("<admitted-workspace>"),
       promptTransport: "stdin-stream-json",
       outputFormat: "stream-json",
       structuredOutputSchema: ANTIGRAVITY_RESULT_SCHEMA_VERSION,

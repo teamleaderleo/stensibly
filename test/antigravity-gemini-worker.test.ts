@@ -370,6 +370,8 @@ test("worker records auth mechanism without source path or profile bytes and pre
   expect(receipt.invocation.environment.subscriptionAuth).toBe("explicit-file-link");
   expect(receipt.invocation.environment.protectedAuthRecoveryRequired).toBe(false);
   expect(receiptText).not.toContain(setup.auth);
+  expect(receiptText).not.toContain(setup.repository);
+  expect(receipt.invocation.args.slice(0, 2)).toEqual(["--add-dir", "<admitted-workspace>"]);
   expect(receiptText).not.toContain("fictional-profile-before");
   expect(await readFile(setup.auth, "utf8")).toBe("fictional-profile-before");
   await expect(lstat(join(setup.outputDir, ".agy-home"))).rejects.toThrow();
