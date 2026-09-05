@@ -11,6 +11,7 @@ import {
   completionCallbackMessageV1,
   deliverCompletionCallbackViaQueueV1,
   deliverCompletionCallbackV1,
+  reconcileCompletionCallbackDeliveryV1,
   type CompletionCallbackReceiptV1,
 } from "../src/completion-callback.js";
 
@@ -116,6 +117,125 @@ describe("completion callback receipts", () => {
     expect(receipt.sessionRef).toBe("conv_789");
   });
 
+  test("compiles official agy stream-json SUCCESS event with response and conversation_id", () => {
+    const receipt = completionCallbackFromAgyResultEventV1({
+      taskId: "item_abc123",
+      runId: "run_def456",
+      claimGeneration: 3,
+      event: {
+        event: "result",
+        result: {
+          status: "SUCCESS",
+          response: "Git rebase rewritten.",
+          conversation_id: "agy-conv-official-42",
+          duration_seconds: 6.88,
+          num_turns: 1,
+          usage: { input_tokens: 10418, output_tokens: 589 },
+        },
+      },
+    });
+    expect(receipt.producer).toBe("agy");
+    expect(receipt.status).toBe("completed");
+    expect(receipt.summary).toBe("Git rebase rewritten.");
+    expect(receipt.sessionRef).toBe("agy-conv-official-42");
+  });
+
+  test("compiles official agy stream-json ERROR event into failed status and error summary", () => {
+    const receipt = completionCallbackFromAgyResultEventV1({
+      taskId: "item_abc123",
+      runId: "run_def456",
+      claimGeneration: 3,
+      event: {
+        event: "result",
+        result: {
+          conversation_id: "agy-conv-err-1",
+          status: "ERROR",
+          response: "",
+          error: "Model quota exceeded for Gemini 3.8 Flash",
+          duration_seconds: 0,
+          num_turns: 0,
+        },
+      },
+    });
+    expect(receipt.producer).toBe("agy");
+    expect(receipt.status).toBe("failed");
+    expect(receipt.summary).toBe("Model quota exceeded for Gemini 3.8 Flash");
+    expect(receipt.sessionRef).toBe("agy-conv-err-1");
+  });
+
+  test("synthetic negative controls: maps non-success statuses to failed closed", () => {
+    // Negative control: literal failed
+    const failedReceipt = completionCallbackFromAgyResultEventV1({
+      taskId: "item_abc123",
+      runId: "run_def456",
+      claimGeneration: 3,
+      event: { event: "result", result: { status: "failed", error: "Explicit failure" } },
+    });
+    expect(failedReceipt.status).toBe("failed");
+    expect(failedReceipt.summary).toBe("Explicit failure");
+
+    // Negative control: ERROR status (coordinator bug fix: was mapped to completed)
+    const errorReceipt = completionCallbackFromAgyResultEventV1({
+      taskId: "item_abc123",
+      runId: "run_def456",
+      claimGeneration: 3,
+      event: { event: "result", result: { status: "ERROR", error: "System fault" } },
+    });
+    expect(errorReceipt.status).toBe("failed");
+
+    // Negative control: missing status field
+    const missingStatusReceipt = completionCallbackFromAgyResultEventV1({
+      taskId: "item_abc123",
+      runId: "run_def456",
+      claimGeneration: 3,
+      event: { event: "result", result: { response: "Finished without status field" } },
+    });
+    expect(missingStatusReceipt.status).toBe("failed");
+
+    // Negative control: unknown/arbitrary status string
+    const unknownStatusReceipt = completionCallbackFromAgyResultEventV1({
+      taskId: "item_abc123",
+      runId: "run_def456",
+      claimGeneration: 3,
+      event: { event: "result", result: { status: "MYSTERY_STATUS" } },
+    });
+    expect(unknownStatusReceipt.status).toBe("failed");
+  });
+
+  test("handles both nested result and top-level result payloads with response/text precedence", () => {
+    // Top-level status envelope
+    const topLevelSuccess = completionCallbackFromAgyResultEventV1({
+      taskId: "item_abc123",
+      runId: "run_def456",
+      claimGeneration: 3,
+      event: { event: "result", status: "SUCCESS", response: "Top-level success payload" },
+    });
+    expect(topLevelSuccess.status).toBe("completed");
+    expect(topLevelSuccess.summary).toBe("Top-level success payload");
+
+    // Top-level error envelope
+    const topLevelError = completionCallbackFromAgyResultEventV1({
+      taskId: "item_abc123",
+      runId: "run_def456",
+      claimGeneration: 3,
+      event: { status: "ERROR", error: "Top-level error payload" },
+    });
+    expect(topLevelError.status).toBe("failed");
+    expect(topLevelError.summary).toBe("Top-level error payload");
+
+    // Response takes precedence over text
+    const precedence = completionCallbackFromAgyResultEventV1({
+      taskId: "item_abc123",
+      runId: "run_def456",
+      claimGeneration: 3,
+      event: {
+        event: "result",
+        result: { status: "SUCCESS", response: "Preferred response", text: "Legacy fallback" },
+      },
+    });
+    expect(precedence.summary).toBe("Preferred response");
+  });
+
   test("rejects non-terminal agy stream events instead of inventing completion", () => {
     expect(() =>
       completionCallbackFromAgyResultEventV1({
@@ -206,6 +326,56 @@ describe("completion callback delivery", () => {
       }),
     ).rejects.toThrow();
     expect(failing.calls.map((call) => call.method)).toEqual(["thread/resume"]);
+  });
+
+  test("bound-thread delivery fails closed when Codex resumes a different thread ID", async () => {
+    const connection = new FakeConnection();
+    const originalRequest = connection.request.bind(connection);
+    connection.request = async (method, params) => {
+      connection.calls.push({ method, params: params as Record<string, unknown> });
+      if (method === "thread/resume") {
+        return { thread: { id: "thread-different", sessionId: "thread-different" } } as any;
+      }
+      return originalRequest(method, params);
+    };
+    const receipt = compileCompletionCallbackV1(baseInput());
+    await expect(
+      deliverCompletionCallbackV1({
+        connection,
+        receipt,
+        target: { mode: "bound-thread", threadId: "thread-target" },
+        policy: { cwd: "/tmp", model: "gpt-5.6-sol" },
+        deliveredKeys: new Set<string>(),
+      }),
+    ).rejects.toThrow("Codex resumed a different thread than the bound completion target");
+    expect(connection.calls.map((c) => c.method)).toEqual(["thread/resume"]);
+  });
+
+  test("concurrent duplicate sends on app-server are deduplicated without double thread/turn dispatch", async () => {
+    const connection = new FakeConnection();
+    const delivered = new Set<string>();
+    const receipt = compileCompletionCallbackV1(baseInput());
+    const [first, second] = await Promise.all([
+      deliverCompletionCallbackV1({
+        connection,
+        receipt,
+        target: { mode: "standalone" },
+        policy: { cwd: "/tmp", model: "gpt-5.6-sol" },
+        deliveredKeys: delivered,
+      }),
+      deliverCompletionCallbackV1({
+        connection,
+        receipt,
+        target: { mode: "standalone" },
+        policy: { cwd: "/tmp", model: "gpt-5.6-sol" },
+        deliveredKeys: delivered,
+      }),
+    ]);
+    expect(first.delivered).toBe(true);
+    expect(first.duplicate).toBe(false);
+    expect(second.delivered).toBe(false);
+    expect(second.duplicate).toBe(true);
+    expect(connection.calls).toHaveLength(2);
   });
 
   test("rejects tampered receipts whose key does not match their fields", async () => {
@@ -334,5 +504,168 @@ describe("completion callback codex queue CLI transport", () => {
       }),
     ).rejects.toThrow();
     expect(calls).toBe(0);
+  });
+
+  test("concurrent duplicate sends spawn subprocess exactly once and dedup concurrent caller", async () => {
+    const receipt = compileCompletionCallbackV1(baseInput());
+    const seen: Array<{ command: string; argv: readonly string[] }> = [];
+    const delivered = new Set<string>();
+    const run = async (command: string, argv: readonly string[]) => {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      seen.push({ command, argv });
+      return { exitCode: 0, stdout: "queued", stderr: "" };
+    };
+    const [first, second] = await Promise.all([
+      deliverCompletionCallbackViaQueueV1({
+        receipt,
+        threadId: SYNTHETIC_THREAD,
+        run,
+        deliveredKeys: delivered,
+      }),
+      deliverCompletionCallbackViaQueueV1({
+        receipt,
+        threadId: SYNTHETIC_THREAD,
+        run,
+        deliveredKeys: delivered,
+      }),
+    ]);
+    expect(seen).toHaveLength(1);
+    expect(first.delivered).toBe(true);
+    expect(first.duplicate).toBe(false);
+    expect(second.delivered).toBe(false);
+    expect(second.duplicate).toBe(true);
+    expect(delivered.has(receipt.idempotencyKey)).toBe(true);
+  });
+
+  test("binding mismatches fail closed without spawning", async () => {
+    const receipt = compileCompletionCallbackV1(baseInput());
+    let spawns = 0;
+    const run = async () => {
+      spawns++;
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    // Standalone target mode is rejected for CLI queue transport
+    await expect(
+      deliverCompletionCallbackViaQueueV1({
+        receipt,
+        target: { mode: "standalone" },
+        run,
+      }),
+    ).rejects.toThrow("bound-thread");
+
+    // Mismatch between explicit threadId and target.threadId
+    await expect(
+      deliverCompletionCallbackViaQueueV1({
+        receipt,
+        threadId: "11111111-1111-1111-1111-111111111111",
+        target: { mode: "bound-thread", threadId: "22222222-2222-2222-2222-222222222222" },
+        run,
+      }),
+    ).rejects.toThrow("mismatch");
+
+    // Runner returns mismatched threadId
+    await expect(
+      deliverCompletionCallbackViaQueueV1({
+        receipt,
+        threadId: SYNTHETIC_THREAD,
+        run: async () => ({ exitCode: 0, stdout: "", stderr: "", threadId: "wrong-thread-from-runner" }),
+      }),
+    ).rejects.toThrow("thread binding mismatch");
+
+    // codexQueueArgvV1 also enforces binding match and rejects standalone target
+    expect(() =>
+      codexQueueArgvV1({
+        receipt,
+        target: { mode: "standalone" },
+      }),
+    ).toThrow("bound-thread");
+
+    expect(() =>
+      codexQueueArgvV1({
+        receipt,
+        threadId: "11111111-1111-1111-1111-111111111111",
+        target: { mode: "bound-thread", threadId: "22222222-2222-2222-2222-222222222222" },
+      }),
+    ).toThrow("mismatch");
+
+    expect(spawns).toBe(0);
+  });
+
+  test("ambiguous accepted-but-timeout delivery can reconcile as accepted or fail closed", async () => {
+    const receipt = compileCompletionCallbackV1(baseInput());
+    const delivered = new Set<string>();
+
+    // Case 1: Timeout where reconcile confirms message was accepted by daemon
+    let attempts = 0;
+    const reconciledDelivery = await deliverCompletionCallbackViaQueueV1({
+      receipt,
+      threadId: SYNTHETIC_THREAD,
+      run: async () => {
+        attempts++;
+        throw new Error("ETIMEDOUT waiting for codex queue child process");
+      },
+      deliveredKeys: delivered,
+      reconcile: async (rec, thread, err) => {
+        expect(rec.idempotencyKey).toBe(receipt.idempotencyKey);
+        expect(thread).toBe(SYNTHETIC_THREAD);
+        expect(String(err)).toContain("ETIMEDOUT");
+        return true;
+      },
+    });
+    expect(attempts).toBe(1);
+    expect(reconciledDelivery.delivered).toBe(true);
+    expect(reconciledDelivery.recovered).toBe(true);
+    expect(delivered.has(receipt.idempotencyKey)).toBe(true);
+
+    // Subsequent replay dedups immediately without spawning
+    const replay = await deliverCompletionCallbackViaQueueV1({
+      receipt,
+      threadId: SYNTHETIC_THREAD,
+      run: async () => {
+        attempts++;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      deliveredKeys: delivered,
+    });
+    expect(replay.duplicate).toBe(true);
+    expect(attempts).toBe(1);
+
+    // Case 2: Timeout where reconcile confirms message was NOT accepted
+    const unacceptedReceipt = compileCompletionCallbackV1({ ...baseInput(), taskId: "item_unaccepted" });
+    const unacceptedDelivered = new Set<string>();
+    let unacceptedAttempts = 0;
+    await expect(
+      deliverCompletionCallbackViaQueueV1({
+        receipt: unacceptedReceipt,
+        threadId: SYNTHETIC_THREAD,
+        run: async () => {
+          unacceptedAttempts++;
+          throw new Error("ETIMEDOUT");
+        },
+        deliveredKeys: unacceptedDelivered,
+        reconcile: async () => false,
+      }),
+    ).rejects.toThrow("ETIMEDOUT");
+    expect(unacceptedAttempts).toBe(1);
+    expect(unacceptedDelivered.has(unacceptedReceipt.idempotencyKey)).toBe(false);
+
+    // Helper reconcileCompletionCallbackDeliveryV1 tests
+    expect(
+      reconcileCompletionCallbackDeliveryV1({
+        receipt: unacceptedReceipt,
+        deliveredKeys: unacceptedDelivered,
+        accepted: true,
+      }),
+    ).toBe(true);
+    expect(unacceptedDelivered.has(unacceptedReceipt.idempotencyKey)).toBe(true);
+
+    expect(
+      reconcileCompletionCallbackDeliveryV1({
+        receipt: unacceptedReceipt,
+        deliveredKeys: new Set<string>(),
+        accepted: false,
+      }),
+    ).toBe(false);
   });
 });

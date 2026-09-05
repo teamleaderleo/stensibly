@@ -66,8 +66,10 @@ export interface CompletionCallbackDeliveryV1 {
  * That event compiles to an idempotent receipt here, and delivery sends
  * it to Codex. It creates no scheduler, wake ledger, or mailbox:
  * duplicate, delayed, replayed, or lost events are harmless because exact
- * claim/authority fencing stays decisive downstream and transport dedup
- * makes exact replay return the stored outcome.
+ * claim/authority fencing stays decisive downstream. Transport dedup
+ * provides in-process deduplication and in-flight single-flight synchronization
+ * against concurrent duplicate sends, while durable exactly-once settlement
+ * remains anchored in downstream claim/authority fencing.
  *
  * Receipt status is terminal producer status only (`completed`/`failed`);
  * acceptance stays with downstream claim/authority fencing. This module
@@ -107,7 +109,8 @@ export interface CompletionCallbackDeliveryV1 {
  *   SSE stream)
  * - Antigravity headless/streaming: https://antigravity.google/docs/cli/headless/
  *   (`-p --output-format stream-json` emits `init`, `step_update*`, one
- *   terminal `result` event)
+ *   terminal `result` event carrying `status` ["SUCCESS"/"ERROR"], `response`,
+ *   `error`, `conversation_id`, and `usage`)
  * - `agy` exposes no event-subscription/server endpoint; the completion
  *   signal IS its terminal `result` event (stdout), consumed here via
  *   `completionCallbackFromAgyResultEventV1`.
@@ -144,8 +147,16 @@ export function compileCompletionCallbackV1(input: CompletionCallbackInputV1): C
  * Compiles the terminal `result` event of an `agy -p --output-format
  * stream-json` run into a receipt. The documented stream shape is one
  * `init` event, zero or more `step_update` events, and exactly one terminal
- * `result` event carrying `status`/`error`/`usage`. Anything else fails
- * closed: the caller must wait for (or re-read) the terminal event.
+ * `result` event carrying `status`/`response`/`error`/`usage`.
+ *
+ * Official Antigravity stream-json schema:
+ * - Emits `status: "SUCCESS"` on successful completion, `"ERROR"` on error.
+ * - Response content is emitted in `response` (with legacy `text` fallback).
+ * - Fails closed: only explicit recognized success statuses ("SUCCESS", "success",
+ *   "completed", "ok") map to "completed". Any error ("ERROR", "failed"), missing,
+ *   or unknown status maps to "failed".
+ * - Supports both nested result envelope (`event.result`) and top-level result payload.
+ * - Non-terminal events (e.g. `step_update`, `init`) fail closed with RangeError.
  */
 export function completionCallbackFromAgyResultEventV1(input: {
   readonly taskId: string;
@@ -154,18 +165,81 @@ export function completionCallbackFromAgyResultEventV1(input: {
   readonly event: unknown;
   readonly sessionRef?: string | null;
 }): CompletionCallbackReceiptV1 {
-  if (!isRecord(input.event) || input.event.event !== "result" || !isRecord(input.event.result)) {
+  if (!isRecord(input.event)) {
     throw new RangeError("Antigravity stream event is not a terminal result event");
   }
-  const result = input.event.result;
-  const status = typeof result.status === "string" && result.status.toLowerCase() === "failed"
-    ? "failed"
-    : "completed";
-  const summary = typeof result.text === "string" && result.text.trim()
-    ? result.text
-    : typeof result.error === "string" && result.error.trim()
-    ? result.error
-    : `Antigravity run finished with status ${safeCoarse(String(result.status ?? "unknown"))}`;
+  if (input.event.event !== undefined && input.event.event !== "result") {
+    throw new RangeError("Antigravity stream event is not a terminal result event");
+  }
+
+  let payload: Record<string, unknown>;
+  if (isRecord(input.event.result)) {
+    payload = input.event.result;
+  } else if (
+    input.event.status !== undefined ||
+    input.event.response !== undefined ||
+    input.event.text !== undefined ||
+    input.event.error !== undefined ||
+    input.event.conversation_id !== undefined
+  ) {
+    payload = input.event;
+  } else {
+    throw new RangeError("Antigravity stream event is not a terminal result event");
+  }
+
+  const rawStatus = typeof payload.status === "string"
+    ? payload.status.trim().toLowerCase()
+    : typeof input.event.status === "string"
+    ? (input.event.status as string).trim().toLowerCase()
+    : "";
+
+  const isSuccess = rawStatus === "success" || rawStatus === "completed" || rawStatus === "ok";
+  const status: CompletionCallbackStatus = isSuccess ? "completed" : "failed";
+
+  const responseText = typeof payload.response === "string" && payload.response.trim()
+    ? payload.response.trim()
+    : typeof payload.text === "string" && payload.text.trim()
+    ? payload.text.trim()
+    : typeof input.event.response === "string" && (input.event.response as string).trim()
+    ? (input.event.response as string).trim()
+    : typeof input.event.text === "string" && (input.event.text as string).trim()
+    ? (input.event.text as string).trim()
+    : null;
+
+  const errorText = typeof payload.error === "string" && payload.error.trim()
+    ? payload.error.trim()
+    : typeof input.event.error === "string" && (input.event.error as string).trim()
+    ? (input.event.error as string).trim()
+    : null;
+
+  let summary: string;
+  if (status === "failed") {
+    if (errorText) {
+      summary = errorText;
+    } else if (responseText) {
+      summary = responseText;
+    } else {
+      summary = `Antigravity run failed with status ${safeCoarse(String(payload.status ?? input.event.status ?? "unknown"))}`;
+    }
+  } else {
+    if (responseText) {
+      summary = responseText;
+    } else if (errorText) {
+      summary = errorText;
+    } else {
+      summary = `Antigravity run finished with status ${safeCoarse(String(payload.status ?? input.event.status ?? "completed"))}`;
+    }
+  }
+
+  const conversationId = typeof payload.conversation_id === "string" && payload.conversation_id.trim()
+    ? payload.conversation_id.trim()
+    : typeof input.event.conversation_id === "string" && (input.event.conversation_id as string).trim()
+    ? (input.event.conversation_id as string).trim()
+    : null;
+  const sessionRef = input.sessionRef !== undefined && input.sessionRef !== null
+    ? input.sessionRef
+    : conversationId;
+
   return compileCompletionCallbackV1({
     taskId: input.taskId,
     runId: input.runId,
@@ -173,7 +247,7 @@ export function completionCallbackFromAgyResultEventV1(input: {
     producer: "agy",
     status,
     summary,
-    sessionRef: input.sessionRef,
+    sessionRef,
   });
 }
 
@@ -200,20 +274,39 @@ export function completionCallbackMessageV1(receipt: CompletionCallbackReceiptV1
  * below, not `thread/resume` here: resume is single-writer and is rejected
  * on held threads, while the `codex queue` CLI is the supported live ping.
  */
+interface InFlightQueueEntry {
+  readonly promise: Promise<CompletionCallbackQueueDeliveryV1>;
+  readonly threadId: string;
+}
+
+const inFlightQueueSends = new Map<string, InFlightQueueEntry>();
+const inFlightAppServerSends = new Map<string, Promise<CompletionCallbackDeliveryV1>>();
+
+/**
+ * Delivers one receipt to Codex over an existing app-server connection.
+ * `deliveredKeys` is caller-owned transport dedup; in-flight single-flight
+ * synchronization prevents concurrent duplicate sends. The durable
+ * exactly-once boundary stays with the downstream claim/authority fencing.
+ *
+ * Bound live threads (desktop-held) must use `deliverCompletionCallbackViaQueueV1`
+ * below, not `thread/resume` here: resume is single-writer and is rejected
+ * on held threads, while the `codex queue` CLI is the supported live ping.
+ */
 export async function deliverCompletionCallbackV1(input: {
   readonly connection: CodexAppServerConnection;
   readonly receipt: CompletionCallbackReceiptV1;
   readonly target: CompletionCallbackTargetV1;
   readonly policy: CompletionCallbackTurnPolicyV1;
   readonly deliveredKeys?: {
-    readonly has: (key: string) => boolean;
-    readonly add: (key: string) => void;
+    readonly has: (key: string) => boolean | Promise<boolean>;
+    readonly add: (key: string) => void | Promise<void>;
   };
 }): Promise<CompletionCallbackDeliveryV1> {
   const receipt = admitReceipt(input.receipt);
   const target = admitTarget(input.target);
   const policy = admitPolicy(input.policy);
-  if (input.deliveredKeys?.has(receipt.idempotencyKey)) {
+
+  if (await input.deliveredKeys?.has(receipt.idempotencyKey)) {
     return deepFreeze({
       delivered: false,
       idempotencyKey: receipt.idempotencyKey,
@@ -222,52 +315,77 @@ export async function deliverCompletionCallbackV1(input: {
       duplicate: true,
     });
   }
-  let threadId: string;
-  if (target.mode === "standalone") {
-    const started = record(
-      await input.connection.request("thread/start", {
-        model: policy.model,
-        cwd: policy.cwd,
-        runtimeWorkspaceRoots: [policy.cwd],
-        approvalPolicy: "never",
-        sandbox: "read-only",
-        ephemeral: false,
-        historyMode: "paginated",
-        serviceName: "stensibly-completion-callback",
-      }),
-      "thread/start response",
-    );
-    threadId = threadIdentity(started);
-  } else {
-    const resumed = record(
-      await input.connection.request("thread/resume", { threadId: target.threadId }),
-      "thread/resume response",
-    );
-    const resumedId = threadIdentity(resumed);
-    if (resumedId !== target.threadId) {
-      throw new Error("Codex resumed a different thread than the bound completion target");
+
+  const inFlight = inFlightAppServerSends.get(receipt.idempotencyKey);
+  if (inFlight !== undefined) {
+    const inFlightOutcome = await inFlight;
+    if (inFlightOutcome.delivered) {
+      return deepFreeze({
+        delivered: false,
+        idempotencyKey: receipt.idempotencyKey,
+        threadId: null,
+        turnId: null,
+        duplicate: true,
+      });
     }
-    threadId = resumedId;
+    return inFlightOutcome;
   }
-  const turn = record(
-    await input.connection.request("turn/start", {
-      threadId,
-      input: [{ type: "text", text: completionCallbackMessageV1(receipt), text_elements: [] }],
-      cwd: policy.cwd,
-      approvalPolicy: "never",
-      model: policy.model,
-    }),
-    "turn/start response",
-  );
-  const turnId = identifier(record(turn.turn, "Codex turn").id, "Codex turn ID");
-  input.deliveredKeys?.add(receipt.idempotencyKey);
-  return deepFreeze({
-    delivered: true,
-    idempotencyKey: receipt.idempotencyKey,
-    threadId,
-    turnId,
-    duplicate: false,
-  });
+
+  const execution = (async (): Promise<CompletionCallbackDeliveryV1> => {
+    try {
+      let threadId: string;
+      if (target.mode === "standalone") {
+        const started = record(
+          await input.connection.request("thread/start", {
+            model: policy.model,
+            cwd: policy.cwd,
+            runtimeWorkspaceRoots: [policy.cwd],
+            approvalPolicy: "never",
+            sandbox: "read-only",
+            ephemeral: false,
+            historyMode: "paginated",
+            serviceName: "stensibly-completion-callback",
+          }),
+          "thread/start response",
+        );
+        threadId = threadIdentity(started);
+      } else {
+        const resumed = record(
+          await input.connection.request("thread/resume", { threadId: target.threadId }),
+          "thread/resume response",
+        );
+        const resumedId = threadIdentity(resumed);
+        if (resumedId !== target.threadId) {
+          throw new Error("Codex resumed a different thread than the bound completion target");
+        }
+        threadId = resumedId;
+      }
+      const turn = record(
+        await input.connection.request("turn/start", {
+          threadId,
+          input: [{ type: "text", text: completionCallbackMessageV1(receipt), text_elements: [] }],
+          cwd: policy.cwd,
+          approvalPolicy: "never",
+          model: policy.model,
+        }),
+        "turn/start response",
+      );
+      const turnId = identifier(record(turn.turn, "Codex turn").id, "Codex turn ID");
+      await input.deliveredKeys?.add(receipt.idempotencyKey);
+      return deepFreeze({
+        delivered: true,
+        idempotencyKey: receipt.idempotencyKey,
+        threadId,
+        turnId,
+        duplicate: false,
+      });
+    } finally {
+      inFlightAppServerSends.delete(receipt.idempotencyKey);
+    }
+  })();
+
+  inFlightAppServerSends.set(receipt.idempotencyKey, execution);
+  return execution;
 }
 
 export const CODEX_QUEUE_COMMAND_V1 = "codex" as const;
@@ -279,18 +397,43 @@ export interface CompletionCallbackQueueDeliveryV1 {
   /** Fixed bound thread the message was queued to. Exact match only. */
   readonly threadId: string | null;
   readonly duplicate: boolean;
+  readonly recovered?: boolean;
 }
 
 export interface CompletionCallbackQueueSpawnV1 {
   readonly exitCode: number;
   readonly stdout: string;
   readonly stderr: string;
+  readonly threadId?: string;
 }
 
 export type CompletionCallbackQueueRunnerV1 = (
   command: string,
   argv: readonly string[],
 ) => Promise<CompletionCallbackQueueSpawnV1>;
+
+function resolveBoundThreadId(input: {
+  readonly threadId?: string;
+  readonly target?: CompletionCallbackTargetV1;
+}): string {
+  if (input.target !== undefined) {
+    const target = admitTarget(input.target);
+    if (target.mode !== "bound-thread") {
+      throw new RangeError("Codex queue CLI transport requires a bound-thread target");
+    }
+    if (input.threadId !== undefined) {
+      const explicitThread = identifier(input.threadId, "Bound thread ID");
+      if (explicitThread !== target.threadId) {
+        throw new RangeError("Completion callback thread binding mismatch between target and threadId");
+      }
+    }
+    return target.threadId;
+  }
+  if (input.threadId !== undefined) {
+    return identifier(input.threadId, "Bound thread ID");
+  }
+  throw new RangeError("Bound thread ID or bound-thread target is required");
+}
 
 /**
  * Builds the exact supported CLI argv for a direct same-conversation ping:
@@ -301,10 +444,11 @@ export type CompletionCallbackQueueRunnerV1 = (
  */
 export function codexQueueArgvV1(input: {
   readonly receipt: CompletionCallbackReceiptV1;
-  readonly threadId: string;
+  readonly threadId?: string;
+  readonly target?: CompletionCallbackTargetV1;
 }): readonly string[] {
   const receipt = admitReceipt(input.receipt);
-  const threadId = identifier(input.threadId, "Bound thread ID");
+  const threadId = resolveBoundThreadId(input);
   return deepFreeze([
     "queue",
     "--thread",
@@ -314,32 +458,44 @@ export function codexQueueArgvV1(input: {
   ] as const as readonly string[]);
 }
 
+export interface CompletionCallbackQueueInputV1 {
+  readonly receipt: CompletionCallbackReceiptV1;
+  readonly threadId?: string;
+  readonly target?: CompletionCallbackTargetV1;
+  readonly run: CompletionCallbackQueueRunnerV1;
+  readonly deliveredKeys?: {
+    readonly has: (key: string) => boolean | Promise<boolean>;
+    readonly add: (key: string) => void | Promise<void>;
+  };
+  readonly reconcile?: (
+    receipt: CompletionCallbackReceiptV1,
+    threadId: string,
+    error: unknown,
+  ) => Promise<boolean> | boolean;
+}
+
 /**
  * Sends one receipt into the existing desktop conversation via the
  * supported `codex queue` CLI transport.
  *
- * - Fixed target binding: queues only to the exact `threadId`; a runner
- *   must never substitute another thread.
- * - Idempotency: exact replay with a key already in `deliveredKeys`
- *   returns the stored duplicate outcome without spawning.
- * - Ambiguous send recovery: the key is marked only on exit code 0.
- *   Non-zero exits throw without marking; runner throws (spawn failure,
- *   signal, timeout) propagate without marking. The caller must
- *   reconcile (did the daemon accept the message?) before retrying, and
- *   retries with the same receipt key dedup correctly after one success.
+ * - Fixed target binding: queues only to the exact `threadId` (or bound-thread
+ *   target); fails closed without spawning on binding mismatch or standalone target.
+ * - Concurrency & Idempotency: in-flight single-flight synchronization prevents
+ *   concurrent duplicate subprocess spawns for the same receipt. Exact replay
+ *   with a key already delivered returns the stored duplicate outcome without spawning.
+ * - Ambiguous send recovery: the key is marked only on exit code 0 or successful
+ *   reconciliation. Non-zero exits and runner throws (e.g. timeout) propagate without
+ *   marking unless an optional `reconcile` callback confirms accepted delivery.
+ *   The caller must reconcile before retrying, and retries after reconciliation dedup
+ *   cleanly without duplicate send.
  */
-export async function deliverCompletionCallbackViaQueueV1(input: {
-  readonly receipt: CompletionCallbackReceiptV1;
-  readonly threadId: string;
-  readonly run: CompletionCallbackQueueRunnerV1;
-  readonly deliveredKeys?: {
-    readonly has: (key: string) => boolean;
-    readonly add: (key: string) => void;
-  };
-}): Promise<CompletionCallbackQueueDeliveryV1> {
+export async function deliverCompletionCallbackViaQueueV1(
+  input: CompletionCallbackQueueInputV1,
+): Promise<CompletionCallbackQueueDeliveryV1> {
   const receipt = admitReceipt(input.receipt);
-  const threadId = identifier(input.threadId, "Bound thread ID");
-  if (input.deliveredKeys?.has(receipt.idempotencyKey)) {
+  const threadId = resolveBoundThreadId(input);
+
+  if (await input.deliveredKeys?.has(receipt.idempotencyKey)) {
     return deepFreeze({
       delivered: false,
       transport: "codex-queue-cli",
@@ -348,24 +504,98 @@ export async function deliverCompletionCallbackViaQueueV1(input: {
       duplicate: true,
     });
   }
-  const argv = codexQueueArgvV1({ receipt, threadId });
-  const spawned = await input.run(CODEX_QUEUE_COMMAND_V1, argv);
-  if (!isRecord(spawned) || !Number.isSafeInteger(spawned.exitCode)) {
-    throw new Error("Codex queue runner returned an invalid result (reconcile before retry)");
+
+  const existingInFlight = inFlightQueueSends.get(receipt.idempotencyKey);
+  if (existingInFlight !== undefined) {
+    if (existingInFlight.threadId !== threadId) {
+      throw new RangeError("Concurrent delivery binding conflict: send already in flight for different thread");
+    }
+    const inFlightOutcome = await existingInFlight.promise;
+    if (inFlightOutcome.delivered) {
+      return deepFreeze({
+        delivered: false,
+        transport: "codex-queue-cli",
+        idempotencyKey: receipt.idempotencyKey,
+        threadId: null,
+        duplicate: true,
+      });
+    }
+    return inFlightOutcome;
   }
-  if (spawned.exitCode !== 0) {
-    throw new Error(
-      `Codex queue send failed with exit ${String(spawned.exitCode)}: ${compactTail(String(spawned.stderr ?? ""))}`,
-    );
+
+  const execution = (async (): Promise<CompletionCallbackQueueDeliveryV1> => {
+    const argv = codexQueueArgvV1({ receipt, threadId });
+    try {
+      const spawned = await input.run(CODEX_QUEUE_COMMAND_V1, argv);
+      if (!isRecord(spawned) || !Number.isSafeInteger(spawned.exitCode)) {
+        throw new Error("Codex queue runner returned an invalid result (reconcile before retry)");
+      }
+      if (
+        typeof (spawned as Record<string, unknown>).threadId === "string" &&
+        (spawned as Record<string, unknown>).threadId !== threadId
+      ) {
+        throw new Error("Codex queue runner returned a thread binding mismatch");
+      }
+      if (spawned.exitCode !== 0) {
+        throw new Error(
+          `Codex queue send failed with exit ${String(spawned.exitCode)}: ${compactTail(String(spawned.stderr ?? ""))}`,
+        );
+      }
+      await input.deliveredKeys?.add(receipt.idempotencyKey);
+      return deepFreeze({
+        delivered: true,
+        transport: "codex-queue-cli",
+        idempotencyKey: receipt.idempotencyKey,
+        threadId,
+        duplicate: false,
+      });
+    } catch (error) {
+      if (input.reconcile) {
+        try {
+          const accepted = await input.reconcile(receipt, threadId, error);
+          if (accepted) {
+            await input.deliveredKeys?.add(receipt.idempotencyKey);
+            return deepFreeze({
+              delivered: true,
+              transport: "codex-queue-cli",
+              idempotencyKey: receipt.idempotencyKey,
+              threadId,
+              duplicate: false,
+              recovered: true,
+            });
+          }
+        } catch {
+          // Reconcile threw, fall through to rethrow original error
+        }
+      }
+      throw error;
+    } finally {
+      inFlightQueueSends.delete(receipt.idempotencyKey);
+    }
+  })();
+
+  inFlightQueueSends.set(receipt.idempotencyKey, { promise: execution, threadId });
+  return execution;
+}
+
+/**
+ * Reconciles an ambiguous delivery outcome (e.g. accepted-but-timeout).
+ * When `accepted` is true, marks the receipt idempotency key so that
+ * subsequent retries dedup cleanly without duplicate dispatch.
+ */
+export function reconcileCompletionCallbackDeliveryV1(input: {
+  readonly receipt: CompletionCallbackReceiptV1;
+  readonly deliveredKeys: {
+    readonly add: (key: string) => void | Promise<void>;
+  };
+  readonly accepted: boolean;
+}): boolean {
+  const receipt = admitReceipt(input.receipt);
+  if (input.accepted) {
+    input.deliveredKeys.add(receipt.idempotencyKey);
+    return true;
   }
-  input.deliveredKeys?.add(receipt.idempotencyKey);
-  return deepFreeze({
-    delivered: true,
-    transport: "codex-queue-cli",
-    idempotencyKey: receipt.idempotencyKey,
-    threadId,
-    duplicate: false,
-  });
+  return false;
 }
 
 function compactTail(value: string): string {
