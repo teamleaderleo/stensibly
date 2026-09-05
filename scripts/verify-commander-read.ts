@@ -36,6 +36,8 @@ export async function verifyCommanderRead(endpoint: string, project: string, tok
   // Retain no work prose, provider payloads or credentials in deployment logs.
   return { endpoint, project, version: expectedVersion, contract: first.data.contract,
     fingerprint: first.data.fingerprint, firstBytes: first.bytes, repeatBytes: repeat.bytes,
+    shown: { attention: first.data.attention?.length ?? 0, blocked: first.data.blocked.length,
+      ready: first.data.ready.length, completed: first.data.recentlyCompleted?.length ?? 0 },
     repeatStatus: repeat.data.status, expanded, reads: sequence, requestId: first.requestId };
 }
 

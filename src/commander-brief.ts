@@ -51,7 +51,11 @@ export function compileCommanderBrief(value: unknown, options: {
   const blockedSource = source.blocked.sort(order);
   const readySource = source.ready.filter((item) => !decision(item) && item.kind === "task").sort(order);
   const completedSource = source.recentlyCompleted.filter((item) => item.kind === "task").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || order(a, b));
-  let remaining = options.limit;
+  // A broad overview must leave room for both a useful next read and a result,
+  // even when a backlog of exceptions would consume the entire row budget.
+  const readyReserve = readySource.length > 0 && options.limit >= 2 ? 1 : 0;
+  const resultReserve = completedSource.length > 0 && options.limit >= 3 ? 1 : 0;
+  let remaining = options.limit - readyReserve - resultReserve;
   const seen = new Set<string>();
   const take = (items: SourceItem[], reason: (item: SourceItem) => string) => {
     const selected: CommanderItem[] = [];
@@ -70,8 +74,10 @@ export function compileCommanderBrief(value: unknown, options: {
   const attention = take(attentionSource, () => "open_decision_or_question");
   const blocked = take(blockedSource, () => "blocked");
   const active = take(activeSource, () => "claim_expired_or_unverified");
+  remaining += readyReserve;
   const ready = take(readySource, (item) => item.nextAction ? `ready_with_next_action;priority=${item.priority}` : "ready_missing_next_action");
   const actionableShown = seen.size;
+  remaining += resultReserve;
   const recentlyCompleted = take(completedSource.slice(0, 2), () => "recorded_done_not_provider_verified");
   const candidates = attentionSource.length + blockedSource.length + activeSource.length + readySource.length;
   const sourceTruncated = ["ready", "active", "blocked"].some((status) =>
@@ -89,18 +95,19 @@ export function compileCommanderBrief(value: unknown, options: {
   const material = { contract: "commander-brief/v1", project: source.project, workspace: source.workspace ?? null,
     counts: source.counts, attention, ready, active, blocked, recentlyCompleted, omitted, coverage, expansion };
   const fingerprint = sha256(stableJson({ material,
-    // Full selected semantics prevent changed truncated suffixes from replaying.
-    selected: unique.filter((item) => seen.has(item.id)).sort(order),
+    // Bind every actionable row, including output omissions and text suffixes.
+    // Output clipping is safe to repeat only when the complete scan is unchanged.
+    evaluated: [...attentionSource, ...activeSource, ...blockedSource, ...readySource, ...completedSource].sort(order),
     // These are historical ledger observations, not current provider admission.
     runs: source.activeRuns ?? null, reservations: source.activeReservations ?? null, artifacts: source.recentArtifacts,
   }));
-  // Never let an equal digest hide an old snapshot or incomplete attention scan.
-  const unchanged = current && !sourceTruncated && omitted.actionable === 0
+  // Output omissions are distinct from an incomplete canonical source scan.
+  const unchanged = current && !sourceTruncated
     && !(source.activeRuns?.length) && !(source.activeReservations?.length)
     && options.previousFingerprint === fingerprint;
   if (unchanged) return { contract: material.contract, project: source.project, generatedAt: source.generatedAt,
     status: "unchanged" as const, fingerprint, counts: source.counts, ready: [], active: [], blocked: [], coverage,
-    attention: undefined, omitted: undefined, expansion: undefined, recentlyCompleted: undefined };
+    attention: undefined, omitted, expansion, recentlyCompleted: undefined };
   return { ...material, generatedAt: source.generatedAt, status: current ? "current" as const : "stale" as const, fingerprint };
 }
 
@@ -109,11 +116,11 @@ function order(a: SourceItem, b: SourceItem) {
 }
 
 export function renderCommanderBrief(value: ReturnType<typeof compileCommanderBrief>): string {
-  if (value.status === "unchanged") return "Unchanged commander view. Provider availability and execution admission remain unverified.";
+  if (value.status === "unchanged") return `Unchanged commander view. Provider availability and execution admission remain unverified.${value.omitted.actionable ? ` ${value.omitted.actionable} other actionable records remain omitted; list_work project=${value.project} expands them.` : ""}`;
   const rows = [...(value.attention ?? []), ...value.blocked, ...value.active, ...value.ready, ...(value.recentlyCompleted ?? [])];
   return [
     `${value.project}: ${value.status} ledger. Provider/capacity unverified; refresh admission before execution.`,
-    ...rows.map((item) => `${item.reason}: ${item.title}${item.summary ? ` — ${item.summary}` : ""}${item.nextAction && item.nextAction !== item.summary ? ` Next: ${item.nextAction}` : ""}${item.truncated ? " [text truncated]" : ""} [get_runner_context id=${item.id}]`),
+    ...rows.map((item) => `${item.reason}: ${item.title} [record updated ${item.updatedAt}]${item.summary ? ` — ${item.summary}` : ""}${item.nextAction && item.nextAction !== item.summary ? ` Next: ${item.nextAction}` : ""}${item.truncated ? " [text truncated]" : ""} [get_runner_context id=${item.id}]`),
     ...(value.omitted?.runs ? [`${value.omitted.runs} run observations not evaluated; expand their work before judging health.`] : []),
     ...(value.omitted && (value.omitted.actionable || value.omitted.sourceTruncated) ? ["More work omitted; expand list_work for this project before assuming no other attention."] : []),
   ].join("\n");

@@ -5,7 +5,9 @@ Owner: [#1698 commander discussion](https://github.com/teamleaderleo/stensibly/i
 `get_brief` compiles the existing project snapshot into one commander view. Open
 decisions/questions, blockers, and expired or unverified claims come first; ready
 tasks carry their recorded next action and priority as an inspectable selection
-reason. Up to two recorded task completions follow current actionable work. Rows
+reason. With at least two slots, one is reserved for a ready candidate; with at
+least three, one is also reserved for a recorded task result. This keeps old
+blockers from hiding every opportunity and result. Up to two results may appear. Rows
 appear once. Active work with live claims and historical knowledge stay compact.
 
 Each row's `id` expands through `get_runner_context({id})`. The result also names
@@ -16,15 +18,29 @@ Pass the returned `fingerprint` as `previousFingerprint` on a later planning rea
 Authorization and the ledger query run again before comparison. Snapshot age,
 claim expiry, scope, full selected text (including truncated suffixes), artifact
 evidence, and omitted coverage participate in the decision. Old snapshots and
-incomplete attention scans cannot return unchanged. Unevaluated hosted runs or
+incomplete attention scans cannot return unchanged. Output omissions from a complete
+scan can return unchanged: every evaluated actionable/result row binds the digest,
+and omission counts and expansion references remain in the response. Unevaluated hosted runs or
 reservations also prevent unchanged in this first slice. A matching fingerprint
 never authorizes an effect.
 
-The public renderer shows bounded reasons, summaries, next actions and exact row
+The public renderer shows record timestamps, bounded reasons, summaries, next actions and exact row
 references instead of replacing a large brief's text with only a hash. Text and
 structured content derive from the same object.
 
 ## Same-input measurement
+
+The initial-slice measurements below are historical. The connected follow-up on
+2026-09-05 found a 47-record project whose limit-3 read showed only three old
+blockers, hiding five ready items and all 32 done records. A second `list_work`
+read was needed to name a candidate. The balanced selection now exposes a blocker,
+candidate and result in that one overview, while clearly dating the stored evidence.
+
+A matching synthetic backlog compared against the pre-change compiler returns
+2,715 bytes initially versus 2,623 before; the 92-byte increase buys record dates
+and broader decision coverage. Repeated unchanged output falls from 2,623 to
+1,182 bytes (55% smaller), including omission counts and exact expansion references.
+Tests verify that hidden blocker edits and clearing invalidate the fingerprint.
 
 Run `bun scripts/measure-commander-read.ts`. It uses the retained original ledger
 brief and generic renderer for the baseline, then sends the identical source facts
@@ -76,7 +92,7 @@ prevent unchanged until their owning current-evidence adapter is integrated.
 
 The compiler scans at most 100 rows per existing source section and uses one
 shared output row budget (`limit`, default 10). Incomplete actionable scans are
-explicit. Text clipping is marked and full selected semantics bind the digest.
+explicit. Text clipping is marked and full evaluated semantics bind the digest.
 No new tool, storage ledger, Convex schema, execution path or history owner is added.
 
 The optional input and routing description rotate the published action contract;
