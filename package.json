@@ -23,6 +23,7 @@
     "glaeda:workstation": "bun scripts/glaeda-owned-workstation-runner.ts",
     "glaeda:verify-focused": "bun scripts/glaeda-verify-focused-runner.ts",
     "glaeda:verify-required": "bun scripts/glaeda-verify-focused-runner.ts --verification-profile required",
+    "local-action:verify-admission": "bun scripts/local-action-verify-admission.ts",
     "plugin:preflight": "bun scripts/chatgpt-plugin-preflight.ts",
     "plugin:efficiency": "bun scripts/chatgpt-surface-efficiency.ts",
     "verify:hosted": "bun src/verify-hosted-cli.ts",
