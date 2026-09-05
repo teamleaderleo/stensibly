@@ -192,6 +192,11 @@ function admitFreshness(
   current: LocalActionVerifyAdmissionCurrentV1,
   nowMilliseconds: number,
 ): void {
+  if (Date.parse(intent.createdAt) > nowMilliseconds) {
+    throw new RangeError(
+      "Local verify admission refused: intent createdAt cannot be in the future",
+    );
+  }
   if (Date.parse(intent.expiresAt) <= nowMilliseconds) {
     throw new RangeError("Local verify admission refused: intent is expired");
   }
