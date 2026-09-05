@@ -168,9 +168,9 @@ describe("runner context packets", () => {
       endedAt: "2026-09-01T05:26:47.551Z",
     };
     const detail = {
-      item,
+      item: { ...item, createdAt: generatedAt.toISOString(), updatedAt: generatedAt.toISOString() },
       control: projectItemControl({ item, now: generatedAt }),
-      events: store.listEvents(item.id),
+      events: store.listEvents(item.id).map(event => ({ ...event, createdAt: generatedAt.toISOString() })),
       artifacts: [{
         id: "artifact_verbose_history",
         itemId: item.id,
