@@ -299,6 +299,7 @@ export default defineSchema({
       v.literal("github_land_pr"),
       v.literal("github_branch_compensation"),
       v.literal("github_pull_request_compensation"),
+      v.literal("github_repository_file_compensation"),
     ),
     requestSha256: v.string(),
     state: v.union(
