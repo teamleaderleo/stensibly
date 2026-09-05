@@ -469,8 +469,9 @@ export function antigravityEnvironment(
   return environment;
 }
 
-export function buildAntigravityArgs(): readonly string[] {
+export function buildAntigravityArgs(repository: string): readonly string[] {
   return [
+    "--add-dir", repository,
     "--input-format", "stream-json",
     "--output-format", "stream-json",
     "--model", ANTIGRAVITY_MODEL,
@@ -835,7 +836,7 @@ export async function runAntigravityGeminiWorker(
   let accountSessionReady = false;
   let quotaBefore = emptyQuota(new Date().toISOString());
   let quotaAfter = emptyQuota(new Date().toISOString());
-  let workerCapture = emptyCapture([options.agyBin, ...buildAntigravityArgs()]);
+  let workerCapture = emptyCapture([options.agyBin, ...buildAntigravityArgs(options.repository)]);
   let parsed = emptyParsed();
   let stdoutArtifact: AntigravityStreamArtifact | null = null;
   let stderrArtifact: AntigravityStreamArtifact | null = null;
@@ -880,7 +881,7 @@ export async function runAntigravityGeminiWorker(
 
       const message = `${JSON.stringify({ event: "user", message: { content: briefBytes.toString("utf8") } })}\n`;
       workerStarted = true;
-      workerCapture = await captureCommand([options.agyBin, ...buildAntigravityArgs()], {
+      workerCapture = await captureCommand([options.agyBin, ...buildAntigravityArgs(options.repository)], {
         cwd: options.repository,
         env,
         stdin: new TextEncoder().encode(message),
@@ -984,7 +985,7 @@ export async function runAntigravityGeminiWorker(
       accountSessionReady,
     },
     invocation: {
-      args: buildAntigravityArgs(),
+      args: buildAntigravityArgs(options.repository),
       promptTransport: "stdin-stream-json",
       outputFormat: "stream-json",
       structuredOutputSchema: ANTIGRAVITY_RESULT_SCHEMA_VERSION,

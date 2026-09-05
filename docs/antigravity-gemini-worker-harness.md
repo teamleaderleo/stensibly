@@ -18,7 +18,7 @@ bun run antigravity-gemini:worker -- \
   --timeout-ms 1800000
 ```
 
-The repository must already be a task-private Git workspace admitted by the existing Stensibly/Glaeda path. The output directory must be new and outside that workspace. Antigravity may read and write the active workspace, but shell commands that still need approval are soft-denied in headless mode. Repository-owned focused/required verification remains an external Glaeda step; the worker may report attempts, but it cannot accept its own work.
+The repository must already be a task-private Git workspace admitted by the existing Stensibly/Glaeda path. Its exact canonical path is passed as `--add-dir` as well as the child working directory so a fresh home can recognize the active workspace. The output directory must be new and outside that workspace. Antigravity may read and write the active workspace, but shell commands that still need approval are soft-denied in headless mode. Repository-owned focused/required verification remains an external Glaeda step; the worker may report attempts, but it cannot accept its own work.
 
 `receipt.json` records exact node generation, Git before/after identity, Antigravity version, Google-account subscription auth class, model/effort, sandbox/permission flags, bounded artifacts, token categories, turns/steps/tools/subagents, pre/post quota snapshots, wall time, and explicit unknown acceptance/verification/economics fields. `/usage` is a provider text surface: percentages and reset timestamps are recorded only when the client states them. Missing quota dimensions remain `null`.
 

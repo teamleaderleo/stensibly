@@ -97,13 +97,14 @@ if (${JSON.stringify(mode)} === "signal-failed") process.kill(process.pid, "SIGT
 }
 
 test("Antigravity arguments pin Gemini Flash High, high effort, sandbox, and stream JSON", () => {
-  const args = buildAntigravityArgs();
+  const args = buildAntigravityArgs("/admitted/workspace");
+  expect(args.slice(0, 2)).toEqual(["--add-dir", "/admitted/workspace"]);
   expect(args).toContain(ANTIGRAVITY_MODEL);
   expect(args.slice(args.indexOf("--effort"), args.indexOf("--effort") + 2)).toEqual(["--effort", "high"]);
   expect(args).toContain("--sandbox");
   expect(args).toContain("--disable-slash-commands");
   expect(args).not.toContain("--dangerously-skip-permissions");
-  expect(args.slice(0, 4)).toEqual(["--input-format", "stream-json", "--output-format", "stream-json"]);
+  expect(args.slice(2, 6)).toEqual(["--input-format", "stream-json", "--output-format", "stream-json"]);
 });
 
 test("environment forwards only the auth/runtime allowlist and never API keys", () => {
