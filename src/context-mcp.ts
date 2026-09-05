@@ -9,7 +9,7 @@ export function registerContextPacketTools(server: McpServer, ledger: WorkLedger
   server.registerTool(
     "get_runner_context",
     {
-      description: "Generate a bounded runner handoff packet from canonical item state, protected blocker and decision events, artifacts, runs, and dependencies. Sensitive credential fields are redacted.",
+      description: "Generate a bounded runner handoff packet from canonical item state, protected blocker and decision events, artifacts, runs, and dependencies. Includes an explicit claim handoff: pass claimHandoff.claimGeneration as expectedClaimGeneration in claim-gated mutations. Sensitive credential fields are redacted.",
       inputSchema: {
         id: z.string().trim().min(1),
         maxEvents: z.number().int().min(1).max(100).default(8),

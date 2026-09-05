@@ -204,7 +204,7 @@ const publicToolDescriptions: Readonly<Record<string, string>> = Object.freeze({
   dispatch_work: "Claim one exact item generation and dispatch one runner profile.",
   get_brief: "Read attention, blockers, results and ready candidates with exact refs. Provider readiness is unverified. Reuse previousFingerprint for unchanged reads.",
   get_project_attachment: "Read accepted project policy and attachment recovery state.",
-  get_runner_context: "Read the bounded canonical item, run, source, and receipt packet.",
+  get_runner_context: "Read the bounded canonical item, run, source, and receipt packet with its claim handoff.",
   github_add_issue_comment: "Add one idempotent comment to a bound GitHub issue.",
   github_ci_diagnose: "Join PR head, statuses, runs, failed jobs, and optional failed steps.",
   github_create_issue: "Create one idempotent issue in a bound GitHub repository.",

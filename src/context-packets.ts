@@ -36,11 +36,20 @@ export interface RunnerContextRecord {
   [key: string]: unknown;
 }
 
+export interface RunnerContextClaimHandoff {
+  claimGeneration: number;
+  claimedBy: string | null;
+  claimExpiresAt: string | null;
+  leaseLive: boolean;
+  useAs: "expectedClaimGeneration";
+}
+
 export interface RunnerContextPacket {
   version: 1;
   generatedAt: string;
   packetFingerprint?: string;
   item: Item;
+  claimHandoff: RunnerContextClaimHandoff;
   intent: {
     objective: string;
     summary: string | null;
@@ -117,15 +126,18 @@ export function buildRunnerContextPacket(
   };
 
   const item = normalizeItem(detail.item);
+  const asOf = options.now ?? canonicalAsOf(detail);
+  const claimHandoff = buildClaimHandoff(item, asOf);
   while (true) {
     const packet = assemblePacket(
       item,
+      claimHandoff,
       events,
       artifacts,
       runs,
       dependencies,
       omitted,
-      options.now ?? canonicalAsOf(detail),
+      asOf,
     );
     if (packet.characterCount <= options.maxCharacters) return packet;
 
@@ -171,6 +183,7 @@ export function buildRunnerContextPacket(
 
 function assemblePacket(
   item: Item,
+  claimHandoff: RunnerContextClaimHandoff,
   events: RunnerContextEvent[],
   artifacts: RunnerContextArtifact[],
   runs: RunnerContextRecord[],
@@ -182,6 +195,7 @@ function assemblePacket(
     version: 1 as const,
     generatedAt: now.toISOString(),
     item,
+    claimHandoff,
     intent: {
       objective: item.title,
       summary: item.summary,
@@ -234,6 +248,19 @@ function boundedInteger(
     throw new RangeError(`${label} must be between ${minimum} and ${maximum}`);
   }
   return normalized;
+}
+
+function buildClaimHandoff(item: Item, now: Date): RunnerContextClaimHandoff {
+  const expiresMs = item.claimExpiresAt ? Date.parse(item.claimExpiresAt) : NaN;
+  return {
+    claimGeneration: item.claimGeneration,
+    claimedBy: item.claimedBy,
+    claimExpiresAt: item.claimExpiresAt,
+    leaseLive: item.claimedBy !== null
+      && Number.isFinite(expiresMs)
+      && expiresMs > now.getTime(),
+    useAs: "expectedClaimGeneration",
+  };
 }
 
 function normalizeItem(item: Item): Item {

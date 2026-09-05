@@ -11,7 +11,10 @@ blockers from hiding every opportunity and result. Up to two results may appear.
 appear once. Active work with live claims and historical knowledge stay compact.
 
 Each row's `id` expands through `get_runner_context({id})`. The result also names
-the project policy and omitted-work reads. A ready record is a candidate to inspect,
+the project policy and omitted-work reads. The packet carries an explicit
+`claimHandoff` (`claimGeneration` to pass as `expectedClaimGeneration` in
+claim-gated mutations, plus lease liveness), so no second read is needed to act
+on the expanded row. A ready record is a candidate to inspect,
 not evidence that provider capacity, dependencies or execution admission passed.
 
 Pass the returned `fingerprint` as `previousFingerprint` on a later planning read.

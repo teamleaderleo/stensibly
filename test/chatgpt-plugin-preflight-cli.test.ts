@@ -8,7 +8,7 @@ describe("ChatGPT plugin publication preflight", () => {
     expect(report).toMatchObject({
       version: 1,
       status: "ready_for_portal_scan",
-      snapshotVersion: 28,
+      snapshotVersion: 29,
       profile: "published_default",
       toolCount: 21,
       toolContractVersion: 2,

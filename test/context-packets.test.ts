@@ -312,6 +312,86 @@ describe("runner context packets", () => {
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toMatchObject({ code: "invalid_request" });
   });
+
+  test("exposes an explicit claim handoff that drives gated mutations without an extra read", async () => {
+    const item = store.createItem({
+      project: "studio",
+      kind: "task",
+      title: "Hand off the exact claim generation",
+      summary: "The runner packet carries the generation.",
+      nextAction: "Complete the work from the packet handoff.",
+      priority: 60,
+      actor: leo,
+    });
+    const ledger = new SqliteWorkLedger(store);
+
+    const unclaimed = await getRunnerContextPacket(ledger, item.id, { now: generatedAt });
+    expect(unclaimed.claimHandoff).toEqual({
+      claimGeneration: 0,
+      claimedBy: null,
+      claimExpiresAt: null,
+      leaseLive: false,
+      useAs: "expectedClaimGeneration",
+    });
+
+    const claimed = await ledger.claimWork({ id: item.id, actor: leo, leaseSeconds: 900 });
+    const packet = await getRunnerContextPacket(ledger, item.id, { now: generatedAt });
+    expect(packet.claimHandoff).toEqual({
+      claimGeneration: claimed.claimGeneration,
+      claimedBy: leo.id,
+      claimExpiresAt: claimed.claimExpiresAt,
+      leaseLive: true,
+      useAs: "expectedClaimGeneration",
+    });
+    expect(packet.item.claimGeneration).toBe(packet.claimHandoff.claimGeneration);
+
+    // The tightest supported budget still preserves the handoff untouched.
+    const tight = await getRunnerContextPacket(ledger, item.id, {
+      maxCharacters: 2_000,
+      now: generatedAt,
+    });
+    expect(tight.claimHandoff).toEqual(packet.claimHandoff);
+    expect(tight.characterCount).toBeLessThanOrEqual(2_000);
+    expect(JSON.stringify(tight).length).toBe(tight.characterCount);
+
+    // One packet read is enough to complete behind the claim fence.
+    const completed = await ledger.completeWork({
+      id: item.id,
+      actor: leo,
+      expectedClaimGeneration: packet.claimHandoff.claimGeneration,
+    });
+    expect(completed.status).toBe("done");
+  });
+
+  test("reports an expired lease as not live in the claim handoff", () => {
+    const item = store.createItem({
+      project: "studio",
+      kind: "task",
+      title: "Expired lease visibility",
+      priority: 50,
+      actor: leo,
+    });
+    const expired = buildRunnerContextPacket({
+      item: {
+        ...item,
+        claimedBy: leo.id,
+        claimExpiresAt: "2026-01-01T00:00:00.000Z",
+        claimGeneration: 2,
+      },
+      control: projectItemControl({ item, now: generatedAt }),
+      events: [],
+      artifacts: [],
+      runs: [],
+      dependencies: [],
+    }, { now: generatedAt });
+    expect(expired.claimHandoff).toEqual({
+      claimGeneration: 2,
+      claimedBy: leo.id,
+      claimExpiresAt: "2026-01-01T00:00:00.000Z",
+      leaseLive: false,
+      useAs: "expectedClaimGeneration",
+    });
+  });
 });
 
 function bearer(token: string): Record<string, string> {
