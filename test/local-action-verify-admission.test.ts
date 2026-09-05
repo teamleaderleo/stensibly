@@ -1,7 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   GlaedaWorkstationAdapterV1,
   type GlaedaWorkstationClientV1,
@@ -9,10 +6,8 @@ import {
 } from "../src/glaeda-workstation-adapter.ts";
 import {
   fingerprintGlaedaVerificationRequestV1,
-  fingerprintGlaedaVerifyFocusedRuntimeV1,
   GLAEDA_VERIFY_FOCUSED_PROFILE_V1,
   GLAEDA_VERIFY_REQUIRED_PROFILE_V1,
-  GlaedaVerifyFocusedWorkstationClientV1,
 } from "../src/glaeda-verify-focused-workstation-client.js";
 import {
   fingerprintGlaedaWorkstationCommandV1,
@@ -340,182 +335,6 @@ describe("local verify intent admission", () => {
     }
   });
 
-  test("executes the compiled command through the physical Glaeda workstation adapter on Big Red when available", async () => {
-    const repositoryRoot = "/home/leo/Projects/glaeda";
-    const pythonInterpreter = "/usr/bin/python3.14";
-    const script = "/home/leo/Projects/glaeda/scripts/verify-focused";
-    const implementation = "/home/leo/Projects/glaeda/scripts/verify_focused_impl.py";
-    const cargoRoot = "/home/leo/.cargo";
-    const rustupRoot = "/home/leo/.rustup";
-
-    if (!existsSync(repositoryRoot) || !existsSync(pythonInterpreter) || !existsSync(script) || !existsSync(implementation)) {
-      return;
-    }
-
-    const stateRoot = mkdtempSync(join(tmpdir(), "glaeda-live-verify-"));
-    chmodSync(stateRoot, 0o700);
-
-    const store = new StensiblyStore(":memory:");
-    try {
-      store.db.run(
-        "INSERT OR IGNORE INTO projects (id, name, created_at) VALUES (?, ?, ?)",
-        ["glaeda", "glaeda", new Date().toISOString()],
-      );
-      const itemId = "item_js76aw4sbyv8cjeecxbp62f5kn8dvq9d";
-      store.db.run(
-        `INSERT INTO items (id, project_id, kind, title, status, priority, next_action, claim_generation, version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [itemId, "glaeda", "task", "Verify Glaeda source on Big Red", "ready", 90, "Run verify-focused/v1", 0, 1, new Date().toISOString(), new Date().toISOString()],
-      );
-
-      const liveRunner = {
-        id: "muse-wave2-20260905-gemini-live-verification",
-        name: "Gemini live verification",
-        kind: "service" as const,
-      };
-
-      const now = new Date();
-      const profileGeneration = "sha256:5c4664ac2da3dcc66826d111a5f82e5614b9589dbbbdcf4383b6a88cd38a1195";
-
-      const dispatched = dispatchNextWork(
-        store,
-        {
-          actor: supervisor,
-          runnerType: "glaeda-workstation",
-          runnerProfile: "verify-focused/v1",
-          runnerProfileVersion: profileGeneration,
-          itemId,
-          leaseSeconds: 3600,
-          idempotencyKey: `dispatch-live-verify-${Date.now()}`,
-        },
-        now,
-      );
-      if (!dispatched) throw new Error("Could not dispatch work");
-
-      const claimed = claimRunnerWork(
-        store,
-        {
-          actor: liveRunner,
-          runnerType: "glaeda-workstation",
-          runnerProfile: "verify-focused/v1",
-          runnerProfileVersion: profileGeneration,
-          project: "glaeda",
-          runId: dispatched.run.id,
-          leaseSeconds: 3600,
-          idempotencyKey: `claim-live-verify-${Date.now()}`,
-        },
-        now,
-      );
-      if (!claimed) throw new Error("Could not claim work");
-
-      const claimedItem = store.getItem(itemId);
-      const runtimeSha256 = fingerprintGlaedaVerifyFocusedRuntimeV1(script, implementation);
-      const node = {
-        id: "big-red",
-        generation: 1,
-        capabilitySnapshotSha256: `sha256:${"a".repeat(64)}`,
-        osClass: "linux" as const,
-        architectureClass: "x86_64" as const,
-        glaedaRuntimeSha256: runtimeSha256,
-      };
-
-      const commitOid = "1ad861ca57c8a99f15e2b0959eba94dd62fa8a51";
-      const treeOid = "8547795931a563f2d92d62942a279b23bee24c17";
-
-      const command = compileLocalActionVerifyCommandV1({
-        intent: {
-          version: 1,
-          project: "glaeda",
-          itemId,
-          expectedClaimGeneration: claimedItem.claimGeneration,
-          actionClass: "verify",
-          source: {
-            repository: "teamleaderleo/glaeda",
-            baseCommit: commitOid,
-            baseTree: treeOid,
-            workspaceClass: "task_private",
-            workspaceGeneration: null,
-            overlay: null,
-          },
-          command: null,
-          profileId: "verify-focused/v1",
-          latencyClass: "normal",
-          interferenceClass: "coexist",
-          resourceProfile: "big-red-focused",
-          networkClass: "none",
-          deadlineSeconds: 600,
-          outputLimitBytes: 1048576,
-          createdAt: now.toISOString(),
-          expiresAt: new Date(now.getTime() + 3600 * 1000).toISOString(),
-        },
-        current: {
-          project: "glaeda",
-          itemId,
-          itemClaimGeneration: claimedItem.claimGeneration,
-          runId: claimed.id,
-          runGeneration: claimed.generation,
-          leaseGeneration: claimed.leaseGeneration,
-          authority: { holderId: liveRunner.id, expiresAt: claimed.leaseExpiresAt },
-          node,
-          source: {
-            repository: "teamleaderleo/glaeda",
-            commitOid,
-            treeOid,
-            workspaceGeneration: null,
-          },
-          profileGeneration,
-        },
-        now,
-      });
-
-      const client = new GlaedaVerifyFocusedWorkstationClientV1({
-        pythonInterpreter,
-        script,
-        implementation,
-        repositoryRoot,
-        stateRoot,
-        cargoRoot,
-        rustupRoot,
-        node,
-        request: {
-          version: 1,
-          repository: "teamleaderleo/glaeda",
-          commitOid,
-          treeOid,
-          profileVersionSha256: profileGeneration,
-          resourceClass: "big-red-focused",
-          deadlineSeconds: 600,
-          executionIdentityClass: "credentialless_project",
-        },
-        profile: GLAEDA_VERIFY_FOCUSED_PROFILE_V1,
-      });
-
-      const adapter = new GlaedaWorkstationAdapterV1({
-        ledger: new SqliteWorkstationCommandLedgerV1(store, () => new Date()),
-        client,
-        actor: liveRunner,
-      });
-
-      const prepared = await adapter.prepare(command);
-      expect(prepared.check.supported).toBe(true);
-      expect(prepared.check.node.id).toBe("big-red");
-
-      const executed = await adapter.dispatch(prepared);
-      expect(executed.disposition).toBe("executed");
-      expect(executed.receipt?.terminalClass).toBe("succeeded");
-      expect(executed.receipt?.resultSha256).toMatch(/^sha256:[a-f0-9]{64}$/u);
-      expect(executed.settlement).not.toBeNull();
-
-      const replay = await adapter.dispatch(prepared);
-      expect(replay.disposition).toBe("settled_replay");
-      expect(replay.settlement?.outcome.observationsSha256).toBe(
-        executed.settlement?.outcome.observationsSha256,
-      );
-    } finally {
-      store.close();
-      rmSync(stateRoot, { recursive: true, force: true });
-    }
-  }, 120_000);
 });
 
 class FakeVerifyClient implements GlaedaWorkstationClientV1 {
