@@ -72,6 +72,9 @@ try {
       : { leaseSeconds: positiveInteger(values["lease-seconds"], "--lease-seconds") }),
   });
   console.log(JSON.stringify({ schema: "glaeda-verify-focused-run/v1", ...result }));
+  // A settled failed verification is a normal typed result, but must still fail
+  // the invoking worker/CI command so it cannot advance as a successful check.
+  if (result.outcome === "failed") process.exitCode = 1;
 } catch (error) {
   const message = error instanceof Error ? error.message : "unknown failure";
   console.error(JSON.stringify({
