@@ -1,0 +1,111 @@
+import { describe, expect, test } from "bun:test";
+
+import {
+  deriveRunId,
+  deriveSessionId,
+  proposeCallsigns,
+  signatureBlock,
+  slug,
+  type SessionState,
+} from "../src/callsign-session.js";
+import type { ParsedGitHubCallsignReceipt } from "../src/github-callsign-registry.js";
+
+function receipt(
+  callsign: string,
+  overrides: Partial<ParsedGitHubCallsignReceipt> = {},
+): ParsedGitHubCallsignReceipt {
+  return {
+    version: 0,
+    status: "accepted",
+    commentId: 1,
+    commentUrl: "https://example.invalid/1",
+    callsign,
+    sigil: "🪙",
+    collisionKey: callsign.toLowerCase(),
+    requestComment: "https://example.invalid/0",
+    runId: "run_example_1",
+    sessionId: "session-1",
+    generation: 1,
+    acceptedAt: "2026-09-23T00:00:00.000Z",
+    expiresAt: "2026-09-24T00:00:00.000Z",
+    releasedAt: null,
+    reason: null,
+    receiptAuthority: "github-actions[bot]",
+    ...overrides,
+  };
+}
+
+describe("slug", () => {
+  test("normalizes to identifier-safe text", () => {
+    expect(slug("cmux CI / land ready PRs")).toBe("cmux_ci_land_ready_prs");
+  });
+
+  test("falls back when nothing survives normalization", () => {
+    expect(slug("///")).toBe("session");
+    expect(slug("   ")).toBe("session");
+  });
+
+  test("bounds runaway input", () => {
+    expect(slug("a".repeat(500)).length).toBe(80);
+  });
+});
+
+describe("derived identifiers", () => {
+  test("run id satisfies the registry grammar", () => {
+    const runId = deriveRunId("cmux ci");
+    expect(runId).toMatch(/^run_[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+    expect(runId.length).toBeLessThanOrEqual(160);
+  });
+
+  test("run ids are unique across calls", () => {
+    expect(deriveRunId("same")).not.toBe(deriveRunId("same"));
+  });
+
+  test("session id satisfies the registry grammar", () => {
+    const sessionId = deriveSessionId("cmux ci");
+    expect(sessionId).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+    expect(sessionId.length).toBeLessThanOrEqual(160);
+  });
+});
+
+describe("proposeCallsigns", () => {
+  test("never proposes a name the registry has issued", () => {
+    const history = ["Capybara", "Anvil", "Quixote", "StackTrace"].map((name) => receipt(name));
+    const proposed = proposeCallsigns(history, 12);
+    for (const name of proposed) {
+      expect(history.some((entry) => entry.callsign === name)).toBe(false);
+    }
+  });
+
+  test("avoids released names too, so history stays legible", () => {
+    const history = [receipt("Capybara", { status: "released", releasedAt: "2026-09-23T01:00:00.000Z" })];
+    expect(proposeCallsigns(history, 12)).not.toContain("Capybara");
+  });
+
+  test("returns the requested number of distinct names", () => {
+    const proposed = proposeCallsigns([], 10);
+    expect(proposed).toHaveLength(10);
+    expect(new Set(proposed).size).toBe(10);
+  });
+});
+
+describe("signatureBlock", () => {
+  test("renders the callsign, generation, sigil and run", () => {
+    const state: SessionState = {
+      version: 1,
+      repository: "teamleaderleo/stensibly",
+      issueNumber: 454,
+      callsign: "Rockall",
+      sigil: "🪙",
+      collisionKey: "rockall",
+      generation: 2,
+      runId: "run_example_20260923_abcd",
+      sessionId: "session-1",
+      acceptedAt: "2026-09-23T00:00:00.000Z",
+      expiresAt: "2026-09-24T00:00:00.000Z",
+      receiptCommentUrl: "https://example.invalid/receipt",
+      requestCommentUrl: "https://example.invalid/request",
+    };
+    expect(signatureBlock(state)).toBe("— Rockall g2 🪙\nRun: run_example_20260923_abcd");
+  });
+});
