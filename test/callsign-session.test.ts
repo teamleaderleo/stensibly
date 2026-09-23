@@ -4,7 +4,9 @@ import {
   deriveRunId,
   deriveSessionId,
   proposeCallsigns,
+  sessionKey,
   signatureBlock,
+  statePath,
   slug,
   type SessionState,
 } from "../src/callsign-session.js";
@@ -107,5 +109,55 @@ describe("signatureBlock", () => {
       requestCommentUrl: "https://example.invalid/request",
     };
     expect(signatureBlock(state)).toBe("— Rockall g2 🪙\nRun: run_example_20260923_abcd");
+  });
+});
+
+describe("session isolation", () => {
+  const vars = ["CALLSIGN_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CODEX_SESSION_ID"];
+  const saved: Record<string, string | undefined> = {};
+
+  function clear() {
+    for (const v of vars) {
+      saved[v] = process.env[v];
+      delete process.env[v];
+    }
+  }
+  function restore() {
+    for (const v of vars) {
+      if (saved[v] === undefined) delete process.env[v];
+      else process.env[v] = saved[v];
+    }
+  }
+
+  test("reads the session id Claude Code actually sets", () => {
+    clear();
+    try {
+      process.env.CLAUDE_CODE_SESSION_ID = "c0ed5db7-a316-5df2-a099-c9a131135628";
+      expect(deriveSessionId("anything")).toBe("c0ed5db7_a316_5df2_a099_c9a131135628");
+    } finally {
+      restore();
+    }
+  });
+
+  test("two sessions on one machine never share a state file", () => {
+    clear();
+    try {
+      process.env.CLAUDE_CODE_SESSION_ID = "11111111-1111-1111-1111-111111111111";
+      const first = statePath();
+      process.env.CLAUDE_CODE_SESSION_ID = "22222222-2222-2222-2222-222222222222";
+      const second = statePath();
+      expect(first).not.toBe(second);
+    } finally {
+      restore();
+    }
+  });
+
+  test("identical scope and host still yield distinct ids with no session var", () => {
+    clear();
+    try {
+      expect(deriveSessionId("cmux-ci")).not.toBe(deriveSessionId("cmux-ci"));
+    } finally {
+      restore();
+    }
   });
 });
