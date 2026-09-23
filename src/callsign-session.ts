@@ -48,10 +48,25 @@ export interface SessionState {
   requestCommentUrl: string;
 }
 
-function statePath(): string {
+/**
+ * The worker session this process belongs to.
+ *
+ * Several agent sessions share one machine and one $HOME, so anything derived
+ * from the environment alone collides across them.
+ */
+export function sessionKey(): string {
+  return process.env.CALLSIGN_SESSION_ID
+    ?? process.env.CLAUDE_CODE_SESSION_ID
+    ?? process.env.CODEX_SESSION_ID
+    ?? "";
+}
+
+export function statePath(): string {
   const base = process.env.CALLSIGN_STATE_DIR
     ?? join(process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "callsign");
-  return join(base, "session.json");
+  const key = sessionKey();
+  // One file per session. A shared path hands one worker another's lease.
+  return join(base, key ? `session-${slug(key)}.json` : "session-unkeyed.json");
 }
 
 async function readState(): Promise<SessionState | null> {
@@ -159,10 +174,10 @@ export function deriveRunId(scope: string | undefined): string {
 }
 
 export function deriveSessionId(scope: string | undefined): string {
-  const provided = process.env.CALLSIGN_SESSION_ID
-    ?? process.env.CLAUDE_SESSION_ID
-    ?? process.env.CODEX_SESSION_ID;
-  if (provided) return slug(provided).slice(0, 160).replace(/^$/u, "session");
+  const provided = sessionKey();
+  if (provided) return slug(provided).slice(0, 160) || "session";
+  // No session identity available: never reuse a name another worker could also
+  // derive, so fall back to something unique per invocation.
   return `${slug(hostname())}-${slug(scope ?? "worker")}-${randomBytes(5).toString("hex")}`
     .slice(0, 160);
 }
@@ -213,7 +228,11 @@ async function commandStart(args: Map<string, string>, flags: Set<string>): Prom
   const repository = args.get("repo") ?? defaultRepository;
   const issueNumber = Number(args.get("issue") ?? defaultIssueNumber);
   const existing = await readState();
-  if (existing && !flags.has("force") && Date.parse(existing.expiresAt) > Date.now()) {
+  const currentSession = args.get("session") ?? deriveSessionId(args.get("scope"));
+  if (
+    existing && !flags.has("force") && Date.parse(existing.expiresAt) > Date.now()
+    && existing.sessionId === currentSession
+  ) {
     process.stderr.write(
       `Already holding ${existing.callsign} g${existing.generation} until ${existing.expiresAt}.\n`
         + "Use --force to reserve another, or `callsign end` to release it first.\n",
@@ -224,7 +243,7 @@ async function commandStart(args: Map<string, string>, flags: Set<string>): Prom
 
   const scope = args.get("scope");
   const runId = args.get("run") ?? deriveRunId(scope);
-  const sessionId = args.get("session") ?? deriveSessionId(scope);
+  const sessionId = currentSession;
   const ttl = args.get("ttl") ?? "24h";
   const categories = args.get("category")?.split(",").map((entry) => entry.trim());
 
@@ -287,6 +306,14 @@ async function commandSign(): Promise<number> {
   if (Date.parse(state.expiresAt) <= Date.now()) {
     process.stderr.write(
       `Lease on ${state.callsign} expired at ${state.expiresAt}. Run \`callsign start\` again.\n`,
+    );
+    return 1;
+  }
+  const current = sessionKey();
+  if (current && state.sessionId !== slug(current).slice(0, 160)) {
+    process.stderr.write(
+      `Stored lease on ${state.callsign} belongs to session ${state.sessionId}, not this one. `
+        + "Refusing to sign another worker's callsign; run `callsign start`.\n",
     );
     return 1;
   }
