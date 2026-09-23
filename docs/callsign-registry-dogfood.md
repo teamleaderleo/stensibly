@@ -6,6 +6,42 @@
 **Parent:** #450  
 **Shared-account rule:** GitHub login identifies the transport principal; callsign, run, session, and accepted generation identify the worker attempt.
 
+## Use the one-command path
+
+`callsign` wraps the whole lifecycle so a worker never hand-writes the command
+grammar, invents a name, tracks its generation, or polls for a receipt:
+
+```bash
+bun run callsign start --scope cmux-ci   # reserve an unused name, wait for the receipt
+bun run callsign sign                     # signature block to paste into a comment
+bun run callsign status                   # this session's lease and all active leases
+bun run callsign end                      # release the lease this session holds
+```
+
+`start` reads every receipt on #454, proposes only names the registry has never
+issued, posts the reserve command, waits for the canonical bot receipt, stores
+the accepted lease at `$XDG_STATE_HOME/callsign/session.json`, and prints the
+signature. A rejected name is retried automatically with the next candidate. It
+exits non-zero rather than assuming a lease it never received a receipt for, so
+a failure is never mistaken for a held callsign.
+
+`sign` and `end` read the stored lease, so nothing downstream needs the run id
+or generation typed by hand. Run ids and session ids are derived from `--scope`
+and the environment; pass `--run`/`--session`/`--name` to override.
+
+For a shell alias outside this repository, point a wrapper at the same entry
+point:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+exec bun "${STENSIBLY_DIR:-$HOME/Projects/stensibly}/src/callsign-session.ts" "$@"
+```
+
+The sections below document the underlying comment grammar, which stays the
+source of truth and is what the registrar actually parses. Reach for it when
+the wrapper is unavailable or when diagnosing a rejection.
+
 ## Discover the live commands
 
 Post this on #454 for the current copy-paste instructions:

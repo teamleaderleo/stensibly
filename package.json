@@ -12,6 +12,7 @@
     "snapshot": "bun src/snapshot-cli.ts",
     "attach": "bun src/project-attach-cli.ts",
     "callsigns": "bun src/callsigns.ts",
+    "callsign": "bun src/callsign-session.ts",
     "callsign-catalog": "bun src/callsign-catalog-cli.ts",
     "sol-luna:worker": "bun scripts/sol-luna-worker.ts",
     "worker:glance": "bun scripts/worker-glance.ts",
