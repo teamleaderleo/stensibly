@@ -99,16 +99,19 @@ export function parseNamegenArgs(
     avoid: [],
     vibe: undefined,
   };
-  let index = 0;
-  const first = args[0];
-  if (first === "propose" || first === "check" || first === "derive" || first === "help") {
-    parsed.subcommand = first;
-    index = 1;
-  }
+  let subcommandSeen = false;
   let optionsEnded = false;
-  for (; index < args.length; index += 1) {
+  for (let index = 0; index < args.length; index += 1) {
     const raw = args[index] ?? "";
     if (optionsEnded || !raw.startsWith("-")) {
+      if (
+        !subcommandSeen && !optionsEnded && parsed.names.length === 0
+        && (raw === "propose" || raw === "check" || raw === "derive" || raw === "help")
+      ) {
+        parsed.subcommand = raw;
+        subcommandSeen = true;
+        continue;
+      }
       parsed.names.push(raw);
       continue;
     }
@@ -119,6 +122,9 @@ export function parseNamegenArgs(
     const equals = raw.startsWith("--") ? raw.indexOf("=") : -1;
     const argument = equals === -1 ? raw : raw.slice(0, equals);
     const inline = equals === -1 ? undefined : raw.slice(equals + 1);
+    const flag = (): void => {
+      if (inline !== undefined) throw new Error(`${argument} takes no value`);
+    };
     const value = (): string => {
       if (inline !== undefined) return inline;
       const next = args[index + 1];
@@ -129,12 +135,15 @@ export function parseNamegenArgs(
     switch (argument) {
       case "--help":
       case "-h":
+        flag();
         parsed.subcommand = "help";
         break;
       case "--json":
+        flag();
         parsed.json = true;
         break;
       case "--offline":
+        flag();
         parsed.offline = true;
         break;
       case "--registry-file":
@@ -243,13 +252,16 @@ export function resolveVibeChoice(
 ): VibeChoice {
   if (flag !== undefined) return { vibe: resolveVibe(flag), source: "flag" };
   if (env.CALLSIGN_VIBE) return { vibe: resolveVibe(env.CALLSIGN_VIBE), source: "env" };
+  // Walk up to the repository root only, so a stray file in an unrelated
+  // ancestor (such as $HOME) never overrides a repository without one.
   for (let directory = resolve(cwd); ; directory = dirname(directory)) {
     const path = join(directory, ".callsign.json");
     const vibe = configuredVibe(readJson(path), path);
     if (vibe !== undefined) return { vibe, source: "repo", path };
-    if (dirname(directory) === directory) break;
+    if (isRepositoryRoot(directory) || dirname(directory) === directory) break;
   }
-  const userPath = join(env.XDG_CONFIG_HOME ?? join(env.HOME ?? homedir(), ".config"), "callsign", "config.json");
+  const configHome = env.XDG_CONFIG_HOME || join(env.HOME || homedir(), ".config");
+  const userPath = join(configHome, "callsign", "config.json");
   const userVibe = configuredVibe(readJson(userPath), userPath);
   if (userVibe !== undefined) return { vibe: userVibe, source: "user", path: userPath };
   return { vibe: defaultNamegenVibe, source: "default" };
@@ -269,11 +281,21 @@ function configuredVibe(config: unknown, path: string): NamegenVibe | undefined 
 
 function defaultReadJson(path: string): unknown {
   if (!existsSync(path)) return undefined;
+  let text: string;
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    throw new Error(`Cannot read ${path}: ${(error as Error).message}`);
+  }
+  try {
+    return JSON.parse(text);
   } catch (error) {
     throw new Error(`${path} is not valid JSON: ${(error as Error).message}`);
   }
+}
+
+function isRepositoryRoot(directory: string): boolean {
+  return existsSync(join(directory, ".git"));
 }
 
 export function reserveCommand(input: {

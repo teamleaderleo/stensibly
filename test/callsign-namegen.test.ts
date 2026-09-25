@@ -55,6 +55,12 @@ describe("callsign derivation contract", () => {
     }
   });
 
+  test("hosted leases still reject control characters before trimming", () => {
+    for (const value of ["Talon\n", "\tTalon", "Talon\r"]) {
+      expect(() => canonicalHostedCallsign(value)).toThrow("unsupported control characters");
+    }
+  });
+
   test("the registrar stamps the sigil namegen derives", () => {
     for (const [callsign, sigil] of [["Teakettle", "💾"], ["Quillmoor", "🌊"]] as const) {
       const decision = decideGitHubCallsignCommand({
@@ -226,6 +232,9 @@ describe("namegen vibes", () => {
     expect(resolveVibeChoice(undefined, env, "/work/team/app", read)).toEqual({ vibe: "whimsical", source: "repo", path: "/work/team/.callsign.json" });
     expect(resolveVibeChoice(undefined, env, "/elsewhere", read)).toEqual({ vibe: "ops", source: "user", path: "/home/me/.config/callsign/config.json" });
     expect(resolveVibeChoice(undefined, {}, "/elsewhere", () => undefined)).toEqual({ vibe: "ops", source: "default" });
+    expect(resolveVibeChoice(undefined, { HOME: "/home/me", XDG_CONFIG_HOME: "" }, "/elsewhere", read).path).toBe(
+      "/home/me/.config/callsign/config.json",
+    );
     expect(() => resolveVibeChoice(undefined, env, "/x", () => ({ vibe: "grim" }))).toThrow("/x/.callsign.json");
   });
 });
@@ -333,6 +342,8 @@ describe("namegen CLI", () => {
     expect(parseNamegenArgs(["--run=run_a", "--count=3"], {})).toMatchObject({ run: "run_a", count: 3 });
     expect(parseNamegenArgs(["check", "--", "--odd"], {}).names).toEqual(["--odd"]);
     expect(() => parseNamegenArgs(["--bogus"], {})).toThrow("Unknown option: --bogus");
+    expect(() => parseNamegenArgs(["--offline=false"], {})).toThrow("--offline takes no value");
+    expect(parseNamegenArgs(["--json", "check", "Rook"], {})).toMatchObject({ subcommand: "check", names: ["Rook"], json: true });
   });
 
   test("an invalid --avoid entry names itself", () => {
