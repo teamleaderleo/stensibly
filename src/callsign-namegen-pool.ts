@@ -12,9 +12,9 @@
  * exhausted the curated pool.
  */
 
-export const namegenVibes = ["ops", "whimsical", "lame"] as const;
+export const namegenVibes = ["cute", "ops", "lame"] as const;
 export type NamegenVibe = typeof namegenVibes[number];
-export const defaultNamegenVibe: NamegenVibe = "ops";
+export const defaultNamegenVibe: NamegenVibe = "cute";
 
 export interface NamegenVibePool {
   description: string;
@@ -24,6 +24,49 @@ export interface NamegenVibePool {
 }
 
 export const namegenVibePools: Readonly<Record<NamegenVibe, NamegenVibePool>> = {
+  cute: {
+    description: "Cozy, cute everyday words (Teapot, Muffin, Crumpet, Honeypuff).",
+    curated: [
+      "Acorn", "Apricot", "Avocet", "Bagel", "Banjo", "Berry", "Biscuit", "Blanket",
+      "Blossom", "Bluebell", "Bonbon", "Bramble", "Brioche", "Bullfinch", "Bumblebee", "Bunny",
+      "Bunting", "Burrow", "Buttercup", "Button", "Canopy", "Caramel", "Cashew", "Catkin",
+      "Cello", "Cherry", "Chestnut", "Chipmunk", "Cinnamon", "Clover", "Cocoa", "Coconut",
+      "Cottage", "Cozy", "Crocus", "Croissant", "Crouton", "Crumpet", "Cuddle", "Cupcake",
+      "Custard", "Cygnet", "Dahlia", "Daisy", "Damson", "Dewdrop", "Dimple", "Dolphin",
+      "Domino", "Dumpling", "Easel", "Ermine", "Fawn", "Feather", "Fennel", "Filbert",
+      "Finch", "Firefly", "Fondant", "Fondue", "Foxglove", "Gecko", "Gingersnap", "Glimmer",
+      "Gumdrop", "Hammock", "Hamster", "Hazelnut", "Hedgehog", "Honeybee", "Hopscotch", "Hyacinth",
+      "Ibis", "Icicle", "Inkwell", "Jasmine", "Jellybean", "Jonquil", "Juniper", "Kettle",
+      "Kingfisher", "Kitten", "Kiwi", "Koala", "Kumquat", "Ladle", "Ladybug", "Lark",
+      "Lavender", "Lilac", "Locket", "Lollipop", "Lotus", "Lupine", "Macaroon", "Mango",
+      "Maple", "Marble", "Marigold", "Marmalade", "Marmot", "Meadow", "Meringue", "Minnow",
+      "Mochi", "Moonbeam", "Muffin", "Mulberry", "Narwhal", "Nectar", "Noodle", "Nugget",
+      "Nutmeg", "Oboe", "Ocarina", "Orchard", "Otter", "Paisley", "Palette", "Pancake",
+      "Panda", "Pantry", "Papaya", "Parsnip", "Pastel", "Pawprint", "Peach", "Pebble",
+      "Pelican", "Penguin", "Peony", "Petal", "Piccolo", "Pickle", "Pillow", "Pinecone",
+      "Pinwheel", "Plum", "Pollen", "Pomelo", "Pompom", "Poppet", "Poppy", "Porcupine",
+      "Possum", "Pretzel", "Pudding", "Pumpkin", "Quince", "Radish", "Rainbow", "Raindrop",
+      "Robin", "Rosehip", "Saffron", "Scone", "Seashell", "Sequin", "Shortcake", "Skylark",
+      "Slipper", "Snowdrop", "Snowflake", "Snuggle", "Sparkle", "Sparrow", "Sprinkle", "Sprout",
+      "Squirrel", "Starling", "Strudel", "Sugarplum", "Sunbeam", "Sundial", "Sweater", "Tadpole",
+      "Tangelo", "Teacup", "Teakettle", "Teapot", "Thimble", "Thrush", "Tinsel", "Toboggan",
+      "Toffee", "Tortoise", "Toucan", "Trifle", "Trillium", "Tulip", "Turnip", "Twinkle",
+      "Velvet", "Verbena", "Viola", "Waffle", "Wagtail", "Walnut", "Whisker", "Windmill",
+      "Wombat", "Wren", "Yodel", "Zinnia",
+    ],
+    coinedHeads: [
+      "Apple", "Berry", "Bun", "Butter", "Candy", "Cherry", "Clover", "Cocoa", "Cookie", "Daisy",
+      "Dew", "Dimple", "Fig", "Fluff", "Fuzzy", "Ginger", "Honey", "Jelly", "Lemon", "Maple",
+      "Minty", "Moss", "Muffin", "Nutty", "Pea", "Peach", "Pip", "Plum", "Poppy", "Pudding",
+      "Sugar", "Sunny", "Taffy", "Tea", "Toffee", "Tulip", "Waffle", "Wiggle",
+    ],
+    coinedTails: [
+      "bit", "boots", "bug", "dot", "hop", "jam", "loaf", "nook", "sock", "twirl", "wink", "bean",
+      "bell", "bloom", "blossom", "bud", "bun", "button", "cake", "crumb", "cup", "drop", "fluff", "kin",
+      "moss", "nose", "nut", "paw", "petal", "pie", "pip", "pod", "pop", "puff", "seed", "snap",
+      "sprout", "tart", "toes", "whisk",
+    ],
+  },
   ops: {
     description: "Short, punchy aviation and operations callsigns (Talon, Viper, Ironhawk).",
     curated: [
@@ -71,72 +114,6 @@ export const namegenVibePools: Readonly<Record<NamegenVibe, NamegenVibePool>> = 
       "flight", "fox", "gale", "hawk", "horn", "jack", "keel", "lance", "line", "mark",
       "point", "rider", "runner", "shot", "spark", "spear", "spur", "star", "strike", "tail",
       "vane", "watch", "wing", "wolf",
-    ],
-  },
-  whimsical: {
-    description: "Gentle everyday and natural words (Teakettle, Lantern, Quillmoor).",
-    curated: [
-      "Abacus", "Acorn", "Adder", "Almanac", "Amulet", "Anchor", "Anvil", "Apricot",
-      "Arbor", "Armada", "Aspen", "Atlas", "Auger", "Aurora", "Avocet", "Azure",
-      "Badger", "Bagpipe", "Balsam", "Banjo", "Barley", "Barnacle", "Basalt", "Basin",
-      "Bassoon", "Beacon", "Beetle", "Bellows", "Beryl", "Biscuit", "Bittern", "Blanket",
-      "Bobbin", "Bonfire", "Bramble", "Bramling", "Breaker", "Brisket", "Bristle", "Brocade",
-      "Buckle", "Bugle", "Bullfinch", "Bunting", "Burrow", "Buttress", "Buzzard", "Cactus",
-      "Caliper", "Camber", "Candle", "Canopy", "Canteen", "Canyon", "Capstan", "Caravan",
-      "Cardinal", "Carillon", "Cascade", "Cashew", "Catkin", "Cellar", "Cello", "Chalice",
-      "Chamois", "Chestnut", "Chisel", "Cinder", "Citadel", "Clarion", "Clover", "Cobble",
-      "Coconut", "Comet", "Compass", "Coral", "Cormorant", "Corona", "Cosmos", "Cottage",
-      "Cougar", "Coyote", "Crane", "Crescent", "Crocus", "Crossbow", "Cupola", "Curlew",
-      "Cutlass", "Cygnet", "Cypress", "Dahlia", "Damask", "Damson", "Delta", "Denim",
-      "Derrick", "Dewdrop", "Dingo", "Dipper", "Divot", "Dolphin", "Domino", "Dovetail",
-      "Dragnet", "Driftwood", "Drumlin", "Dulcimer", "Dynamo", "Easel", "Eclipse", "Eddy",
-      "Eider", "Ember", "Emerald", "Epoch", "Ermine", "Estuary", "Falcon", "Farthing",
-      "Fathom", "Feather", "Fennel", "Ferret", "Fiddle", "Filbert", "Finch", "Firefly",
-      "Fjord", "Flicker", "Flotsam", "Fondue", "Fossil", "Foxglove", "Frigate", "Fulcrum",
-      "Furlong", "Galleon", "Gannet", "Gazebo", "Gecko", "Geyser", "Gherkin", "Gimlet",
-      "Glacier", "Glimmer", "Gondola", "Gorse", "Granite", "Griffin", "Grotto", "Gusset",
-      "Halyard", "Hammock", "Harrier", "Harvest", "Hatchet", "Hawthorn", "Hazel", "Hedgehog",
-      "Helix", "Heron", "Hickory", "Hinge", "Hobnail", "Hollow", "Honeybee", "Hopscotch",
-      "Hornbeam", "Hyacinth", "Ibis", "Icicle", "Indigo", "Inkwell", "Ironwood", "Islet",
-      "Ivory", "Jackdaw", "Jasmine", "Jasper", "Javelin", "Jetty", "Jigsaw", "Jonquil",
-      "Juniper", "Kayak", "Keel", "Kelp", "Kestrel", "Kiln", "Kingfisher", "Kiwi",
-      "Knapsack", "Koala", "Kumquat", "Ladle", "Lagoon", "Larch", "Lattice", "Laurel",
-      "Lavender", "Lentil", "Lichen", "Lilac", "Locket", "Loden", "Longbow", "Lotus",
-      "Lugsail", "Lupine", "Lynx", "Mango", "Maple", "Marble", "Marigold", "Marlin",
-      "Marmot", "Marsh", "Mason", "Meadow", "Medley", "Meteor", "Midge", "Minnow",
-      "Mistral", "Mortar", "Mosaic", "Mulberry", "Narwhal", "Nectar", "Nimbus", "Nomad",
-      "Nutmeg", "Oakum", "Oasis", "Oboe", "Ocarina", "Ocelot", "Octave", "Onyx",
-      "Opal", "Orbit", "Orchard", "Oriole", "Osprey", "Otter", "Outrigger", "Oxbow",
-      "Pagoda", "Paisley", "Palette", "Pantry", "Papaya", "Parsnip", "Pastel", "Pelican",
-      "Pendant", "Peony", "Pewter", "Pheasant", "Piccolo", "Pilgrim", "Pinecone", "Pinwheel",
-      "Piston", "Plumage", "Pollen", "Pomelo", "Poplar", "Poppy", "Porcupine", "Portico",
-      "Prairie", "Prism", "Pumice", "Pumpkin", "Quarry", "Quasar", "Quill", "Quince",
-      "Quiver", "Raffia", "Rampart", "Rapier", "Raven", "Rawhide", "Redwood", "Reef",
-      "Ripple", "Rivet", "Robin", "Rosehip", "Rowan", "Ruby", "Rudder", "Saffron",
-      "Sagebrush", "Samphire", "Sandbar", "Sapling", "Scallop", "Scarab", "Schooner", "Sculpin",
-      "Seashell", "Semaphore", "Sequin", "Sextant", "Shilling", "Shingle", "Shuttle", "Sierra",
-      "Silo", "Siskin", "Skiff", "Skylark", "Sleet", "Sloop", "Sorrel", "Sparrow",
-      "Spinnaker", "Sprocket", "Spruce", "Squall", "Stirrup", "Sundial", "Sycamore", "Tabard",
-      "Talon", "Tamarind", "Tambour", "Tangelo", "Tangram", "Tapestry", "Teakettle", "Telescope",
-      "Tempest", "Tern", "Thicket", "Thrush", "Toboggan", "Topaz", "Topsail", "Tortoise",
-      "Toucan", "Trellis", "Trident", "Trillium", "Trowel", "Truffle", "Tulip", "Tundra",
-      "Turmeric", "Tussock", "Upland", "Velvet", "Verbena", "Vernier", "Vetch", "Viola",
-      "Vireo", "Vista", "Vortex", "Wagtail", "Walnut", "Wayfarer", "Wharf", "Whippet",
-      "Whisker", "Wigeon", "Windmill", "Wombat", "Woodcock", "Wren", "Yardarm", "Yodel",
-      "Zenith", "Zephyr", "Zinnia", "Zither",
-    ],
-    coinedHeads: [
-      "Alder", "Ash", "Birch", "Brack", "Brass", "Briar", "Brook", "Cinder", "Clove", "Copper",
-      "Crag", "Dusk", "Elm", "Ember", "Fern", "Flax", "Flint", "Frost", "Gale", "Glen",
-      "Gorse", "Hazel", "Heath", "Holly", "Hull", "Ivy", "Kelp", "Lark", "Loam", "Marl",
-      "Mill", "Moss", "Oak", "Pike", "Quill", "Reed", "Rill", "Rowan", "Rush", "Rye",
-      "Sable", "Sage", "Salt", "Sedge", "Slate", "Sorrel", "Tarn", "Teal", "Thorn", "Tide",
-      "Wold", "Wren", "Yew",
-    ],
-    coinedTails: [
-      "moor", "wick", "stead", "ford", "mere", "holt", "fell", "combe", "dale", "burn", "gate", "well",
-      "ridge", "shaw", "ley", "by", "thorpe", "cote", "garth", "haven", "mouth", "ness", "row", "wood",
-      "field", "vale", "brook", "croft", "hurst", "ton", "wyn",
     ],
   },
   lame: {

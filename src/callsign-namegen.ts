@@ -31,6 +31,7 @@ const maximumProposals = 20;
 const maximumTakenEntries = 5_000;
 const maximumSeedLength = 1_024;
 const sharedPrefixLimit = 5;
+const sharedPrefixShare = 0.7;
 
 /**
  * Names that read as a role, an authority, or a model/vendor identity. A
@@ -322,10 +323,11 @@ function conflictBetween(leftKeys: ComparisonKeys, rightKeys: ComparisonKeys): N
   if (left === right) return "exact";
   if (leftKeys.visual === rightKeys.visual) return "visual";
   if (leftKeys.phonetic === rightKeys.phonetic) return "phonetic";
-  if (
-    left.length >= sharedPrefixLimit && right.length >= sharedPrefixLimit
-    && left.slice(0, sharedPrefixLimit) === right.slice(0, sharedPrefixLimit)
-  ) {
+  // Readers skim the start of a name, so a long shared opening confuses
+  // (SlateHarrow, SlateHarrier). A shared head with a different tail
+  // (Honeyjam, Honeybun) stays readable.
+  const shared = sharedPrefixLength(left, right);
+  if (shared >= sharedPrefixLimit && shared >= sharedPrefixShare * Math.min(left.length, right.length)) {
     return "prefix";
   }
   const budget = editBudget(Math.min(left.length, right.length));
@@ -436,6 +438,12 @@ function visualKey(collisionKey: string): string {
     .replace(/cl/gu, "d")
     .replace(/[1i]/gu, "l")
     .replace(/0/gu, "o");
+}
+
+function sharedPrefixLength(left: string, right: string): number {
+  let length = 0;
+  while (length < left.length && length < right.length && left[length] === right[length]) length += 1;
+  return length;
 }
 
 function editBudget(shorterLength: number): number {

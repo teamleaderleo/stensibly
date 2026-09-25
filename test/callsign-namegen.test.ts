@@ -95,6 +95,7 @@ describe("namegen confusability", () => {
 
   test.each([
     ["heron", "lemur"],
+    ["honeyjam", "honeybun"],
     ["pendant", "orbit"],
     ["teakettle", "quillmoor"],
     ["kestrel", "compass"],
@@ -208,30 +209,30 @@ describe("namegen proposals", () => {
 describe("namegen vibes", () => {
   test("a vibe changes the words, never the sigil or collision key", () => {
     const ops = proposeCallsigns({ seed: "vibe", vibe: "ops", count: 5 });
-    const whimsical = proposeCallsigns({ seed: "vibe", vibe: "whimsical", count: 5 });
+    const cute = proposeCallsigns({ seed: "vibe", vibe: "cute", count: 5 });
     expect(ops.proposals.map((entry) => entry.callsign)).not.toEqual(
-      whimsical.proposals.map((entry) => entry.callsign),
+      cute.proposals.map((entry) => entry.callsign),
     );
-    for (const entry of [...ops.proposals, ...whimsical.proposals]) {
+    for (const entry of [...ops.proposals, ...cute.proposals]) {
       expect(entry.sigil).toBe(callsignSigil(entry.callsign).sigil);
       expect(entry.collisionKey).toBe(callsignCollisionKey(entry.callsign));
     }
-    expect(proposeCallsigns({ seed: "vibe" }).vibe).toBe("ops");
-    expect(() => proposeCallsigns({ vibe: "grim" as never })).toThrow("choose one of: ops, whimsical, lame");
+    expect(proposeCallsigns({ seed: "vibe" }).vibe).toBe("cute");
+    expect(() => proposeCallsigns({ vibe: "grim" as never })).toThrow("choose one of: cute, ops, lame");
   });
 
   test("resolves flag, then env, then the nearest repo config, then the user config", () => {
     const files: Record<string, unknown> = {
-      "/work/team/.callsign.json": { vibe: "whimsical" },
+      "/work/team/.callsign.json": { vibe: "lame" },
       "/home/me/.config/callsign/config.json": { vibe: "ops" },
     };
     const read = (path: string) => files[path];
     const env = { HOME: "/home/me" };
-    expect(resolveVibeChoice("Whimsical", { ...env, CALLSIGN_VIBE: "ops" }, "/work/team/app", read)).toEqual({ vibe: "whimsical", source: "flag" });
+    expect(resolveVibeChoice("Lame", { ...env, CALLSIGN_VIBE: "ops" }, "/work/team/app", read)).toEqual({ vibe: "lame", source: "flag" });
     expect(resolveVibeChoice(undefined, { ...env, CALLSIGN_VIBE: "ops" }, "/work/team/app", read)).toEqual({ vibe: "ops", source: "env" });
-    expect(resolveVibeChoice(undefined, env, "/work/team/app", read)).toEqual({ vibe: "whimsical", source: "repo", path: "/work/team/.callsign.json" });
+    expect(resolveVibeChoice(undefined, env, "/work/team/app", read)).toEqual({ vibe: "lame", source: "repo", path: "/work/team/.callsign.json" });
     expect(resolveVibeChoice(undefined, env, "/elsewhere", read)).toEqual({ vibe: "ops", source: "user", path: "/home/me/.config/callsign/config.json" });
-    expect(resolveVibeChoice(undefined, {}, "/elsewhere", () => undefined)).toEqual({ vibe: "ops", source: "default" });
+    expect(resolveVibeChoice(undefined, {}, "/elsewhere", () => undefined)).toEqual({ vibe: "cute", source: "default" });
     expect(resolveVibeChoice(undefined, { HOME: "/home/me", XDG_CONFIG_HOME: "" }, "/elsewhere", read).path).toBe(
       "/home/me/.config/callsign/config.json",
     );
