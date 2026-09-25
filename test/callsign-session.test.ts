@@ -4,6 +4,7 @@ import {
   deriveRunId,
   deriveSessionId,
   proposeCallsigns,
+  requireSessionId,
   sessionKey,
   signatureBlock,
   statePath,
@@ -113,7 +114,7 @@ describe("signatureBlock", () => {
 });
 
 describe("session isolation", () => {
-  const vars = ["CALLSIGN_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CODEX_SESSION_ID"];
+  const vars = ["CALLSIGN_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CODEX_SESSION_ID"];
   const saved: Record<string, string | undefined> = {};
 
   function clear() {
@@ -147,6 +148,29 @@ describe("session isolation", () => {
       process.env.CLAUDE_CODE_SESSION_ID = "22222222-2222-2222-2222-222222222222";
       const second = statePath();
       expect(first).not.toBe(second);
+    } finally {
+      restore();
+    }
+  });
+
+  test("Codex sessions are keyed by the thread id Codex exports", () => {
+    clear();
+    try {
+      process.env.CODEX_THREAD_ID = "019a2b3c-thread";
+      expect(requireSessionId()).toBe("019a2b3c_thread");
+      process.env.CLAUDE_CODE_SESSION_ID = "";
+      expect(sessionKey()).toBe("019a2b3c-thread");
+    } finally {
+      restore();
+    }
+  });
+
+  test("refuses to reserve without a session id instead of drawing a new name per call", () => {
+    clear();
+    try {
+      expect(() => requireSessionId()).toThrow("CALLSIGN_SESSION_ID");
+      expect(() => statePath()).toThrow("CALLSIGN_SESSION_ID");
+      expect(requireSessionId("My Session")).toBe("my_session");
     } finally {
       restore();
     }

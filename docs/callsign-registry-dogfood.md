@@ -20,8 +20,12 @@ lease per session under `$XDG_STATE_HOME/callsign/`. Every later call in the
 same session returns that lease instantly without touching GitHub, and a
 session whose lease lapsed asks for its old name back first. A rejected name is
 retried with the next candidate. It exits non-zero rather than assume a lease it
-never received a receipt for. The session is `CLAUDE_CODE_SESSION_ID`,
-`CODEX_SESSION_ID`, or `CALLSIGN_SESSION_ID`. The receipt wait goes through the
+never received a receipt for. The session is `CALLSIGN_SESSION_ID`,
+`CLAUDE_CODE_SESSION_ID` or Codex's `CODEX_THREAD_ID`; without one it refuses
+rather than reserve a new name per call. Concurrent calls from one session
+(subagents share it) take a lock and share one lease, and a call that times out
+waiting for the receipt leaves the request pending so the next call finishes it
+instead of posting another name. The receipt wait goes through the
 shared `glaeda-gh` daemon when it runs, so concurrent sessions do not each poll
 GitHub.
 

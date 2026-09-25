@@ -15,7 +15,7 @@
  * grants no authority, capability, continuity, or approval.
  */
 import { homedir, hostname } from "node:os";
-import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -26,7 +26,7 @@ import {
   type GitHubCallsignActiveLease,
   type ParsedGitHubCallsignReceipt,
 } from "./github-callsign-registry.js";
-import { proposeCallsigns as proposeNamegenCallsigns } from "./callsign-namegen.js";
+import { proposeCallsigns as proposeNamegenCallsigns, resolveVibe } from "./callsign-namegen.js";
 import {
   defaultRecentDays,
   readRegistryComments,
@@ -58,6 +58,21 @@ export interface SessionState {
   requestCommentUrl: string;
 }
 
+/** A reserve comment posted but not yet answered, kept so a retry resumes it. */
+interface PendingReservation {
+  version: 1;
+  pending: true;
+  repository: string;
+  issueNumber: number;
+  callsign: string;
+  runId: string;
+  sessionId: string;
+  requestCommentUrl: string;
+  postedAt: string;
+}
+
+type StoredState = SessionState | PendingReservation;
+
 /**
  * The worker session this process belongs to.
  *
@@ -66,35 +81,87 @@ export interface SessionState {
  */
 export function sessionKey(): string {
   return process.env.CALLSIGN_SESSION_ID
-    ?? process.env.CLAUDE_CODE_SESSION_ID
-    ?? process.env.CODEX_SESSION_ID
-    ?? "";
+    || process.env.CLAUDE_CODE_SESSION_ID
+    || process.env.CODEX_THREAD_ID
+    || process.env.CODEX_SESSION_ID
+    || "";
 }
 
-export function statePath(): string {
+/** The session every lease is keyed by; refuses rather than guess one. */
+export function requireSessionId(explicit?: string): string {
+  const raw = explicit ?? sessionKey();
+  if (!raw) {
+    throw new Error(
+      "No agent session id (CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID or CALLSIGN_SESSION_ID). "
+        + "Set CALLSIGN_SESSION_ID to something unique to this session, or sign `unregistered`.",
+    );
+  }
+  return slug(raw).slice(0, 160) || "session";
+}
+
+export function statePath(sessionId: string = requireSessionId()): string {
   const base = process.env.CALLSIGN_STATE_DIR
     ?? join(process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "callsign");
-  const key = sessionKey();
   // One file per session. A shared path hands one worker another's lease.
-  return join(base, key ? `session-${slug(key)}.json` : "session-unkeyed.json");
+  return join(base, `session-${slug(sessionId)}.json`);
 }
 
-async function readState(): Promise<SessionState | null> {
+async function readStored(sessionId?: string): Promise<StoredState | null> {
   try {
-    return JSON.parse(await readFile(statePath(), "utf8")) as SessionState;
+    return JSON.parse(await readFile(statePath(sessionId), "utf8")) as StoredState;
   } catch {
     return null;
   }
 }
 
-async function writeState(state: SessionState): Promise<void> {
-  const path = statePath();
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+async function readState(sessionId?: string): Promise<SessionState | null> {
+  const stored = await readStored(sessionId);
+  return stored && !("pending" in stored) ? stored : null;
 }
 
-async function clearState(): Promise<void> {
-  await rm(statePath(), { force: true });
+async function writeState(state: StoredState): Promise<void> {
+  const path = statePath(state.sessionId);
+  await mkdir(dirname(path), { recursive: true });
+  const temporary = `${path}.${process.pid}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await rename(temporary, path);
+}
+
+/**
+ * Serialises start/end within one session (subagents share their parent's
+ * session id), so two concurrent calls never reserve two names.
+ */
+async function withSessionLock<T>(sessionId: string, body: () => Promise<T>): Promise<T> {
+  const lockPath = `${statePath(sessionId)}.lock`;
+  await mkdir(dirname(lockPath), { recursive: true });
+  const deadline = Date.now() + 2 * receiptTimeoutMs + 60_000;
+  for (;;) {
+    try {
+      const handle = await open(lockPath, "wx");
+      await handle.writeFile(`${process.pid}\n`);
+      await handle.close();
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const age = Date.now() - (await stat(lockPath).catch(() => null))?.mtimeMs!;
+      // A holder that crashed never releases; nothing legitimate runs this long.
+      if (Number.isFinite(age) && age > 2 * receiptTimeoutMs + 60_000) {
+        await rm(lockPath, { force: true });
+        continue;
+      }
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for ${lockPath}`);
+      await Bun.sleep(500);
+    }
+  }
+  try {
+    return await body();
+  } finally {
+    await rm(lockPath, { force: true });
+  }
+}
+
+async function clearState(sessionId?: string): Promise<void> {
+  await rm(statePath(sessionId), { force: true });
 }
 
 async function gh(args: string[], stdin?: string): Promise<string> {
@@ -123,27 +190,24 @@ async function fetchReceipts(
 /**
  * Names to try, best first, from namegen: clear of active and recent names
  * including near-collisions, and of every earlier name that reads as the same
- * word. Seeded by run and session so a retried start replays its order.
+ * word. Seeded by session so a retried start replays its order.
  */
 export function proposeCallsigns(
   receipts: readonly ParsedGitHubCallsignReceipt[],
   count: number,
-  options: { vibe?: string; run?: string; session?: string; now?: Date } = {},
+  options: { vibe?: string; session?: string; now?: Date } = {},
 ): string[] {
   const snapshot = registrySnapshotFromReceipts(receipts, {
     source: "registry",
     evaluatedAt: (options.now ?? new Date()).toISOString(),
     recentDays: defaultRecentDays,
   });
-  const vibe = resolveVibeChoice(options.vibe, process.env, process.cwd()).vibe;
   return proposeNamegenCallsigns({
-    ...(options.run === undefined && options.session === undefined
-      ? {}
-      : { run: options.run ?? "", session: options.session ?? "" }),
+    ...(options.session === undefined ? {} : { session: options.session }),
     taken: snapshot.taken,
     history: snapshot.history,
     activeSigils: snapshot.active.map((lease) => lease.sigil),
-    vibe,
+    ...(options.vibe === undefined ? {} : { vibe: resolveVibe(options.vibe) }),
     count,
   }).proposals.map((proposal) => proposal.callsign);
 }
@@ -195,9 +259,12 @@ async function awaitReceipt(
   const findReceipt = async () =>
     (await fetchReceipts(repository, issueNumber))
       .find((receipt) => receipt.requestComment === requestCommentUrl);
-  if (waitWithGlaeda(repository, issueNumber, requestCommentUrl)) {
+  const glaeda = waitWithGlaeda(repository, issueNumber, requestCommentUrl);
+  if (glaeda !== "unavailable") {
+    // The daemon already watched for the full timeout; one direct read settles it.
     const match = await findReceipt();
     if (match) return match;
+    if (glaeda === "timeout") throw receiptTimeout(requestCommentUrl);
   }
   const deadline = Date.now() + receiptTimeoutMs;
   while (Date.now() < deadline) {
@@ -205,16 +272,27 @@ async function awaitReceipt(
     const match = await findReceipt();
     if (match) return match;
   }
-  throw new Error(
+  throw receiptTimeout(requestCommentUrl);
+}
+
+function receiptTimeout(requestCommentUrl: string): Error {
+  return new Error(
     `No registrar receipt for ${requestCommentUrl} within ${receiptTimeoutMs / 1000}s. `
-      + "The registry may be down; do not assume the callsign is held.",
+      + "Run again to keep waiting for this same request; until then sign `pending`.",
   );
 }
 
-/** True when glaeda-gh saw the receipt; false when it is absent, down, or timed out. */
-function waitWithGlaeda(repository: string, issueNumber: number, requestCommentUrl: string): boolean {
+/**
+ * "matched" when glaeda-gh saw the receipt, "timeout" when it watched the whole
+ * window, "unavailable" when it is not installed or its daemon is down.
+ */
+function waitWithGlaeda(
+  repository: string,
+  issueNumber: number,
+  requestCommentUrl: string,
+): "matched" | "timeout" | "unavailable" {
   const requestId = requestCommentUrl.split("#issuecomment-")[1];
-  if (!requestId) return false;
+  if (!requestId) return "unavailable";
   try {
     execFileSync("glaeda-gh", [
       "wait",
@@ -229,9 +307,9 @@ function waitWithGlaeda(repository: string, issueNumber: number, requestCommentU
       "--timeout",
       String(receiptTimeoutMs / 1000),
     ], { stdio: ["ignore", "ignore", "ignore"] });
-    return true;
-  } catch {
-    return false;
+    return "matched";
+  } catch (error) {
+    return (error as { status?: number }).status === 2 ? "timeout" : "unavailable";
   }
 }
 
@@ -245,115 +323,114 @@ function describeLease(lease: GitHubCallsignActiveLease): string {
 }
 
 async function commandStart(args: Map<string, string>, flags: Set<string>): Promise<number> {
+  const sessionId = requireSessionId(args.get("session"));
+  return await withSessionLock(sessionId, () => startLocked(args, flags, sessionId));
+}
+
+async function startLocked(
+  args: Map<string, string>,
+  flags: Set<string>,
+  sessionId: string,
+): Promise<number> {
   const repository = args.get("repo") ?? defaultRepository;
   const issueNumber = Number(args.get("issue") ?? defaultIssueNumber);
-  const existing = await readState();
-  const currentSession = args.get("session") ?? deriveSessionId(args.get("scope"));
-  if (
-    existing && !flags.has("force") && Date.parse(existing.expiresAt) > Date.now()
-    && existing.sessionId === currentSession
-  ) {
-    process.stderr.write(
-      `${existing.callsign} g${existing.generation} is held until ${existing.expiresAt}.\n`,
-    );
-    process.stdout.write(`${signatureBlock(existing)}\n`);
-    return 0;
+  const force = flags.has("force");
+  const stored = await readStored(sessionId);
+
+  if (stored && "pending" in stored) {
+    // An earlier call posted a reserve command and gave up waiting. Finish
+    // that request instead of posting another name.
+    process.stderr.write(`Waiting for the receipt on ${stored.callsign}...\n`);
+    const receipt = await awaitReceipt(stored.repository, stored.issueNumber, stored.requestCommentUrl);
+    if (receipt.status === "accepted") return await adopt(receipt, stored);
+    process.stderr.write(`${stored.callsign} was rejected (${receipt.reason ?? "no reason given"}).\n`);
+    await clearState(sessionId);
+  } else if (stored && Date.parse(stored.expiresAt) > Date.now()) {
+    if (!force) {
+      process.stderr.write(`${stored.callsign} g${stored.generation} is held until ${stored.expiresAt}.\n`);
+      process.stdout.write(`${signatureBlock(stored)}\n`);
+      return 0;
+    }
+    // --force picks a new name; release the held one so it is not orphaned.
+    if (!(await releaseLease(stored))) return 1;
   }
 
-  const scope = args.get("scope");
-  const runId = args.get("run") ?? deriveRunId(scope);
-  const sessionId = currentSession;
+  const runId = args.get("run") ?? deriveRunId(args.get("scope"));
   const ttl = args.get("ttl") ?? "24h";
   const receipts = await fetchReceipts(repository, issueNumber);
   const explicit = args.get("name");
   // A session whose lease lapsed asks for its old name back first, so its
   // signature stays the same across a long session.
-  const previous = existing && existing.sessionId === sessionId ? [existing.callsign] : [];
+  const previous = stored && !("pending" in stored) && !force ? [stored.callsign] : [];
+  const vibe = resolveVibeChoice(args.get("vibe"), process.env, process.cwd()).vibe;
   const candidates = explicit
     ? [explicit]
     : [...new Set([
       ...previous,
-      ...proposeCallsigns(receipts, reserveAttempts, {
-        ...(args.get("vibe") === undefined ? {} : { vibe: args.get("vibe") }),
-        run: runId,
-        session: sessionId,
-      }),
+      ...proposeCallsigns(receipts, reserveAttempts, { vibe, session: sessionId }),
     ])];
-  if (candidates.length === 0) throw new Error("No callsign candidates available");
 
   for (const callsign of candidates) {
     process.stderr.write(`Reserving ${callsign}...\n`);
-    const requestUrl = await postComment(
+    const requestCommentUrl = await postComment(
       repository,
       issueNumber,
       `/callsign reserve ${callsign}\nrun: ${runId}\nsession: ${sessionId}\nttl: ${ttl}`,
     );
-    const receipt = await awaitReceipt(repository, issueNumber, requestUrl);
-    if (receipt.status !== "accepted") {
-      process.stderr.write(`Rejected (${receipt.reason ?? "no reason given"}).\n`);
-      if (explicit) return 1;
-      continue;
-    }
-    if (
-      receipt.callsign === null || receipt.sigil === null || receipt.collisionKey === null
-      || receipt.generation === null || receipt.acceptedAt === null || receipt.expiresAt === null
-    ) {
-      throw new Error("Accepted receipt is missing required fields");
-    }
-    const state: SessionState = {
+    const pending: PendingReservation = {
       version: 1,
+      pending: true,
       repository,
       issueNumber,
-      callsign: receipt.callsign,
-      sigil: receipt.sigil,
-      collisionKey: receipt.collisionKey,
-      generation: receipt.generation,
+      callsign,
       runId,
       sessionId,
-      acceptedAt: receipt.acceptedAt,
-      expiresAt: receipt.expiresAt,
-      receiptCommentUrl: receipt.commentUrl,
-      requestCommentUrl: requestUrl,
+      requestCommentUrl,
+      postedAt: new Date().toISOString(),
     };
-    await writeState(state);
-    process.stderr.write(`Accepted, expires ${state.expiresAt}. Receipt ${state.receiptCommentUrl}\n`);
-    process.stdout.write(`${signatureBlock(state)}\n`);
-    return 0;
+    await writeState(pending);
+    const receipt = await awaitReceipt(repository, issueNumber, requestCommentUrl);
+    if (receipt.status === "accepted") return await adopt(receipt, pending);
+    process.stderr.write(`Rejected (${receipt.reason ?? "no reason given"}).\n`);
+    await clearState(sessionId);
+    if (explicit) return 1;
   }
   process.stderr.write("Every candidate was rejected. Re-run to draw new names.\n");
   return 1;
 }
 
-async function commandSign(): Promise<number> {
-  const state = await readState();
-  if (!state) {
-    process.stderr.write("No callsign held. Run `callsign start` first.\n");
-    return 1;
+async function adopt(
+  receipt: ParsedGitHubCallsignReceipt,
+  request: PendingReservation,
+): Promise<number> {
+  if (
+    receipt.callsign === null || receipt.sigil === null || receipt.collisionKey === null
+    || receipt.generation === null || receipt.acceptedAt === null || receipt.expiresAt === null
+  ) {
+    throw new Error("Accepted receipt is missing required fields");
   }
-  if (Date.parse(state.expiresAt) <= Date.now()) {
-    process.stderr.write(
-      `Lease on ${state.callsign} expired at ${state.expiresAt}. Run \`callsign start\` again.\n`,
-    );
-    return 1;
-  }
-  const current = sessionKey();
-  if (current && state.sessionId !== slug(current).slice(0, 160)) {
-    process.stderr.write(
-      `Stored lease on ${state.callsign} belongs to session ${state.sessionId}, not this one. `
-        + "Refusing to sign another worker's callsign; run `callsign start`.\n",
-    );
-    return 1;
-  }
+  const state: SessionState = {
+    version: 1,
+    repository: request.repository,
+    issueNumber: request.issueNumber,
+    callsign: receipt.callsign,
+    sigil: receipt.sigil,
+    collisionKey: receipt.collisionKey,
+    generation: receipt.generation,
+    runId: request.runId,
+    sessionId: request.sessionId,
+    acceptedAt: receipt.acceptedAt,
+    expiresAt: receipt.expiresAt,
+    receiptCommentUrl: receipt.commentUrl,
+    requestCommentUrl: request.requestCommentUrl,
+  };
+  await writeState(state);
+  process.stderr.write(`Accepted, expires ${state.expiresAt}. Receipt ${state.receiptCommentUrl}\n`);
   process.stdout.write(`${signatureBlock(state)}\n`);
   return 0;
 }
 
-async function commandEnd(): Promise<number> {
-  const state = await readState();
-  if (!state) {
-    process.stderr.write("No callsign held; nothing to release.\n");
-    return 0;
-  }
+async function releaseLease(state: SessionState): Promise<boolean> {
   const requestUrl = await postComment(
     state.repository,
     state.issueNumber,
@@ -364,11 +441,45 @@ async function commandEnd(): Promise<number> {
     process.stderr.write(
       `Release not accepted (${receipt.status}: ${receipt.reason ?? "no reason"}). State kept.\n`,
     );
+    return false;
+  }
+  await clearState(state.sessionId);
+  process.stderr.write(`Released ${state.callsign} g${state.generation}.\n`);
+  return true;
+}
+
+async function commandSign(): Promise<number> {
+  const sessionId = requireSessionId();
+  const state = await readState(sessionId);
+  if (!state) {
+    process.stderr.write("No callsign held. Run `callsign` first.\n");
     return 1;
   }
-  await clearState();
-  process.stderr.write(`Released ${state.callsign} g${state.generation}.\n`);
+  if (Date.parse(state.expiresAt) <= Date.now()) {
+    process.stderr.write(`Lease on ${state.callsign} expired at ${state.expiresAt}. Run \`callsign\` again.\n`);
+    return 1;
+  }
+  if (state.sessionId !== sessionId) {
+    process.stderr.write(
+      `Stored lease on ${state.callsign} belongs to session ${state.sessionId}, not this one. `
+        + "Refusing to sign another worker's callsign; run `callsign`.\n",
+    );
+    return 1;
+  }
+  process.stdout.write(`${signatureBlock(state)}\n`);
   return 0;
+}
+
+async function commandEnd(): Promise<number> {
+  const sessionId = requireSessionId();
+  return await withSessionLock(sessionId, async () => {
+    const state = await readState(sessionId);
+    if (!state) {
+      process.stderr.write("No callsign held; nothing to release.\n");
+      return 0;
+    }
+    return (await releaseLease(state)) ? 0 : 1;
+  });
 }
 
 async function commandStatus(args: Map<string, string>): Promise<number> {
@@ -376,7 +487,7 @@ async function commandStatus(args: Map<string, string>): Promise<number> {
   const issueNumber = Number(args.get("issue") ?? defaultIssueNumber);
   const receipts = await fetchReceipts(repository, issueNumber);
   const projection = projectGitHubCallsignRegistry(receipts, new Date().toISOString());
-  const state = await readState();
+  const state = sessionKey() ? await readState() : null;
   if (state) {
     const held = Date.parse(state.expiresAt) > Date.now() ? "held" : "EXPIRED";
     process.stdout.write(`this session: ${state.callsign} g${state.generation} ${state.sigil} (${held})\n\n`);
