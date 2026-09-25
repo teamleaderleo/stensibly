@@ -12,7 +12,7 @@
  * exhausted the curated pool.
  */
 
-export const namegenVibes = ["ops", "whimsical"] as const;
+export const namegenVibes = ["ops", "whimsical", "lame"] as const;
 export type NamegenVibe = typeof namegenVibes[number];
 export const defaultNamegenVibe: NamegenVibe = "ops";
 
@@ -137,6 +137,32 @@ export const namegenVibePools: Readonly<Record<NamegenVibe, NamegenVibePool>> = 
       "moor", "wick", "stead", "ford", "mere", "holt", "fell", "combe", "dale", "burn", "gate", "well",
       "ridge", "shaw", "ley", "by", "thorpe", "cote", "garth", "haven", "mouth", "ness", "row", "wood",
       "field", "vale", "brook", "croft", "hurst", "ton", "wyn",
+    ],
+  },
+  lame: {
+    description: "Proudly, deliberately lame (Meatloaf, Kerfuffle, Spudnugget).",
+    curated: [
+      "Bagel", "Bamboozle", "Bathrobe", "Beanbag", "Beetroot", "Biscuit", "Blob", "Boing",
+      "Butterbean", "Cabbage", "Cardigan", "Casserole", "Cheddar", "Clothespin", "Coleslaw", "Crayon",
+      "Crouton", "Crumpet", "Custard", "Dingus", "Dishrag", "Doily", "Dollop", "Doodad",
+      "Doohickey", "Doorknob", "Doorstop", "Dumpling", "Earmuff", "Eraser", "Flapjack", "Freckle",
+      "Galosh", "Gherkin", "Gizmo", "Glue", "Gopher", "Gravy", "Gumdrop", "Hairnet",
+      "Honk", "Hootenanny", "Hotdish", "Hubcap", "Jellybean", "Kazoo", "Kerfuffle", "Kerplunk",
+      "Ketchup", "Kohlrabi", "Lentil", "Lollygag", "Loofah", "Lump", "Mayo", "Meatloaf",
+      "Mitten", "Mothball", "Muffin", "Nacho", "Noodle", "Nugget", "Oatmeal", "Oddball",
+      "Pancake", "Paperclip", "Parsnip", "Pickle", "Plunger", "Porridge", "Possum", "Potato",
+      "Pretzel", "Pudding", "Puddle", "Radish", "Rutabaga", "Sardine", "Scone", "Shenanigan",
+      "Slinky", "Slipper", "Smudge", "Sock", "Spatula", "Sponge", "Sprinkle", "Spud",
+      "Stapler", "Sweatband", "Tadpole", "Tater", "Thimble", "Thingy", "Tissue", "Toffee",
+      "Tofu", "Toot", "Turnip", "Waffle", "Whatsit", "Widget", "Wiggle", "Wobble",
+    ],
+    coinedHeads: [
+      "Bun", "Dork", "Dum", "Fig", "Fudge", "Goo", "Gum", "Lump", "Mush", "Nub",
+      "Pud", "Sog", "Spud", "Tot", "Wig", "Wob", "Yam", "Zonk", "Blob", "Bap",
+    ],
+    coinedTails: [
+      "biscuit", "bucket", "doodle", "dumpling", "muffin", "nugget", "noodle", "pickle", "pudding", "sock",
+      "sprout", "tater", "waffle", "wiggle", "bean", "bottom", "button", "cake", "kins",
     ],
   },
 };

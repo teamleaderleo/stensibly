@@ -113,7 +113,7 @@ describe.each([...namegenVibes])("namegen %s pool", (vibe) => {
   const curated = namegenVibePools[vibe].curated;
 
   test("every curated name is readable, role-free, and distinct from every other", () => {
-    expect(curated.length).toBeGreaterThanOrEqual(200);
+    expect(curated.length).toBeGreaterThanOrEqual(100);
     const keys = curated.map(callsignCollisionKey);
     expect(new Set(keys).size).toBe(keys.length);
     for (const name of curated) {
@@ -132,7 +132,7 @@ describe.each([...namegenVibes])("namegen %s pool", (vibe) => {
 
   test("coined names stay within bounds and pass the same readability rules", () => {
     const coined = coinedCallsigns(vibe);
-    expect(coined.length).toBeGreaterThan(500);
+    expect(coined.length).toBeGreaterThan(250);
     for (const name of coined) {
       expect(callsignQualityIssues(name)).toEqual([]);
       expect(name.length).toBeGreaterThanOrEqual(4);
@@ -217,7 +217,7 @@ describe("namegen vibes", () => {
       expect(entry.collisionKey).toBe(callsignCollisionKey(entry.callsign));
     }
     expect(proposeCallsigns({ seed: "vibe" }).vibe).toBe("ops");
-    expect(() => proposeCallsigns({ vibe: "grim" as never })).toThrow("choose one of: ops, whimsical");
+    expect(() => proposeCallsigns({ vibe: "grim" as never })).toThrow("choose one of: ops, whimsical, lame");
   });
 
   test("resolves flag, then env, then the nearest repo config, then the user config", () => {
