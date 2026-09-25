@@ -1,4 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
+import { callsignCollisionKey } from "./callsign-derivation.js";
+
+export { callsignCollisionKey };
 
 export const baseCallsignCategories = [
   "animal",
@@ -145,8 +148,6 @@ const compoundModifiers = [
 ] as const;
 
 const unsafeTextPattern = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
-const callsignDisplayPattern = /^[A-Za-z0-9][A-Za-z0-9 _-]*$/;
-const maximumCallsignLength = 80;
 const maximumAvoidEntries = 1_000;
 const maximumSuggestions = 20;
 const maximumSeedLength = 256;
@@ -275,30 +276,6 @@ export function suggestCallsign(
   const suggestion = suggestCallsigns({ ...options, count: 1 }).suggestions[0];
   if (!suggestion) throw new Error("Callsign suggestion was unexpectedly empty");
   return suggestion;
-}
-
-/**
- * Returns the comparison key used for collision detection. Spacing, hyphens,
- * underscores, and ASCII case do not distinguish callsigns.
- */
-export function callsignCollisionKey(value: string): string {
-  if (typeof value !== "string" || unsafeTextPattern.test(value)) {
-    throw new RangeError("Callsign contains unsupported control characters");
-  }
-  const normalized = value.normalize("NFKC").trim();
-  if (unsafeTextPattern.test(normalized)) {
-    throw new RangeError("Callsign contains unsupported control characters");
-  }
-  if (normalized.length === 0) throw new RangeError("Callsign must not be empty");
-  if ([...normalized].length > maximumCallsignLength) {
-    throw new RangeError(`Callsign must be at most ${maximumCallsignLength} characters`);
-  }
-  if (!callsignDisplayPattern.test(normalized)) {
-    throw new RangeError("Callsign contains unsupported characters");
-  }
-  const collisionKey = normalized.toLowerCase().replace(/[ _-]+/g, "");
-  if (collisionKey.length === 0) throw new RangeError("Callsign must contain a letter or number");
-  return collisionKey;
 }
 
 function boundedCount(value: number): number {

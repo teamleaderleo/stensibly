@@ -1,0 +1,2595 @@
+{
+ "comment": "Pinned from stensibly main 15fcc531 before the derivation moved into src/callsign-derivation.ts. The registrar must keep producing exactly these values.",
+ "vectors": [
+  {
+   "input": "AlderQuarry",
+   "callsign": "AlderQuarry",
+   "collisionKey": "alderquarry",
+   "sigil": "🎒",
+   "source": "derived"
+  },
+  {
+   "input": "Alice",
+   "callsign": "Alice",
+   "collisionKey": "alice",
+   "sigil": "💠",
+   "source": "derived"
+  },
+  {
+   "input": "Badger",
+   "callsign": "Badger",
+   "collisionKey": "badger",
+   "sigil": "🔔",
+   "source": "derived"
+  },
+  {
+   "input": "BasaltUnwind",
+   "callsign": "BasaltUnwind",
+   "collisionKey": "basaltunwind",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "Camera",
+   "callsign": "Camera",
+   "collisionKey": "camera",
+   "sigil": "🛠️",
+   "source": "derived"
+  },
+  {
+   "input": "CapsLock",
+   "callsign": "CapsLock",
+   "collisionKey": "capslock",
+   "sigil": "🪁",
+   "source": "derived"
+  },
+  {
+   "input": "Capybara",
+   "callsign": "Capybara",
+   "collisionKey": "capybara",
+   "sigil": "🌙",
+   "source": "derived"
+  },
+  {
+   "input": "Cartographer",
+   "callsign": "Cartographer",
+   "collisionKey": "cartographer",
+   "sigil": "🌱",
+   "source": "derived"
+  },
+  {
+   "input": "Casement",
+   "callsign": "Casement",
+   "collisionKey": "casement",
+   "sigil": "🔭",
+   "source": "derived"
+  },
+  {
+   "input": "CedarWren",
+   "callsign": "CedarWren",
+   "collisionKey": "cedarwren",
+   "sigil": "🪵",
+   "source": "derived"
+  },
+  {
+   "input": "Cicada",
+   "callsign": "Cicada",
+   "collisionKey": "cicada",
+   "sigil": "☀️",
+   "source": "derived"
+  },
+  {
+   "input": "Compass",
+   "callsign": "Compass",
+   "collisionKey": "compass",
+   "sigil": "🧭",
+   "source": "override"
+  },
+  {
+   "input": "CopperPlover",
+   "callsign": "CopperPlover",
+   "collisionKey": "copperplover",
+   "sigil": "🪙",
+   "source": "derived"
+  },
+  {
+   "input": "Coppervane",
+   "callsign": "Coppervane",
+   "collisionKey": "coppervane",
+   "sigil": "🔆",
+   "source": "derived"
+  },
+  {
+   "input": "Copypasta",
+   "callsign": "Copypasta",
+   "collisionKey": "copypasta",
+   "sigil": "🫧",
+   "source": "derived"
+  },
+  {
+   "input": "Dulcinea",
+   "callsign": "Dulcinea",
+   "collisionKey": "dulcinea",
+   "sigil": "🎐",
+   "source": "derived"
+  },
+  {
+   "input": "Fernbrake",
+   "callsign": "Fernbrake",
+   "collisionKey": "fernbrake",
+   "sigil": "🌱",
+   "source": "derived"
+  },
+  {
+   "input": "FlintRail",
+   "callsign": "FlintRail",
+   "collisionKey": "flintrail",
+   "sigil": "🪄",
+   "source": "derived"
+  },
+  {
+   "input": "Funnel",
+   "callsign": "Funnel",
+   "collisionKey": "funnel",
+   "sigil": "🔆",
+   "source": "derived"
+  },
+  {
+   "input": "Glitch",
+   "callsign": "Glitch",
+   "collisionKey": "glitch",
+   "sigil": "📚",
+   "source": "derived"
+  },
+  {
+   "input": "Heron",
+   "callsign": "Heron",
+   "collisionKey": "heron",
+   "sigil": "🌙",
+   "source": "derived"
+  },
+  {
+   "input": "Ibex",
+   "callsign": "Ibex",
+   "collisionKey": "ibex",
+   "sigil": "🌿",
+   "source": "derived"
+  },
+  {
+   "input": "Kestrel",
+   "callsign": "Kestrel",
+   "collisionKey": "kestrel",
+   "sigil": "🐾",
+   "source": "derived"
+  },
+  {
+   "input": "Kettle",
+   "callsign": "Kettle",
+   "collisionKey": "kettle",
+   "sigil": "💠",
+   "source": "derived"
+  },
+  {
+   "input": "KeyboardCat",
+   "callsign": "KeyboardCat",
+   "collisionKey": "keyboardcat",
+   "sigil": "⚙️",
+   "source": "derived"
+  },
+  {
+   "input": "Lantern",
+   "callsign": "Lantern",
+   "collisionKey": "lantern",
+   "sigil": "🏮",
+   "source": "override"
+  },
+  {
+   "input": "Lemur",
+   "callsign": "Lemur",
+   "collisionKey": "lemur",
+   "sigil": "🖇️",
+   "source": "derived"
+  },
+  {
+   "input": "Lumen",
+   "callsign": "Lumen",
+   "collisionKey": "lumen",
+   "sigil": "🪄",
+   "source": "derived"
+  },
+  {
+   "input": "Manifold",
+   "callsign": "Manifold",
+   "collisionKey": "manifold",
+   "sigil": "✨",
+   "source": "derived"
+  },
+  {
+   "input": "Mantis",
+   "callsign": "Mantis",
+   "collisionKey": "mantis",
+   "sigil": "🧩",
+   "source": "derived"
+  },
+  {
+   "input": "Marmot",
+   "callsign": "Marmot",
+   "collisionKey": "marmot",
+   "sigil": "🎒",
+   "source": "derived"
+  },
+  {
+   "input": "Mica",
+   "callsign": "Mica",
+   "collisionKey": "mica",
+   "sigil": "💠",
+   "source": "derived"
+  },
+  {
+   "input": "NightPetrel",
+   "callsign": "NightPetrel",
+   "collisionKey": "nightpetrel",
+   "sigil": "🪁",
+   "source": "derived"
+  },
+  {
+   "input": "Nyan",
+   "callsign": "Nyan",
+   "collisionKey": "nyan",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "Odysseus",
+   "callsign": "Odysseus",
+   "collisionKey": "odysseus",
+   "sigil": "🐾",
+   "source": "derived"
+  },
+  {
+   "input": "Ophelia",
+   "callsign": "Ophelia",
+   "collisionKey": "ophelia",
+   "sigil": "🍄",
+   "source": "derived"
+  },
+  {
+   "input": "Orlando",
+   "callsign": "Orlando",
+   "collisionKey": "orlando",
+   "sigil": "🧭",
+   "source": "derived"
+  },
+  {
+   "input": "Pangolin",
+   "callsign": "Pangolin",
+   "collisionKey": "pangolin",
+   "sigil": "🎐",
+   "source": "derived"
+  },
+  {
+   "input": "PingPong",
+   "callsign": "PingPong",
+   "collisionKey": "pingpong",
+   "sigil": "🪨",
+   "source": "derived"
+  },
+  {
+   "input": "Pixel",
+   "callsign": "Pixel",
+   "collisionKey": "pixel",
+   "sigil": "💠",
+   "source": "override"
+  },
+  {
+   "input": "Quillmoor",
+   "callsign": "Quillmoor",
+   "collisionKey": "quillmoor",
+   "sigil": "🌊",
+   "source": "derived"
+  },
+  {
+   "input": "Quillon",
+   "callsign": "Quillon",
+   "collisionKey": "quillon",
+   "sigil": "🦋",
+   "source": "derived"
+  },
+  {
+   "input": "Quokka",
+   "callsign": "Quokka",
+   "collisionKey": "quokka",
+   "sigil": "🪁",
+   "source": "derived"
+  },
+  {
+   "input": "r-o_o",
+   "callsign": "r-o_o",
+   "collisionKey": "roo",
+   "sigil": "🐾",
+   "source": "derived"
+  },
+  {
+   "input": "k",
+   "callsign": "k",
+   "collisionKey": "k",
+   "sigil": "💠",
+   "source": "derived"
+  },
+  {
+   "input": "Rivetmoss",
+   "callsign": "Rivetmoss",
+   "collisionKey": "rivetmoss",
+   "sigil": "🦉",
+   "source": "derived"
+  },
+  {
+   "input": "Rockall",
+   "callsign": "Rockall",
+   "collisionKey": "rockall",
+   "sigil": "🪙",
+   "source": "derived"
+  },
+  {
+   "input": "Rook",
+   "callsign": "Rook",
+   "collisionKey": "rook",
+   "sigil": "🪶",
+   "source": "override"
+  },
+  {
+   "input": "ShipIt",
+   "callsign": "ShipIt",
+   "collisionKey": "shipit",
+   "sigil": "🧪",
+   "source": "derived"
+  },
+  {
+   "input": "SlateHarrier",
+   "callsign": "SlateHarrier",
+   "collisionKey": "slateharrier",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "SlateHarrow",
+   "callsign": "SlateHarrow",
+   "collisionKey": "slateharrow",
+   "sigil": "☀️",
+   "source": "derived"
+  },
+  {
+   "input": "Stoat",
+   "callsign": "Stoat",
+   "collisionKey": "stoat",
+   "sigil": "🔭",
+   "source": "derived"
+  },
+  {
+   "input": "Tamarack",
+   "callsign": "Tamarack",
+   "collisionKey": "tamarack",
+   "sigil": "🍂",
+   "source": "derived"
+  },
+  {
+   "input": "Teakettle",
+   "callsign": "Teakettle",
+   "collisionKey": "teakettle",
+   "sigil": "💾",
+   "source": "derived"
+  },
+  {
+   "input": "TestLantern",
+   "callsign": "TestLantern",
+   "collisionKey": "testlantern",
+   "sigil": "✨",
+   "source": "derived"
+  },
+  {
+   "input": "Thimble",
+   "callsign": "Thimble",
+   "collisionKey": "thimble",
+   "sigil": "🔆",
+   "source": "derived"
+  },
+  {
+   "input": "Thornquay",
+   "callsign": "Thornquay",
+   "collisionKey": "thornquay",
+   "sigil": "💠",
+   "source": "derived"
+  },
+  {
+   "input": "Turnstile",
+   "callsign": "Turnstile",
+   "collisionKey": "turnstile",
+   "sigil": "🌿",
+   "source": "derived"
+  },
+  {
+   "input": "Umbrella",
+   "callsign": "Umbrella",
+   "collisionKey": "umbrella",
+   "sigil": "⚙️",
+   "source": "derived"
+  },
+  {
+   "input": "ViewSource",
+   "callsign": "ViewSource",
+   "collisionKey": "viewsource",
+   "sigil": "🖇️",
+   "source": "derived"
+  },
+  {
+   "input": "Yak",
+   "callsign": "Yak",
+   "collisionKey": "yak",
+   "sigil": "🔆",
+   "source": "derived"
+  },
+  {
+   "input": "Yorick",
+   "callsign": "Yorick",
+   "collisionKey": "yorick",
+   "sigil": "🍂",
+   "source": "derived"
+  },
+  {
+   "input": "Zarathustra",
+   "callsign": "Zarathustra",
+   "collisionKey": "zarathustra",
+   "sigil": "🌱",
+   "source": "derived"
+  },
+  {
+   "input": "Zebu",
+   "callsign": "Zebu",
+   "collisionKey": "zebu",
+   "sigil": "🖇️",
+   "source": "derived"
+  },
+  {
+   "input": "r-o_o k",
+   "callsign": "r-o_o k",
+   "collisionKey": "rook",
+   "sigil": "🪶",
+   "source": "override"
+  },
+  {
+   "input": " Rook ",
+   "callsign": "Rook",
+   "collisionKey": "rook",
+   "sigil": "🪶",
+   "source": "override"
+  },
+  {
+   "input": "Debug Duck",
+   "callsign": "Debug Duck",
+   "collisionKey": "debugduck",
+   "sigil": "🦆",
+   "source": "override"
+  },
+  {
+   "input": "rubber_duck",
+   "callsign": "rubber_duck",
+   "collisionKey": "rubberduck",
+   "sigil": "🦆",
+   "source": "override"
+  },
+  {
+   "input": "HOT-FIX",
+   "callsign": "HOT-FIX",
+   "collisionKey": "hotfix",
+   "sigil": "🩹",
+   "source": "override"
+  },
+  {
+   "input": "Night  Jar",
+   "callsign": "Night Jar",
+   "collisionKey": "nightjar",
+   "sigil": "🧩",
+   "source": "derived"
+  },
+  {
+   "input": "Ｆｕｌｌｗｉｄｔｈ",
+   "callsign": "Fullwidth",
+   "collisionKey": "fullwidth",
+   "sigil": "📎",
+   "source": "derived"
+  },
+  {
+   "input": "A1",
+   "callsign": "A1",
+   "collisionKey": "a1",
+   "sigil": "🪙",
+   "source": "derived"
+  },
+  {
+   "input": "x",
+   "callsign": "x",
+   "collisionKey": "x",
+   "sigil": "🍄",
+   "source": "derived"
+  },
+  {
+   "input": "Albatross",
+   "callsign": "Albatross",
+   "collisionKey": "albatross",
+   "sigil": "🐦",
+   "source": "derived"
+  },
+  {
+   "input": "Axolotl",
+   "callsign": "Axolotl",
+   "collisionKey": "axolotl",
+   "sigil": "🍂",
+   "source": "derived"
+  },
+  {
+   "input": "Cormorant",
+   "callsign": "Cormorant",
+   "collisionKey": "cormorant",
+   "sigil": "🎯",
+   "source": "derived"
+  },
+  {
+   "input": "Ferret",
+   "callsign": "Ferret",
+   "collisionKey": "ferret",
+   "sigil": "🪁",
+   "source": "derived"
+  },
+  {
+   "input": "Gecko",
+   "callsign": "Gecko",
+   "collisionKey": "gecko",
+   "sigil": "♟️",
+   "source": "derived"
+  },
+  {
+   "input": "Ocelot",
+   "callsign": "Ocelot",
+   "collisionKey": "ocelot",
+   "sigil": "🌊",
+   "source": "derived"
+  },
+  {
+   "input": "Tern",
+   "callsign": "Tern",
+   "collisionKey": "tern",
+   "sigil": "🎲",
+   "source": "derived"
+  },
+  {
+   "input": "Vole",
+   "callsign": "Vole",
+   "collisionKey": "vole",
+   "sigil": "🧶",
+   "source": "derived"
+  },
+  {
+   "input": "Wombat",
+   "callsign": "Wombat",
+   "collisionKey": "wombat",
+   "sigil": "🐦",
+   "source": "derived"
+  },
+  {
+   "input": "Anvil",
+   "callsign": "Anvil",
+   "collisionKey": "anvil",
+   "sigil": "⚒️",
+   "source": "override"
+  },
+  {
+   "input": "Apron",
+   "callsign": "Apron",
+   "collisionKey": "apron",
+   "sigil": "🌿",
+   "source": "derived"
+  },
+  {
+   "input": "Bellows",
+   "callsign": "Bellows",
+   "collisionKey": "bellows",
+   "sigil": "🧶",
+   "source": "derived"
+  },
+  {
+   "input": "Button",
+   "callsign": "Button",
+   "collisionKey": "button",
+   "sigil": "🐝",
+   "source": "derived"
+  },
+  {
+   "input": "Crayon",
+   "callsign": "Crayon",
+   "collisionKey": "crayon",
+   "sigil": "🔹",
+   "source": "derived"
+  },
+  {
+   "input": "Doorknob",
+   "callsign": "Doorknob",
+   "collisionKey": "doorknob",
+   "sigil": "🪁",
+   "source": "derived"
+  },
+  {
+   "input": "Easel",
+   "callsign": "Easel",
+   "collisionKey": "easel",
+   "sigil": "🪁",
+   "source": "derived"
+  },
+  {
+   "input": "Marbles",
+   "callsign": "Marbles",
+   "collisionKey": "marbles",
+   "sigil": "🪵",
+   "source": "derived"
+  },
+  {
+   "input": "Notebook",
+   "callsign": "Notebook",
+   "collisionKey": "notebook",
+   "sigil": "🐚",
+   "source": "derived"
+  },
+  {
+   "input": "Paperclip",
+   "callsign": "Paperclip",
+   "collisionKey": "paperclip",
+   "sigil": "🪄",
+   "source": "derived"
+  },
+  {
+   "input": "Plunger",
+   "callsign": "Plunger",
+   "collisionKey": "plunger",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "Postcard",
+   "callsign": "Postcard",
+   "collisionKey": "postcard",
+   "sigil": "🍄",
+   "source": "derived"
+  },
+  {
+   "input": "Teacup",
+   "callsign": "Teacup",
+   "collisionKey": "teacup",
+   "sigil": "🫖",
+   "source": "override"
+  },
+  {
+   "input": "Toolbox",
+   "callsign": "Toolbox",
+   "collisionKey": "toolbox",
+   "sigil": "🔔",
+   "source": "derived"
+  },
+  {
+   "input": "Whistle",
+   "callsign": "Whistle",
+   "collisionKey": "whistle",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "Zipper",
+   "callsign": "Zipper",
+   "collisionKey": "zipper",
+   "sigil": "🧪",
+   "source": "derived"
+  },
+  {
+   "input": "Beowulf",
+   "callsign": "Beowulf",
+   "collisionKey": "beowulf",
+   "sigil": "💾",
+   "source": "derived"
+  },
+  {
+   "input": "Candide",
+   "callsign": "Candide",
+   "collisionKey": "candide",
+   "sigil": "🌱",
+   "source": "derived"
+  },
+  {
+   "input": "Cordelia",
+   "callsign": "Cordelia",
+   "collisionKey": "cordelia",
+   "sigil": "🧪",
+   "source": "derived"
+  },
+  {
+   "input": "Dorian",
+   "callsign": "Dorian",
+   "collisionKey": "dorian",
+   "sigil": "🌿",
+   "source": "derived"
+  },
+  {
+   "input": "Gulliver",
+   "callsign": "Gulliver",
+   "collisionKey": "gulliver",
+   "sigil": "🐦",
+   "source": "derived"
+  },
+  {
+   "input": "Horatio",
+   "callsign": "Horatio",
+   "collisionKey": "horatio",
+   "sigil": "🔔",
+   "source": "derived"
+  },
+  {
+   "input": "Ishmael",
+   "callsign": "Ishmael",
+   "collisionKey": "ishmael",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "Lear",
+   "callsign": "Lear",
+   "collisionKey": "lear",
+   "sigil": "⚙️",
+   "source": "derived"
+  },
+  {
+   "input": "Merlin",
+   "callsign": "Merlin",
+   "collisionKey": "merlin",
+   "sigil": "🪄",
+   "source": "override"
+  },
+  {
+   "input": "Nemo",
+   "callsign": "Nemo",
+   "collisionKey": "nemo",
+   "sigil": "🦉",
+   "source": "derived"
+  },
+  {
+   "input": "Pinocchio",
+   "callsign": "Pinocchio",
+   "collisionKey": "pinocchio",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "Prospero",
+   "callsign": "Prospero",
+   "collisionKey": "prospero",
+   "sigil": "🐾",
+   "source": "derived"
+  },
+  {
+   "input": "Puck",
+   "callsign": "Puck",
+   "collisionKey": "puck",
+   "sigil": "🔸",
+   "source": "derived"
+  },
+  {
+   "input": "Quixote",
+   "callsign": "Quixote",
+   "collisionKey": "quixote",
+   "sigil": "🐚",
+   "source": "derived"
+  },
+  {
+   "input": "Scheherazade",
+   "callsign": "Scheherazade",
+   "collisionKey": "scheherazade",
+   "sigil": "💠",
+   "source": "derived"
+  },
+  {
+   "input": "Sinbad",
+   "callsign": "Sinbad",
+   "collisionKey": "sinbad",
+   "sigil": "🪁",
+   "source": "derived"
+  },
+  {
+   "input": "Titania",
+   "callsign": "Titania",
+   "collisionKey": "titania",
+   "sigil": "🌿",
+   "source": "derived"
+  },
+  {
+   "input": "Breadcrumb",
+   "callsign": "Breadcrumb",
+   "collisionKey": "breadcrumb",
+   "sigil": "🍞",
+   "source": "override"
+  },
+  {
+   "input": "CacheMiss",
+   "callsign": "CacheMiss",
+   "collisionKey": "cachemiss",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "DebugDuck",
+   "callsign": "DebugDuck",
+   "collisionKey": "debugduck",
+   "sigil": "🦆",
+   "source": "override"
+  },
+  {
+   "input": "Doge",
+   "callsign": "Doge",
+   "collisionKey": "doge",
+   "sigil": "🕯️",
+   "source": "derived"
+  },
+  {
+   "input": "Hotfix",
+   "callsign": "Hotfix",
+   "collisionKey": "hotfix",
+   "sigil": "🩹",
+   "source": "override"
+  },
+  {
+   "input": "LagSpike",
+   "callsign": "LagSpike",
+   "collisionKey": "lagspike",
+   "sigil": "🌿",
+   "source": "derived"
+  },
+  {
+   "input": "LinkRot",
+   "callsign": "LinkRot",
+   "collisionKey": "linkrot",
+   "sigil": "🦉",
+   "source": "derived"
+  },
+  {
+   "input": "PatchNote",
+   "callsign": "PatchNote",
+   "collisionKey": "patchnote",
+   "sigil": "🪙",
+   "source": "derived"
+  },
+  {
+   "input": "RubberDuck",
+   "callsign": "RubberDuck",
+   "collisionKey": "rubberduck",
+   "sigil": "🦆",
+   "source": "override"
+  },
+  {
+   "input": "SideQuest",
+   "callsign": "SideQuest",
+   "collisionKey": "sidequest",
+   "sigil": "🧵",
+   "source": "derived"
+  },
+  {
+   "input": "StackTrace",
+   "callsign": "StackTrace",
+   "collisionKey": "stacktrace",
+   "sigil": "🧵",
+   "source": "override"
+  },
+  {
+   "input": "TabComplete",
+   "callsign": "TabComplete",
+   "collisionKey": "tabcomplete",
+   "sigil": "🪵",
+   "source": "derived"
+  },
+  {
+   "input": "ThreadSafe",
+   "callsign": "ThreadSafe",
+   "collisionKey": "threadsafe",
+   "sigil": "🕯️",
+   "source": "derived"
+  },
+  {
+   "input": "Typo",
+   "callsign": "Typo",
+   "collisionKey": "typo",
+   "sigil": "✨",
+   "source": "derived"
+  },
+  {
+   "input": "WikiWalk",
+   "callsign": "WikiWalk",
+   "collisionKey": "wikiwalk",
+   "sigil": "🐾",
+   "source": "derived"
+  },
+  {
+   "input": "Taffy",
+   "callsign": "Taffy",
+   "collisionKey": "taffy",
+   "sigil": "🫧",
+   "source": "derived"
+  },
+  {
+   "input": "Gnocchi",
+   "callsign": "Gnocchi",
+   "collisionKey": "gnocchi",
+   "sigil": "🍄",
+   "source": "derived"
+  },
+  {
+   "input": "Sorbet",
+   "callsign": "Sorbet",
+   "collisionKey": "sorbet",
+   "sigil": "🎐",
+   "source": "derived"
+  },
+  {
+   "input": "Noodle",
+   "callsign": "Noodle",
+   "collisionKey": "noodle",
+   "sigil": "🪙",
+   "source": "derived"
+  },
+  {
+   "input": "Biscuit",
+   "callsign": "Biscuit",
+   "collisionKey": "biscuit",
+   "sigil": "🪁",
+   "source": "derived"
+  },
+  {
+   "input": "Mochi",
+   "callsign": "Mochi",
+   "collisionKey": "mochi",
+   "sigil": "🌱",
+   "source": "derived"
+  },
+  {
+   "input": "Marmalade",
+   "callsign": "Marmalade",
+   "collisionKey": "marmalade",
+   "sigil": "🌾",
+   "source": "derived"
+  },
+  {
+   "input": "Falafel",
+   "callsign": "Falafel",
+   "collisionKey": "falafel",
+   "sigil": "🔆",
+   "source": "derived"
+  },
+  {
+   "input": "Pickle",
+   "callsign": "Pickle",
+   "collisionKey": "pickle",
+   "sigil": "🌙",
+   "source": "derived"
+  },
+  {
+   "input": "Pesto",
+   "callsign": "Pesto",
+   "collisionKey": "pesto",
+   "sigil": "🫧",
+   "source": "derived"
+  },
+  {
+   "input": "Dumpling",
+   "callsign": "Dumpling",
+   "collisionKey": "dumpling",
+   "sigil": "🔭",
+   "source": "derived"
+  },
+  {
+   "input": "Tofu",
+   "callsign": "Tofu",
+   "collisionKey": "tofu",
+   "sigil": "🐾",
+   "source": "derived"
+  },
+  {
+   "input": "Turnip",
+   "callsign": "Turnip",
+   "collisionKey": "turnip",
+   "sigil": "🔹",
+   "source": "derived"
+  },
+  {
+   "input": "Sesame",
+   "callsign": "Sesame",
+   "collisionKey": "sesame",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "Bagel",
+   "callsign": "Bagel",
+   "collisionKey": "bagel",
+   "sigil": "🍄",
+   "source": "derived"
+  },
+  {
+   "input": "Kimchi",
+   "callsign": "Kimchi",
+   "collisionKey": "kimchi",
+   "sigil": "💾",
+   "source": "derived"
+  },
+  {
+   "input": "Truffle",
+   "callsign": "Truffle",
+   "collisionKey": "truffle",
+   "sigil": "🖇️",
+   "source": "derived"
+  },
+  {
+   "input": "Waffle",
+   "callsign": "Waffle",
+   "collisionKey": "waffle",
+   "sigil": "🍂",
+   "source": "derived"
+  },
+  {
+   "input": "Pretzel",
+   "callsign": "Pretzel",
+   "collisionKey": "pretzel",
+   "sigil": "✨",
+   "source": "derived"
+  },
+  {
+   "input": "Udon",
+   "callsign": "Udon",
+   "collisionKey": "udon",
+   "sigil": "🧵",
+   "source": "derived"
+  },
+  {
+   "input": "Churro",
+   "callsign": "Churro",
+   "collisionKey": "churro",
+   "sigil": "🔹",
+   "source": "derived"
+  },
+  {
+   "input": "Pierogi",
+   "callsign": "Pierogi",
+   "collisionKey": "pierogi",
+   "sigil": "🌿",
+   "source": "derived"
+  },
+  {
+   "input": "Samosa",
+   "callsign": "Samosa",
+   "collisionKey": "samosa",
+   "sigil": "🪁",
+   "source": "derived"
+  },
+  {
+   "input": "Crumpet",
+   "callsign": "Crumpet",
+   "collisionKey": "crumpet",
+   "sigil": "🧵",
+   "source": "derived"
+  },
+  {
+   "input": "Signal",
+   "callsign": "Signal",
+   "collisionKey": "signal",
+   "sigil": "🖇️",
+   "source": "derived"
+  },
+  {
+   "input": "Balance",
+   "callsign": "Balance",
+   "collisionKey": "balance",
+   "sigil": "🧪",
+   "source": "derived"
+  },
+  {
+   "input": "Parity",
+   "callsign": "Parity",
+   "collisionKey": "parity",
+   "sigil": "🔸",
+   "source": "derived"
+  },
+  {
+   "input": "Loop",
+   "callsign": "Loop",
+   "collisionKey": "loop",
+   "sigil": "🖇️",
+   "source": "derived"
+  },
+  {
+   "input": "Paradox",
+   "callsign": "Paradox",
+   "collisionKey": "paradox",
+   "sigil": "📎",
+   "source": "derived"
+  },
+  {
+   "input": "Serendipity",
+   "callsign": "Serendipity",
+   "collisionKey": "serendipity",
+   "sigil": "🍄",
+   "source": "derived"
+  },
+  {
+   "input": "Wonder",
+   "callsign": "Wonder",
+   "collisionKey": "wonder",
+   "sigil": "🫧",
+   "source": "derived"
+  },
+  {
+   "input": "Riddle",
+   "callsign": "Riddle",
+   "collisionKey": "riddle",
+   "sigil": "🪄",
+   "source": "derived"
+  },
+  {
+   "input": "Horizon",
+   "callsign": "Horizon",
+   "collisionKey": "horizon",
+   "sigil": "🐝",
+   "source": "derived"
+  },
+  {
+   "input": "Context",
+   "callsign": "Context",
+   "collisionKey": "context",
+   "sigil": "🌾",
+   "source": "derived"
+  },
+  {
+   "input": "Memory",
+   "callsign": "Memory",
+   "collisionKey": "memory",
+   "sigil": "🪙",
+   "source": "derived"
+  },
+  {
+   "input": "Momentum",
+   "callsign": "Momentum",
+   "collisionKey": "momentum",
+   "sigil": "🐾",
+   "source": "derived"
+  },
+  {
+   "input": "Contrast",
+   "callsign": "Contrast",
+   "collisionKey": "contrast",
+   "sigil": "🎯",
+   "source": "derived"
+  },
+  {
+   "input": "Entropy",
+   "callsign": "Entropy",
+   "collisionKey": "entropy",
+   "sigil": "🪨",
+   "source": "derived"
+  },
+  {
+   "input": "VectorField",
+   "callsign": "VectorField",
+   "collisionKey": "vectorfield",
+   "sigil": "🐦",
+   "source": "derived"
+  },
+  {
+   "input": "Chance",
+   "callsign": "Chance",
+   "collisionKey": "chance",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "Threshold",
+   "callsign": "Threshold",
+   "collisionKey": "threshold",
+   "sigil": "🛠️",
+   "source": "derived"
+  },
+  {
+   "input": "Interval",
+   "callsign": "Interval",
+   "collisionKey": "interval",
+   "sigil": "✒️",
+   "source": "derived"
+  },
+  {
+   "input": "Margin",
+   "callsign": "Margin",
+   "collisionKey": "margin",
+   "sigil": "✒️",
+   "source": "derived"
+  },
+  {
+   "input": "Symmetry",
+   "callsign": "Symmetry",
+   "collisionKey": "symmetry",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "Proof",
+   "callsign": "Proof",
+   "collisionKey": "proof",
+   "sigil": "🧭",
+   "source": "derived"
+  },
+  {
+   "input": "Variance",
+   "callsign": "Variance",
+   "collisionKey": "variance",
+   "sigil": "🧩",
+   "source": "derived"
+  },
+  {
+   "input": "Pattern",
+   "callsign": "Pattern",
+   "collisionKey": "pattern",
+   "sigil": "🔭",
+   "source": "derived"
+  },
+  {
+   "input": "Latency",
+   "callsign": "Latency",
+   "collisionKey": "latency",
+   "sigil": "🛠️",
+   "source": "derived"
+  },
+  {
+   "input": "Pebble",
+   "callsign": "Pebble",
+   "collisionKey": "pebble",
+   "sigil": "🔭",
+   "source": "derived"
+  },
+  {
+   "input": "Spruce",
+   "callsign": "Spruce",
+   "collisionKey": "spruce",
+   "sigil": "🌙",
+   "source": "derived"
+  },
+  {
+   "input": "Thistle",
+   "callsign": "Thistle",
+   "collisionKey": "thistle",
+   "sigil": "🛠️",
+   "source": "derived"
+  },
+  {
+   "input": "Acorn",
+   "callsign": "Acorn",
+   "collisionKey": "acorn",
+   "sigil": "🎒",
+   "source": "derived"
+  },
+  {
+   "input": "Pollen",
+   "callsign": "Pollen",
+   "collisionKey": "pollen",
+   "sigil": "🧶",
+   "source": "derived"
+  },
+  {
+   "input": "Fjord",
+   "callsign": "Fjord",
+   "collisionKey": "fjord",
+   "sigil": "🍄",
+   "source": "derived"
+  },
+  {
+   "input": "Brook",
+   "callsign": "Brook",
+   "collisionKey": "brook",
+   "sigil": "🪁",
+   "source": "derived"
+  },
+  {
+   "input": "Glacier",
+   "callsign": "Glacier",
+   "collisionKey": "glacier",
+   "sigil": "🐾",
+   "source": "derived"
+  },
+  {
+   "input": "Bramble",
+   "callsign": "Bramble",
+   "collisionKey": "bramble",
+   "sigil": "☀️",
+   "source": "derived"
+  },
+  {
+   "input": "Moss",
+   "callsign": "Moss",
+   "collisionKey": "moss",
+   "sigil": "💠",
+   "source": "derived"
+  },
+  {
+   "input": "Dewdrop",
+   "callsign": "Dewdrop",
+   "collisionKey": "dewdrop",
+   "sigil": "🐝",
+   "source": "derived"
+  },
+  {
+   "input": "Willow",
+   "callsign": "Willow",
+   "collisionKey": "willow",
+   "sigil": "🔸",
+   "source": "derived"
+  },
+  {
+   "input": "Lichen",
+   "callsign": "Lichen",
+   "collisionKey": "lichen",
+   "sigil": "📚",
+   "source": "derived"
+  },
+  {
+   "input": "Flint",
+   "callsign": "Flint",
+   "collisionKey": "flint",
+   "sigil": "🪶",
+   "source": "derived"
+  },
+  {
+   "input": "Dune",
+   "callsign": "Dune",
+   "collisionKey": "dune",
+   "sigil": "♟️",
+   "source": "derived"
+  },
+  {
+   "input": "Meadow",
+   "callsign": "Meadow",
+   "collisionKey": "meadow",
+   "sigil": "🦋",
+   "source": "derived"
+  },
+  {
+   "input": "Canyon",
+   "callsign": "Canyon",
+   "collisionKey": "canyon",
+   "sigil": "🌀",
+   "source": "derived"
+  },
+  {
+   "input": "Reed",
+   "callsign": "Reed",
+   "collisionKey": "reed",
+   "sigil": "🌱",
+   "source": "derived"
+  },
+  {
+   "input": "Hailstone",
+   "callsign": "Hailstone",
+   "collisionKey": "hailstone",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "Zinnia",
+   "callsign": "Zinnia",
+   "collisionKey": "zinnia",
+   "sigil": "🐝",
+   "source": "derived"
+  },
+  {
+   "input": "Zephyr",
+   "callsign": "Zephyr",
+   "collisionKey": "zephyr",
+   "sigil": "🔸",
+   "source": "derived"
+  },
+  {
+   "input": "Clover",
+   "callsign": "Clover",
+   "collisionKey": "clover",
+   "sigil": "🪙",
+   "source": "derived"
+  },
+  {
+   "input": "Tide",
+   "callsign": "Tide",
+   "collisionKey": "tide",
+   "sigil": "🪶",
+   "source": "derived"
+  },
+  {
+   "input": "Driftwood",
+   "callsign": "Driftwood",
+   "collisionKey": "driftwood",
+   "sigil": "🪄",
+   "source": "derived"
+  },
+  {
+   "input": "Plasma",
+   "callsign": "Plasma",
+   "collisionKey": "plasma",
+   "sigil": "🐚",
+   "source": "derived"
+  },
+  {
+   "input": "Hertz",
+   "callsign": "Hertz",
+   "collisionKey": "hertz",
+   "sigil": "🪶",
+   "source": "derived"
+  },
+  {
+   "input": "Muon",
+   "callsign": "Muon",
+   "collisionKey": "muon",
+   "sigil": "🪁",
+   "source": "derived"
+  },
+  {
+   "input": "Neutrino",
+   "callsign": "Neutrino",
+   "collisionKey": "neutrino",
+   "sigil": "🕯️",
+   "source": "derived"
+  },
+  {
+   "input": "Proton",
+   "callsign": "Proton",
+   "collisionKey": "proton",
+   "sigil": "🔆",
+   "source": "derived"
+  },
+  {
+   "input": "Photon",
+   "callsign": "Photon",
+   "collisionKey": "photon",
+   "sigil": "🔔",
+   "source": "derived"
+  },
+  {
+   "input": "Vector",
+   "callsign": "Vector",
+   "collisionKey": "vector",
+   "sigil": "🌀",
+   "source": "derived"
+  },
+  {
+   "input": "Quasar",
+   "callsign": "Quasar",
+   "collisionKey": "quasar",
+   "sigil": "🛠️",
+   "source": "derived"
+  },
+  {
+   "input": "Isotope",
+   "callsign": "Isotope",
+   "collisionKey": "isotope",
+   "sigil": "📚",
+   "source": "derived"
+  },
+  {
+   "input": "Prism",
+   "callsign": "Prism",
+   "collisionKey": "prism",
+   "sigil": "📚",
+   "source": "derived"
+  },
+  {
+   "input": "Boson",
+   "callsign": "Boson",
+   "collisionKey": "boson",
+   "sigil": "🌱",
+   "source": "derived"
+  },
+  {
+   "input": "Scalar",
+   "callsign": "Scalar",
+   "collisionKey": "scalar",
+   "sigil": "🐚",
+   "source": "derived"
+  },
+  {
+   "input": "Matrix",
+   "callsign": "Matrix",
+   "collisionKey": "matrix",
+   "sigil": "📚",
+   "source": "derived"
+  },
+  {
+   "input": "Ampere",
+   "callsign": "Ampere",
+   "collisionKey": "ampere",
+   "sigil": "🎐",
+   "source": "derived"
+  },
+  {
+   "input": "Helix",
+   "callsign": "Helix",
+   "collisionKey": "helix",
+   "sigil": "🔹",
+   "source": "derived"
+  },
+  {
+   "input": "Tensor",
+   "callsign": "Tensor",
+   "collisionKey": "tensor",
+   "sigil": "🦋",
+   "source": "derived"
+  },
+  {
+   "input": "Fractal",
+   "callsign": "Fractal",
+   "collisionKey": "fractal",
+   "sigil": "🧪",
+   "source": "derived"
+  },
+  {
+   "input": "Pascal",
+   "callsign": "Pascal",
+   "collisionKey": "pascal",
+   "sigil": "🦋",
+   "source": "derived"
+  },
+  {
+   "input": "Lattice",
+   "callsign": "Lattice",
+   "collisionKey": "lattice",
+   "sigil": "🦉",
+   "source": "derived"
+  },
+  {
+   "input": "Nova",
+   "callsign": "Nova",
+   "collisionKey": "nova",
+   "sigil": "💠",
+   "source": "derived"
+  },
+  {
+   "input": "Kelvin",
+   "callsign": "Kelvin",
+   "collisionKey": "kelvin",
+   "sigil": "🌀",
+   "source": "derived"
+  },
+  {
+   "input": "Orbit",
+   "callsign": "Orbit",
+   "collisionKey": "orbit",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "Pulsar",
+   "callsign": "Pulsar",
+   "collisionKey": "pulsar",
+   "sigil": "🪨",
+   "source": "derived"
+  },
+  {
+   "input": "Eclipse",
+   "callsign": "Eclipse",
+   "collisionKey": "eclipse",
+   "sigil": "🛠️",
+   "source": "derived"
+  },
+  {
+   "input": "Dribble",
+   "callsign": "Dribble",
+   "collisionKey": "dribble",
+   "sigil": "🫧",
+   "source": "derived"
+  },
+  {
+   "input": "Corner",
+   "callsign": "Corner",
+   "collisionKey": "corner",
+   "sigil": "🍄",
+   "source": "derived"
+  },
+  {
+   "input": "Javelin",
+   "callsign": "Javelin",
+   "collisionKey": "javelin",
+   "sigil": "🌾",
+   "source": "derived"
+  },
+  {
+   "input": "Sweep",
+   "callsign": "Sweep",
+   "collisionKey": "sweep",
+   "sigil": "🌾",
+   "source": "derived"
+  },
+  {
+   "input": "Derby",
+   "callsign": "Derby",
+   "collisionKey": "derby",
+   "sigil": "🌊",
+   "source": "derived"
+  },
+  {
+   "input": "Yardline",
+   "callsign": "Yardline",
+   "collisionKey": "yardline",
+   "sigil": "🪶",
+   "source": "derived"
+  },
+  {
+   "input": "Slalom",
+   "callsign": "Slalom",
+   "collisionKey": "slalom",
+   "sigil": "🌿",
+   "source": "derived"
+  },
+  {
+   "input": "Pinfall",
+   "callsign": "Pinfall",
+   "collisionKey": "pinfall",
+   "sigil": "🎒",
+   "source": "derived"
+  },
+  {
+   "input": "Tee",
+   "callsign": "Tee",
+   "collisionKey": "tee",
+   "sigil": "🪵",
+   "source": "derived"
+  },
+  {
+   "input": "Goalie",
+   "callsign": "Goalie",
+   "collisionKey": "goalie",
+   "sigil": "♟️",
+   "source": "derived"
+  },
+  {
+   "input": "Freestyle",
+   "callsign": "Freestyle",
+   "collisionKey": "freestyle",
+   "sigil": "🔸",
+   "source": "derived"
+  },
+  {
+   "input": "Shuttle",
+   "callsign": "Shuttle",
+   "collisionKey": "shuttle",
+   "sigil": "🔭",
+   "source": "derived"
+  },
+  {
+   "input": "Rally",
+   "callsign": "Rally",
+   "collisionKey": "rally",
+   "sigil": "🔹",
+   "source": "derived"
+  },
+  {
+   "input": "Cleat",
+   "callsign": "Cleat",
+   "collisionKey": "cleat",
+   "sigil": "🌱",
+   "source": "derived"
+  },
+  {
+   "input": "Hurdle",
+   "callsign": "Hurdle",
+   "collisionKey": "hurdle",
+   "sigil": "💠",
+   "source": "derived"
+  },
+  {
+   "input": "HatTrick",
+   "callsign": "HatTrick",
+   "collisionKey": "hattrick",
+   "sigil": "🦋",
+   "source": "derived"
+  },
+  {
+   "input": "Sprint",
+   "callsign": "Sprint",
+   "collisionKey": "sprint",
+   "sigil": "💠",
+   "source": "derived"
+  },
+  {
+   "input": "Bunt",
+   "callsign": "Bunt",
+   "collisionKey": "bunt",
+   "sigil": "🍄",
+   "source": "derived"
+  },
+  {
+   "input": "Peloton",
+   "callsign": "Peloton",
+   "collisionKey": "peloton",
+   "sigil": "💠",
+   "source": "derived"
+  },
+  {
+   "input": "Wicket",
+   "callsign": "Wicket",
+   "collisionKey": "wicket",
+   "sigil": "🍂",
+   "source": "derived"
+  },
+  {
+   "input": "Serve",
+   "callsign": "Serve",
+   "collisionKey": "serve",
+   "sigil": "🧭",
+   "source": "derived"
+  },
+  {
+   "input": "Scrum",
+   "callsign": "Scrum",
+   "collisionKey": "scrum",
+   "sigil": "🐝",
+   "source": "derived"
+  },
+  {
+   "input": "Breakaway",
+   "callsign": "Breakaway",
+   "collisionKey": "breakaway",
+   "sigil": "🪶",
+   "source": "derived"
+  },
+  {
+   "input": "Volley",
+   "callsign": "Volley",
+   "collisionKey": "volley",
+   "sigil": "🪵",
+   "source": "derived"
+  },
+  {
+   "input": "Whittle",
+   "callsign": "Whittle",
+   "collisionKey": "whittle",
+   "sigil": "🎐",
+   "source": "derived"
+  },
+  {
+   "input": "Scoot",
+   "callsign": "Scoot",
+   "collisionKey": "scoot",
+   "sigil": "🐝",
+   "source": "derived"
+  },
+  {
+   "input": "Mingle",
+   "callsign": "Mingle",
+   "collisionKey": "mingle",
+   "sigil": "🪶",
+   "source": "derived"
+  },
+  {
+   "input": "Fidget",
+   "callsign": "Fidget",
+   "collisionKey": "fidget",
+   "sigil": "🌱",
+   "source": "derived"
+  },
+  {
+   "input": "Blink",
+   "callsign": "Blink",
+   "collisionKey": "blink",
+   "sigil": "🔹",
+   "source": "derived"
+  },
+  {
+   "input": "Tinker",
+   "callsign": "Tinker",
+   "collisionKey": "tinker",
+   "sigil": "💠",
+   "source": "derived"
+  },
+  {
+   "input": "Wobble",
+   "callsign": "Wobble",
+   "collisionKey": "wobble",
+   "sigil": "🪁",
+   "source": "derived"
+  },
+  {
+   "input": "Twirl",
+   "callsign": "Twirl",
+   "collisionKey": "twirl",
+   "sigil": "🔆",
+   "source": "derived"
+  },
+  {
+   "input": "Skim",
+   "callsign": "Skim",
+   "collisionKey": "skim",
+   "sigil": "🪄",
+   "source": "derived"
+  },
+  {
+   "input": "Wander",
+   "callsign": "Wander",
+   "collisionKey": "wander",
+   "sigil": "🪶",
+   "source": "derived"
+  },
+  {
+   "input": "Doodle",
+   "callsign": "Doodle",
+   "collisionKey": "doodle",
+   "sigil": "🍄",
+   "source": "derived"
+  },
+  {
+   "input": "Sprout",
+   "callsign": "Sprout",
+   "collisionKey": "sprout",
+   "sigil": "🪄",
+   "source": "derived"
+  },
+  {
+   "input": "Toggle",
+   "callsign": "Toggle",
+   "collisionKey": "toggle",
+   "sigil": "🖇️",
+   "source": "derived"
+  },
+  {
+   "input": "Juggle",
+   "callsign": "Juggle",
+   "collisionKey": "juggle",
+   "sigil": "🔸",
+   "source": "derived"
+  },
+  {
+   "input": "Zip",
+   "callsign": "Zip",
+   "collisionKey": "zip",
+   "sigil": "🎲",
+   "source": "derived"
+  },
+  {
+   "input": "Rummage",
+   "callsign": "Rummage",
+   "collisionKey": "rummage",
+   "sigil": "🌿",
+   "source": "derived"
+  },
+  {
+   "input": "Tumble",
+   "callsign": "Tumble",
+   "collisionKey": "tumble",
+   "sigil": "🎐",
+   "source": "derived"
+  },
+  {
+   "input": "Nudge",
+   "callsign": "Nudge",
+   "collisionKey": "nudge",
+   "sigil": "🦋",
+   "source": "derived"
+  },
+  {
+   "input": "Zoom",
+   "callsign": "Zoom",
+   "collisionKey": "zoom",
+   "sigil": "🍄",
+   "source": "derived"
+  },
+  {
+   "input": "Shuffle",
+   "callsign": "Shuffle",
+   "collisionKey": "shuffle",
+   "sigil": "🪨",
+   "source": "derived"
+  },
+  {
+   "input": "Bounce",
+   "callsign": "Bounce",
+   "collisionKey": "bounce",
+   "sigil": "🐦",
+   "source": "derived"
+  },
+  {
+   "input": "Ponder",
+   "callsign": "Ponder",
+   "collisionKey": "ponder",
+   "sigil": "🧵",
+   "source": "derived"
+  },
+  {
+   "input": "Swoop",
+   "callsign": "Swoop",
+   "collisionKey": "swoop",
+   "sigil": "🧭",
+   "source": "derived"
+  },
+  {
+   "input": "Drift",
+   "callsign": "Drift",
+   "collisionKey": "drift",
+   "sigil": "⚙️",
+   "source": "derived"
+  },
+  {
+   "input": "Hush",
+   "callsign": "Hush",
+   "collisionKey": "hush",
+   "sigil": "🍄",
+   "source": "derived"
+  },
+  {
+   "input": "Tittle",
+   "callsign": "Tittle",
+   "collisionKey": "tittle",
+   "sigil": "✨",
+   "source": "derived"
+  },
+  {
+   "input": "Riff",
+   "callsign": "Riff",
+   "collisionKey": "riff",
+   "sigil": "🌙",
+   "source": "derived"
+  },
+  {
+   "input": "Murmur",
+   "callsign": "Murmur",
+   "collisionKey": "murmur",
+   "sigil": "⚙️",
+   "source": "derived"
+  },
+  {
+   "input": "Zigzag",
+   "callsign": "Zigzag",
+   "collisionKey": "zigzag",
+   "sigil": "🌊",
+   "source": "derived"
+  },
+  {
+   "input": "Nook",
+   "callsign": "Nook",
+   "collisionKey": "nook",
+   "sigil": "🪙",
+   "source": "derived"
+  },
+  {
+   "input": "Widdershins",
+   "callsign": "Widdershins",
+   "collisionKey": "widdershins",
+   "sigil": "🦉",
+   "source": "derived"
+  },
+  {
+   "input": "Palimpsest",
+   "callsign": "Palimpsest",
+   "collisionKey": "palimpsest",
+   "sigil": "🪵",
+   "source": "derived"
+  },
+  {
+   "input": "Lilt",
+   "callsign": "Lilt",
+   "collisionKey": "lilt",
+   "sigil": "🪙",
+   "source": "derived"
+  },
+  {
+   "input": "Morsel",
+   "callsign": "Morsel",
+   "collisionKey": "morsel",
+   "sigil": "🦉",
+   "source": "derived"
+  },
+  {
+   "input": "Vellum",
+   "callsign": "Vellum",
+   "collisionKey": "vellum",
+   "sigil": "☀️",
+   "source": "derived"
+  },
+  {
+   "input": "Fathom",
+   "callsign": "Fathom",
+   "collisionKey": "fathom",
+   "sigil": "🔔",
+   "source": "derived"
+  },
+  {
+   "input": "Tonic",
+   "callsign": "Tonic",
+   "collisionKey": "tonic",
+   "sigil": "🧶",
+   "source": "derived"
+  },
+  {
+   "input": "Scribble",
+   "callsign": "Scribble",
+   "collisionKey": "scribble",
+   "sigil": "📎",
+   "source": "derived"
+  },
+  {
+   "input": "Glyph",
+   "callsign": "Glyph",
+   "collisionKey": "glyph",
+   "sigil": "🎐",
+   "source": "derived"
+  },
+  {
+   "input": "Whimsy",
+   "callsign": "Whimsy",
+   "collisionKey": "whimsy",
+   "sigil": "🧩",
+   "source": "derived"
+  },
+  {
+   "input": "Yonder",
+   "callsign": "Yonder",
+   "collisionKey": "yonder",
+   "sigil": "🪶",
+   "source": "derived"
+  },
+  {
+   "input": "Thrum",
+   "callsign": "Thrum",
+   "collisionKey": "thrum",
+   "sigil": "🌊",
+   "source": "derived"
+  },
+  {
+   "input": "Fable",
+   "callsign": "Fable",
+   "collisionKey": "fable",
+   "sigil": "🐚",
+   "source": "derived"
+  },
+  {
+   "input": "Cadence",
+   "callsign": "Cadence",
+   "collisionKey": "cadence",
+   "sigil": "🪨",
+   "source": "derived"
+  },
+  {
+   "input": "Quirk",
+   "callsign": "Quirk",
+   "collisionKey": "quirk",
+   "sigil": "🍄",
+   "source": "derived"
+  },
+  {
+   "input": "Pith",
+   "callsign": "Pith",
+   "collisionKey": "pith",
+   "sigil": "🌾",
+   "source": "derived"
+  },
+  {
+   "input": "Kerfuffle",
+   "callsign": "Kerfuffle",
+   "collisionKey": "kerfuffle",
+   "sigil": "🎲",
+   "source": "derived"
+  },
+  {
+   "input": "Jot",
+   "callsign": "Jot",
+   "collisionKey": "jot",
+   "sigil": "🧭",
+   "source": "derived"
+  },
+  {
+   "input": "Wyvern",
+   "callsign": "Wyvern",
+   "collisionKey": "wyvern",
+   "sigil": "🐾",
+   "source": "derived"
+  },
+  {
+   "input": "Manticore",
+   "callsign": "Manticore",
+   "collisionKey": "manticore",
+   "sigil": "🫧",
+   "source": "derived"
+  },
+  {
+   "input": "Pegasus",
+   "callsign": "Pegasus",
+   "collisionKey": "pegasus",
+   "sigil": "✨",
+   "source": "derived"
+  },
+  {
+   "input": "Dryad",
+   "callsign": "Dryad",
+   "collisionKey": "dryad",
+   "sigil": "✒️",
+   "source": "derived"
+  },
+  {
+   "input": "Roc",
+   "callsign": "Roc",
+   "collisionKey": "roc",
+   "sigil": "🌀",
+   "source": "derived"
+  },
+  {
+   "input": "Phoenix",
+   "callsign": "Phoenix",
+   "collisionKey": "phoenix",
+   "sigil": "🔸",
+   "source": "derived"
+  },
+  {
+   "input": "Hydra",
+   "callsign": "Hydra",
+   "collisionKey": "hydra",
+   "sigil": "✨",
+   "source": "derived"
+  },
+  {
+   "input": "Chimera",
+   "callsign": "Chimera",
+   "collisionKey": "chimera",
+   "sigil": "🎒",
+   "source": "derived"
+  },
+  {
+   "input": "Simurgh",
+   "callsign": "Simurgh",
+   "collisionKey": "simurgh",
+   "sigil": "⚙️",
+   "source": "derived"
+  },
+  {
+   "input": "Pooka",
+   "callsign": "Pooka",
+   "collisionKey": "pooka",
+   "sigil": "🦋",
+   "source": "derived"
+  },
+  {
+   "input": "Basilisk",
+   "callsign": "Basilisk",
+   "collisionKey": "basilisk",
+   "sigil": "🧭",
+   "source": "derived"
+  },
+  {
+   "input": "Kappa",
+   "callsign": "Kappa",
+   "collisionKey": "kappa",
+   "sigil": "💾",
+   "source": "derived"
+  },
+  {
+   "input": "Nereid",
+   "callsign": "Nereid",
+   "collisionKey": "nereid",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "Griffin",
+   "callsign": "Griffin",
+   "collisionKey": "griffin",
+   "sigil": "🔔",
+   "source": "derived"
+  },
+  {
+   "input": "Sphinx",
+   "callsign": "Sphinx",
+   "collisionKey": "sphinx",
+   "sigil": "🌿",
+   "source": "derived"
+  },
+  {
+   "input": "Kelpie",
+   "callsign": "Kelpie",
+   "collisionKey": "kelpie",
+   "sigil": "🫧",
+   "source": "derived"
+  },
+  {
+   "input": "Kitsune",
+   "callsign": "Kitsune",
+   "collisionKey": "kitsune",
+   "sigil": "🦉",
+   "source": "derived"
+  },
+  {
+   "input": "Selkie",
+   "callsign": "Selkie",
+   "collisionKey": "selkie",
+   "sigil": "🎯",
+   "source": "derived"
+  },
+  {
+   "input": "Minotaur",
+   "callsign": "Minotaur",
+   "collisionKey": "minotaur",
+   "sigil": "🍄",
+   "source": "derived"
+  },
+  {
+   "input": "Kraken",
+   "callsign": "Kraken",
+   "collisionKey": "kraken",
+   "sigil": "🔹",
+   "source": "derived"
+  },
+  {
+   "input": "Brownie",
+   "callsign": "Brownie",
+   "collisionKey": "brownie",
+   "sigil": "🧵",
+   "source": "derived"
+  },
+  {
+   "input": "Banshee",
+   "callsign": "Banshee",
+   "collisionKey": "banshee",
+   "sigil": "🧭",
+   "source": "derived"
+  },
+  {
+   "input": "Satyr",
+   "callsign": "Satyr",
+   "collisionKey": "satyr",
+   "sigil": "🌾",
+   "source": "derived"
+  },
+  {
+   "input": "Tengu",
+   "callsign": "Tengu",
+   "collisionKey": "tengu",
+   "sigil": "🪵",
+   "source": "derived"
+  },
+  {
+   "input": "Snerf",
+   "callsign": "Snerf",
+   "collisionKey": "snerf",
+   "sigil": "🎯",
+   "source": "derived"
+  },
+  {
+   "input": "Plip",
+   "callsign": "Plip",
+   "collisionKey": "plip",
+   "sigil": "🌱",
+   "source": "derived"
+  },
+  {
+   "input": "Mip",
+   "callsign": "Mip",
+   "collisionKey": "mip",
+   "sigil": "🕯️",
+   "source": "derived"
+  },
+  {
+   "input": "Fronk",
+   "callsign": "Fronk",
+   "collisionKey": "fronk",
+   "sigil": "🦉",
+   "source": "derived"
+  },
+  {
+   "input": "Quonk",
+   "callsign": "Quonk",
+   "collisionKey": "quonk",
+   "sigil": "🎐",
+   "source": "derived"
+  },
+  {
+   "input": "Floof",
+   "callsign": "Floof",
+   "collisionKey": "floof",
+   "sigil": "🪨",
+   "source": "derived"
+  },
+  {
+   "input": "Snorf",
+   "callsign": "Snorf",
+   "collisionKey": "snorf",
+   "sigil": "🎲",
+   "source": "derived"
+  },
+  {
+   "input": "Bimble",
+   "callsign": "Bimble",
+   "collisionKey": "bimble",
+   "sigil": "🌱",
+   "source": "derived"
+  },
+  {
+   "input": "Zoodle",
+   "callsign": "Zoodle",
+   "collisionKey": "zoodle",
+   "sigil": "🔭",
+   "source": "derived"
+  },
+  {
+   "input": "Boop",
+   "callsign": "Boop",
+   "collisionKey": "boop",
+   "sigil": "📎",
+   "source": "derived"
+  },
+  {
+   "input": "Quibble",
+   "callsign": "Quibble",
+   "collisionKey": "quibble",
+   "sigil": "💾",
+   "source": "derived"
+  },
+  {
+   "input": "Kloop",
+   "callsign": "Kloop",
+   "collisionKey": "kloop",
+   "sigil": "✨",
+   "source": "derived"
+  },
+  {
+   "input": "Jibbit",
+   "callsign": "Jibbit",
+   "collisionKey": "jibbit",
+   "sigil": "📎",
+   "source": "derived"
+  },
+  {
+   "input": "Zorp",
+   "callsign": "Zorp",
+   "collisionKey": "zorp",
+   "sigil": "✒️",
+   "source": "derived"
+  },
+  {
+   "input": "Sproing",
+   "callsign": "Sproing",
+   "collisionKey": "sproing",
+   "sigil": "🔹",
+   "source": "derived"
+  },
+  {
+   "input": "Plonk",
+   "callsign": "Plonk",
+   "collisionKey": "plonk",
+   "sigil": "♟️",
+   "source": "derived"
+  },
+  {
+   "input": "Zuzu",
+   "callsign": "Zuzu",
+   "collisionKey": "zuzu",
+   "sigil": "💠",
+   "source": "derived"
+  },
+  {
+   "input": "Zibble",
+   "callsign": "Zibble",
+   "collisionKey": "zibble",
+   "sigil": "🌀",
+   "source": "derived"
+  },
+  {
+   "input": "Bloop",
+   "callsign": "Bloop",
+   "collisionKey": "bloop",
+   "sigil": "🐦",
+   "source": "derived"
+  },
+  {
+   "input": "Womp",
+   "callsign": "Womp",
+   "collisionKey": "womp",
+   "sigil": "🧪",
+   "source": "derived"
+  },
+  {
+   "input": "Dingle",
+   "callsign": "Dingle",
+   "collisionKey": "dingle",
+   "sigil": "🌀",
+   "source": "derived"
+  },
+  {
+   "input": "Wibble",
+   "callsign": "Wibble",
+   "collisionKey": "wibble",
+   "sigil": "✒️",
+   "source": "derived"
+  },
+  {
+   "input": "Nerp",
+   "callsign": "Nerp",
+   "collisionKey": "nerp",
+   "sigil": "🪨",
+   "source": "derived"
+  },
+  {
+   "input": "Wump",
+   "callsign": "Wump",
+   "collisionKey": "wump",
+   "sigil": "🦉",
+   "source": "derived"
+  },
+  {
+   "input": "Ciel",
+   "callsign": "Ciel",
+   "collisionKey": "ciel",
+   "sigil": "🪨",
+   "source": "derived"
+  },
+  {
+   "input": "Nami",
+   "callsign": "Nami",
+   "collisionKey": "nami",
+   "sigil": "🍂",
+   "source": "derived"
+  },
+  {
+   "input": "Etoile",
+   "callsign": "Etoile",
+   "collisionKey": "etoile",
+   "sigil": "🔭",
+   "source": "derived"
+  },
+  {
+   "input": "Soleil",
+   "callsign": "Soleil",
+   "collisionKey": "soleil",
+   "sigil": "🐚",
+   "source": "derived"
+  },
+  {
+   "input": "Lagom",
+   "callsign": "Lagom",
+   "collisionKey": "lagom",
+   "sigil": "🌙",
+   "source": "derived"
+  },
+  {
+   "input": "Kumo",
+   "callsign": "Kumo",
+   "collisionKey": "kumo",
+   "sigil": "🧶",
+   "source": "derived"
+  },
+  {
+   "input": "Amai",
+   "callsign": "Amai",
+   "collisionKey": "amai",
+   "sigil": "🛠️",
+   "source": "derived"
+  },
+  {
+   "input": "Brisa",
+   "callsign": "Brisa",
+   "collisionKey": "brisa",
+   "sigil": "🌀",
+   "source": "derived"
+  },
+  {
+   "input": "Nube",
+   "callsign": "Nube",
+   "collisionKey": "nube",
+   "sigil": "📚",
+   "source": "derived"
+  },
+  {
+   "input": "Chispa",
+   "callsign": "Chispa",
+   "collisionKey": "chispa",
+   "sigil": "🌿",
+   "source": "derived"
+  },
+  {
+   "input": "Yuki",
+   "callsign": "Yuki",
+   "collisionKey": "yuki",
+   "sigil": "🎒",
+   "source": "derived"
+  },
+  {
+   "input": "Skog",
+   "callsign": "Skog",
+   "collisionKey": "skog",
+   "sigil": "🪙",
+   "source": "derived"
+  },
+  {
+   "input": "Hoshi",
+   "callsign": "Hoshi",
+   "collisionKey": "hoshi",
+   "sigil": "🎲",
+   "source": "derived"
+  },
+  {
+   "input": "Mond",
+   "callsign": "Mond",
+   "collisionKey": "mond",
+   "sigil": "⚙️",
+   "source": "derived"
+  },
+  {
+   "input": "Mizu",
+   "callsign": "Mizu",
+   "collisionKey": "mizu",
+   "sigil": "🌀",
+   "source": "derived"
+  },
+  {
+   "input": "Lumi",
+   "callsign": "Lumi",
+   "collisionKey": "lumi",
+   "sigil": "🗝️",
+   "source": "derived"
+  },
+  {
+   "input": "Nuage",
+   "callsign": "Nuage",
+   "collisionKey": "nuage",
+   "sigil": "🐝",
+   "source": "derived"
+  },
+  {
+   "input": "Sisu",
+   "callsign": "Sisu",
+   "collisionKey": "sisu",
+   "sigil": "🐝",
+   "source": "derived"
+  },
+  {
+   "input": "Lune",
+   "callsign": "Lune",
+   "collisionKey": "lune",
+   "sigil": "🕯️",
+   "source": "derived"
+  },
+  {
+   "input": "Stern",
+   "callsign": "Stern",
+   "collisionKey": "stern",
+   "sigil": "🔭",
+   "source": "derived"
+  },
+  {
+   "input": "Vento",
+   "callsign": "Vento",
+   "collisionKey": "vento",
+   "sigil": "🐚",
+   "source": "derived"
+  },
+  {
+   "input": "Wolke",
+   "callsign": "Wolke",
+   "collisionKey": "wolke",
+   "sigil": "🐚",
+   "source": "derived"
+  },
+  {
+   "input": "Kefi",
+   "callsign": "Kefi",
+   "collisionKey": "kefi",
+   "sigil": "🪶",
+   "source": "derived"
+  },
+  {
+   "input": "Hygge",
+   "callsign": "Hygge",
+   "collisionKey": "hygge",
+   "sigil": "🍂",
+   "source": "derived"
+  }
+ ]
+}

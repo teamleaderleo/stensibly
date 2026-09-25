@@ -24,7 +24,17 @@ The status output is bounded to 100 active leases, reports omitted count, exclud
 
 ## Start a worker session
 
-Choose a name distinct from active and recent history, then post one command on #454 before the first substantive GitHub publication when the registry is available:
+Get a free name, its derived sigil, and the reserve comment in one command:
+
+```bash
+bun run namegen -- --run run_<unique-run-id> --session <unique-worker-session-id>
+```
+
+Namegen reads every registrar receipt on #454 and proposes a name clear of active and historical names, including near-collisions the exact collision key allows (`SlateHarrow` beside `SlateHarrier`, `Quillmoor` beside `Kwilmoor`). The same run and session always replay the same proposal. `bun run namegen check <Name>` explains why a name you picked yourself is confusable or hard to read, and `bun run namegen derive <Name>` prints the sigil and collision key the registrar will stamp. Namegen is read-only: it proposes and derives, and only the registrar's receipt makes a name held.
+
+Names come from a vibe. The default `ops` pool is short aviation and operations callsigns (Talon, Viper, Ironhawk); `--vibe whimsical` draws gentle everyday words (Teakettle, Lantern, Quillmoor). A team can pin one with `{"vibe": "whimsical"}` in a `.callsign.json` at its repository root, a person in `$XDG_CONFIG_HOME/callsign/config.json`, or either with `CALLSIGN_VIBE`. The vibe chooses words only; sigil and collision key never depend on it.
+
+Then post one command on #454 before the first substantive GitHub publication when the registry is available:
 
 ```text
 /callsign reserve <Callsign>
