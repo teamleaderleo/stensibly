@@ -4,10 +4,12 @@
  * Wraps the #454 dogfood registry so a worker never hand-writes the command
  * grammar, invents a name, tracks its generation, or polls for a receipt:
  *
- *   callsign start --scope cmux-ci        reserve a fresh name, wait for the receipt
+ *   callsign                               this session's callsign: the held one, or a
+ *                                          fresh namegen proposal reserved on the spot
  *   callsign sign                          print the signature block for a comment
  *   callsign status                        active leases, read-only
- *   callsign end                           release the lease this session holds
+ *   callsign end                           release the lease this session holds (optional;
+ *                                          leases expire on their own)
  *
  * A callsign remains presentation/attribution metadata only. Reserving one
  * grants no authority, capability, continuity, or approval.
@@ -16,6 +18,7 @@ import { homedir, hostname } from "node:os";
 import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
 
 import {
   parseGitHubCallsignReceipt,
@@ -23,7 +26,14 @@ import {
   type GitHubCallsignActiveLease,
   type ParsedGitHubCallsignReceipt,
 } from "./github-callsign-registry.js";
-import { suggestCallsigns } from "./callsign-suggestions.js";
+import { proposeCallsigns as proposeNamegenCallsigns } from "./callsign-namegen.js";
+import {
+  defaultRecentDays,
+  readRegistryComments,
+  registrarReceipts,
+  registrySnapshotFromReceipts,
+  resolveVibeChoice,
+} from "./callsign-namegen-cli.js";
 
 const defaultRepository = "teamleaderleo/stensibly";
 const defaultIssueNumber = 454;
@@ -107,60 +117,35 @@ async function fetchReceipts(
   repository: string,
   issueNumber: number,
 ): Promise<ParsedGitHubCallsignReceipt[]> {
-  const raw = await gh([
-    "api",
-    `repos/${repository}/issues/${issueNumber}/comments?per_page=100`,
-    "--paginate",
-    "--jq",
-    ".[] | @json",
-  ]);
-  const receipts: ParsedGitHubCallsignReceipt[] = [];
-  for (const line of raw.split("\n")) {
-    if (!line.trim()) continue;
-    const comment = JSON.parse(line) as {
-      id: number;
-      html_url: string;
-      body: string;
-      user: { login: string };
-    };
-    if (comment.user.login !== registrarLogin) continue;
-    try {
-      receipts.push(parseGitHubCallsignReceipt({
-        body: comment.body,
-        commentId: comment.id,
-        commentUrl: comment.html_url,
-      }));
-    } catch {
-      // Not a receipt (status output, unrelated bot comment). Ignore.
-    }
-  }
-  return receipts.sort((left, right) => left.commentId - right.commentId);
+  return registrarReceipts(readRegistryComments(repository, issueNumber));
 }
 
 /**
- * Names never used before, ordered best-first.
- *
- * Avoids every collision key the registry has ever issued, not merely the
- * active ones, so a name is not recycled while its history is still legible.
+ * Names to try, best first, from namegen: clear of active and recent names
+ * including near-collisions, and of every earlier name that reads as the same
+ * word. Seeded by run and session so a retried start replays its order.
  */
 export function proposeCallsigns(
   receipts: readonly ParsedGitHubCallsignReceipt[],
   count: number,
-  categories?: readonly string[],
+  options: { vibe?: string; run?: string; session?: string; now?: Date } = {},
 ): string[] {
-  const avoid = new Set<string>();
-  for (const receipt of receipts) {
-    if (receipt.callsign) avoid.add(receipt.callsign);
-    if (receipt.collisionKey) avoid.add(receipt.collisionKey);
-  }
-  const result = suggestCallsigns({
-    count,
-    avoid: [...avoid],
-    ...(categories && categories.length > 0
-      ? { categories: categories as never }
-      : {}),
+  const snapshot = registrySnapshotFromReceipts(receipts, {
+    source: "registry",
+    evaluatedAt: (options.now ?? new Date()).toISOString(),
+    recentDays: defaultRecentDays,
   });
-  return result.suggestions.map((suggestion) => suggestion.callsign);
+  const vibe = resolveVibeChoice(options.vibe, process.env, process.cwd()).vibe;
+  return proposeNamegenCallsigns({
+    ...(options.run === undefined && options.session === undefined
+      ? {}
+      : { run: options.run ?? "", session: options.session ?? "" }),
+    taken: snapshot.taken,
+    history: snapshot.history,
+    activeSigils: snapshot.active.map((lease) => lease.sigil),
+    vibe,
+    count,
+  }).proposals.map((proposal) => proposal.callsign);
 }
 
 export function slug(value: string): string {
@@ -196,23 +181,58 @@ async function postComment(
   return url;
 }
 
-/** Waits for the registrar's canonical receipt for exactly this request. */
+/**
+ * Waits for the registrar's canonical receipt for exactly this request.
+ *
+ * Uses the shared glaeda-gh daemon when it runs here, so concurrent sessions
+ * do not each poll GitHub; otherwise reads the issue on a slow bounded loop.
+ */
 async function awaitReceipt(
   repository: string,
   issueNumber: number,
   requestCommentUrl: string,
 ): Promise<ParsedGitHubCallsignReceipt> {
+  const findReceipt = async () =>
+    (await fetchReceipts(repository, issueNumber))
+      .find((receipt) => receipt.requestComment === requestCommentUrl);
+  if (waitWithGlaeda(repository, issueNumber, requestCommentUrl)) {
+    const match = await findReceipt();
+    if (match) return match;
+  }
   const deadline = Date.now() + receiptTimeoutMs;
   while (Date.now() < deadline) {
     await Bun.sleep(receiptPollIntervalMs);
-    const receipts = await fetchReceipts(repository, issueNumber);
-    const match = receipts.find((receipt) => receipt.requestComment === requestCommentUrl);
+    const match = await findReceipt();
     if (match) return match;
   }
   throw new Error(
     `No registrar receipt for ${requestCommentUrl} within ${receiptTimeoutMs / 1000}s. `
       + "The registry may be down; do not assume the callsign is held.",
   );
+}
+
+/** True when glaeda-gh saw the receipt; false when it is absent, down, or timed out. */
+function waitWithGlaeda(repository: string, issueNumber: number, requestCommentUrl: string): boolean {
+  const requestId = requestCommentUrl.split("#issuecomment-")[1];
+  if (!requestId) return false;
+  try {
+    execFileSync("glaeda-gh", [
+      "wait",
+      "comment",
+      `${repository}#${issueNumber}`,
+      "--author",
+      registrarLogin,
+      "--match",
+      `issuecomment-${requestId}\\b`,
+      "--since",
+      requestCommentUrl,
+      "--timeout",
+      String(receiptTimeoutMs / 1000),
+    ], { stdio: ["ignore", "ignore", "ignore"] });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function signatureBlock(state: SessionState): string {
@@ -234,8 +254,7 @@ async function commandStart(args: Map<string, string>, flags: Set<string>): Prom
     && existing.sessionId === currentSession
   ) {
     process.stderr.write(
-      `Already holding ${existing.callsign} g${existing.generation} until ${existing.expiresAt}.\n`
-        + "Use --force to reserve another, or `callsign end` to release it first.\n",
+      `${existing.callsign} g${existing.generation} is held until ${existing.expiresAt}.\n`,
     );
     process.stdout.write(`${signatureBlock(existing)}\n`);
     return 0;
@@ -245,13 +264,21 @@ async function commandStart(args: Map<string, string>, flags: Set<string>): Prom
   const runId = args.get("run") ?? deriveRunId(scope);
   const sessionId = currentSession;
   const ttl = args.get("ttl") ?? "24h";
-  const categories = args.get("category")?.split(",").map((entry) => entry.trim());
-
   const receipts = await fetchReceipts(repository, issueNumber);
   const explicit = args.get("name");
+  // A session whose lease lapsed asks for its old name back first, so its
+  // signature stays the same across a long session.
+  const previous = existing && existing.sessionId === sessionId ? [existing.callsign] : [];
   const candidates = explicit
     ? [explicit]
-    : proposeCallsigns(receipts, reserveAttempts, categories);
+    : [...new Set([
+      ...previous,
+      ...proposeCallsigns(receipts, reserveAttempts, {
+        ...(args.get("vibe") === undefined ? {} : { vibe: args.get("vibe") }),
+        run: runId,
+        session: sessionId,
+      }),
+    ])];
   if (candidates.length === 0) throw new Error("No callsign candidates available");
 
   for (const callsign of candidates) {
@@ -369,9 +396,9 @@ async function commandSuggest(args: Map<string, string>): Promise<number> {
   const repository = args.get("repo") ?? defaultRepository;
   const issueNumber = Number(args.get("issue") ?? defaultIssueNumber);
   const count = Number(args.get("count") ?? 10);
-  const categories = args.get("category")?.split(",").map((entry) => entry.trim());
   const receipts = await fetchReceipts(repository, issueNumber);
-  for (const callsign of proposeCallsigns(receipts, count, categories)) {
+  const vibe = args.get("vibe");
+  for (const callsign of proposeCallsigns(receipts, count, vibe === undefined ? {} : { vibe })) {
     process.stdout.write(`${callsign}\n`);
   }
   return 0;
@@ -380,8 +407,12 @@ async function commandSuggest(args: Map<string, string>): Promise<number> {
 function usage(): string {
   return `Usage: callsign <command> [options]
 
+With no command, prints this session's signature: the lease it already holds,
+or a fresh name reserved and confirmed on the spot. Run it whenever you need to
+sign something; there is nothing to track.
+
 Commands:
-  start       Reserve an unused callsign and wait for the registrar receipt
+  start       Same as no command
   sign        Print the signature block to append to a PR/issue comment
   status      Show this session's lease and all active leases (read-only)
   suggest     Print candidate names that have never been used
@@ -393,7 +424,7 @@ start options:
   --run <run_...>    Explicit run id (default: derived from --scope)
   --session <id>     Explicit session id (default: derived from environment)
   --ttl <1h-168h>    Lease length (default: 24h)
-  --category <list>  Preferred name pools: animal, object, literary, internet
+  --vibe <name>      Name pool: cute (default), ops, lame
   --force            Reserve even if this session already holds a lease
 
 Common options:
@@ -404,7 +435,10 @@ A callsign is presentation metadata. It grants no authority or approval.`;
 }
 
 async function main(argv: string[]): Promise<number> {
-  const [command, ...rest] = argv;
+  // Bare `callsign` (or options only) means: give me this session's callsign.
+  const [command, ...rest] = argv[0] === undefined || argv[0].startsWith("--") && argv[0] !== "--help"
+    ? ["start", ...argv]
+    : argv;
   if (!command || command === "--help" || command === "-h" || command === "help") {
     process.stdout.write(`${usage()}\n`);
     return 0;

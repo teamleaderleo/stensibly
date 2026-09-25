@@ -31,7 +31,7 @@ import {
 export const defaultRegistryRepository = "teamleaderleo/stensibly";
 export const defaultRegistryIssue = 454;
 const registrarLogin = "github-actions[bot]";
-const defaultRecentDays = 14;
+export const defaultRecentDays = 14;
 
 export type NamegenSubcommand = "propose" | "check" | "derive";
 
@@ -196,10 +196,8 @@ export function parseNamegenArgs(
  * Registry snapshot from registrar receipts, using the registrar's own parser
  * and lease projection so namegen never re-implements lease semantics.
  */
-export function registrySnapshotFromComments(
-  comments: readonly IssueComment[],
-  input: { source: string; evaluatedAt: string; recentDays: number },
-): RegistrySnapshot {
+/** Registrar receipts among issue comments, oldest first, parsed by the registrar's own parser. */
+export function registrarReceipts(comments: readonly IssueComment[]): ParsedGitHubCallsignReceipt[] {
   const receipts: ParsedGitHubCallsignReceipt[] = [];
   for (const comment of comments) {
     if (comment.user?.login !== registrarLogin || !comment.body) continue;
@@ -214,6 +212,20 @@ export function registrySnapshotFromComments(
       // The registrar ignores malformed receipts too.
     }
   }
+  return receipts.sort((left, right) => left.commentId - right.commentId);
+}
+
+export function registrySnapshotFromComments(
+  comments: readonly IssueComment[],
+  input: { source: string; evaluatedAt: string; recentDays: number },
+): RegistrySnapshot {
+  return registrySnapshotFromReceipts(registrarReceipts(comments), input);
+}
+
+export function registrySnapshotFromReceipts(
+  receipts: readonly ParsedGitHubCallsignReceipt[],
+  input: { source: string; evaluatedAt: string; recentDays: number },
+): RegistrySnapshot {
   const projection = projectGitHubCallsignRegistry(receipts, input.evaluatedAt);
   const cutoff = Date.parse(projection.evaluatedAt) - input.recentDays * 24 * 60 * 60 * 1_000;
   const taken = new Set(projection.activeLeases.map((lease) => lease.callsign));
@@ -492,11 +504,16 @@ function readRegistryWithGh(args: NamegenCliArgs): IssueComment[] {
   if (args.registryFile !== null) {
     return JSON.parse(readFileSync(args.registryFile, "utf8")) as IssueComment[];
   }
+  return readRegistryComments(args.repository, args.issue);
+}
+
+/** Every comment on the registry issue, through the caller's `gh` login. */
+export function readRegistryComments(repository: string, issue: number): IssueComment[] {
   let raw: string;
   try {
     raw = execFileSync("gh", [
       "api",
-      `repos/${args.repository}/issues/${args.issue}/comments?per_page=100`,
+      `repos/${repository}/issues/${issue}/comments?per_page=100`,
       "--paginate",
       "--jq",
       ".[] | @json",

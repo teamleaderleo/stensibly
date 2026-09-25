@@ -365,7 +365,7 @@ describe("namegen CLI", () => {
     expect(() => runNamegen(args, { readRegistry: () => [], now })).toThrow('Taken name "Foo!"');
   });
 
-  test("the CLI import graph needs only Bun and node builtins", () => {
+  test("the namegen and session CLI import graphs need only Bun and node builtins", () => {
     const seen = new Set<string>();
     const visit = (file: string) => {
       if (seen.has(file)) return;
@@ -379,6 +379,7 @@ describe("namegen CLI", () => {
       }
     };
     visit(join(import.meta.dir, "../src/callsign-namegen-cli.ts"));
+    visit(join(import.meta.dir, "../src/callsign-session.ts"));
     expect(seen.size).toBeGreaterThanOrEqual(5);
   });
 });
