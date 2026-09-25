@@ -102,6 +102,13 @@ export interface NamegenProposal {
   sigil: string;
   sigilSource: "override" | "derived";
   tier: "curated" | "coined";
+  /** Pool the name came from; differs from the requested vibe once that pool runs dry. */
+  vibe: NamegenVibe;
+  /**
+   * True when every pool was exhausted under the full rules and this name is
+   * only clear of same-word matches (exact, look-alike, sound-alike).
+   */
+  nearCollisionRulesRelaxed: boolean;
   sigilSharedWithActiveLease: boolean;
 }
 
@@ -161,58 +168,95 @@ export function proposeCallsigns(options: NamegenProposalOptions = {}): NamegenP
   const activeSigils = new Set(options.activeSigils ?? []);
 
   const vibe = resolveVibe(options.vibe);
-  const pool = namegenVibePools[vibe];
 
   const chosen: NamegenProposal[] = [];
   const chosenKeys: ComparisonKeys[] = [];
   const deferred: Array<{ proposal: NamegenProposal; keys: ComparisonKeys }> = [];
   const chosenSigils = new Set<string>();
 
-  const consider = (callsign: string, tier: NamegenProposal["tier"]): boolean => {
+  const takenStrong = strongIndex(taken);
+  const chosenSet = new Set<string>();
+  let relaxed = false;
+
+  const consider = (
+    callsign: string,
+    source: { vibe: NamegenVibe; tier: NamegenProposal["tier"] },
+  ): boolean => {
     const key = callsignCollisionKey(callsign);
+    if (chosenSet.has(key)) return false;
     const keys = comparisonKeys(key);
     if (strongConflict(keys, history) !== null) return false;
-    if (firstConflict(keys, taken) !== null) return false;
-    if (firstConflict(keys, chosenKeys) !== null) return false;
+    if (relaxed) {
+      if (strongConflict(keys, takenStrong) !== null) return false;
+      if (strongConflict(keys, strongIndex(chosenKeys.map((entry) => ({ ...entry, callsign: entry.key })))) !== null) {
+        return false;
+      }
+    } else {
+      if (firstConflict(keys, taken) !== null) return false;
+      if (firstConflict(keys, chosenKeys) !== null) return false;
+      if (deferred.some((entry) => entry.keys.key === key)) return false;
+    }
     const derived = callsignSigil(callsign);
     const proposal: NamegenProposal = {
       callsign: derived.callsign,
       collisionKey: key,
       sigil: derived.sigil,
       sigilSource: derived.source,
-      tier,
+      tier: source.tier,
+      vibe: source.vibe,
+      nearCollisionRulesRelaxed: relaxed,
       sigilSharedWithActiveLease: activeSigils.has(derived.sigil),
     };
+    if (relaxed) {
+      chosen.push(proposal);
+      chosenKeys.push(keys);
+      chosenSet.add(key);
+      return chosen.length === count;
+    }
     if (activeSigils.has(proposal.sigil) || chosenSigils.has(proposal.sigil)) {
       deferred.push({ proposal, keys });
       return false;
     }
     chosen.push(proposal);
     chosenKeys.push(keys);
+    chosenSet.add(key);
     chosenSigils.add(proposal.sigil);
     return chosen.length === count;
   };
 
-  let done = false;
-  for (const callsign of seededOrder(pool.curated, seed, `${vibe}:curated`)) {
-    if ((done = consider(callsign, "curated"))) break;
-  }
-  if (!done) {
-    for (const callsign of seededOrder(coinedCallsigns(vibe), seed, `${vibe}:coined`)) {
-      if ((done = consider(callsign, "coined"))) break;
+  // The requested vibe first; when it runs dry, route on to the other pools
+  // rather than fail, curated words before coined ones.
+  const vibeOrder = [vibe, ...namegenVibes.filter((entry) => entry !== vibe)];
+  const sources = vibeOrder.flatMap((entry) => [
+    { vibe: entry, tier: "curated" as const, names: () => seededOrder(namegenVibePools[entry].curated, seed, `${entry}:curated`) },
+    { vibe: entry, tier: "coined" as const, names: () => seededOrder(coinedCallsigns(entry), seed, `${entry}:coined`) },
+  ]);
+  const drain = (): boolean => {
+    for (const source of sources) {
+      for (const callsign of source.names()) {
+        if (consider(callsign, source)) return true;
+      }
     }
-  }
+    return false;
+  };
+
+  drain();
   // Every distinct sigil is in use: fall back to distinct names that share one.
   for (const next of deferred) {
     if (chosen.length === count) break;
     if (firstConflict(next.keys, chosenKeys) !== null) continue;
     chosen.push(next.proposal);
     chosenKeys.push(next.keys);
+    chosenSet.add(next.keys.key);
+  }
+  // Every pool is exhausted under the full rules: keep going with names that
+  // are only clear of same-word matches, and say so on the proposal.
+  if (chosen.length < count) {
+    relaxed = true;
+    drain();
   }
   if (chosen.length < count) {
-    throw new RangeError(
-      "Not enough distinct callsigns remain clear of the taken names; narrow the history window",
-    );
+    throw new RangeError("Every callsign in every vibe is already taken");
   }
 
   return {
@@ -313,8 +357,15 @@ interface ComparisonKeys {
   phonetic: string;
 }
 
+const comparisonKeyCache = new Map<string, ComparisonKeys>();
+
 function comparisonKeys(key: string): ComparisonKeys {
-  return { key, visual: visualKey(key), phonetic: callsignPhoneticKey(key) };
+  const cached = comparisonKeyCache.get(key);
+  if (cached !== undefined) return cached;
+  const keys = { key, visual: visualKey(key), phonetic: callsignPhoneticKey(key) };
+  // Pools are fixed and bounded; the cap keeps caller-supplied names from growing it forever.
+  if (comparisonKeyCache.size < 20_000) comparisonKeyCache.set(key, keys);
+  return keys;
 }
 
 function conflictBetween(leftKeys: ComparisonKeys, rightKeys: ComparisonKeys): NamegenConflictKind | null {
@@ -590,21 +641,36 @@ function boundedInteger(value: number, minimum: number, maximum: number, label: 
   return value;
 }
 
+/**
+ * Deterministic shuffle. The seed and namespace are hashed once with SHA-256;
+ * each value is then scored with a fast 53-bit hash of (seed digest, value),
+ * which is plenty for ordering and keeps a proposal cheap over large pools.
+ */
 function seededOrder(values: readonly string[], seed: string, namespace: string): string[] {
-  const scored = values.map((value) => ({
-    value,
-    score: createHash("sha256")
-      .update(`stensibly-callsign-namegen/v${namegenVersion}`)
-      .update("\0")
-      .update(seed)
-      .update("\0")
-      .update(namespace)
-      .update("\0")
-      .update(value)
-      .digest("hex"),
-  }));
-  scored.sort((left, right) => compareText(left.score, right.score) || compareText(left.value, right.value));
+  const prefix = createHash("sha256")
+    .update(`stensibly-callsign-namegen/v${namegenVersion}`)
+    .update("\0")
+    .update(seed)
+    .update("\0")
+    .update(namespace)
+    .digest("hex");
+  const scored = values.map((value) => ({ value, score: orderingHash(`${prefix}\0${value}`) }));
+  scored.sort((left, right) => left.score - right.score || compareText(left.value, right.value));
   return scored.map((entry) => entry.value);
+}
+
+/** cyrb53: a small, well-mixed 53-bit string hash. Not for security. */
+function orderingHash(value: string): number {
+  let first = 0xdeadbeef;
+  let second = 0x41c6ce57;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    first = Math.imul(first ^ code, 2654435761);
+    second = Math.imul(second ^ code, 1597334677);
+  }
+  first = Math.imul(first ^ (first >>> 16), 2246822507) ^ Math.imul(second ^ (second >>> 13), 3266489909);
+  second = Math.imul(second ^ (second >>> 16), 2246822507) ^ Math.imul(first ^ (first >>> 13), 3266489909);
+  return 4294967296 * (2097151 & second) + (first >>> 0);
 }
 
 function compareText(left: string, right: string): number {

@@ -322,6 +322,10 @@ export function formatProposal(
   if (!best) throw new Error("No proposal to format");
   const lines = [
     `${best.callsign} ${best.sigil}  (collision key ${best.collisionKey})`,
+    ...(best.vibe === result.vibe ? [] : [`The ${result.vibe} pool is used up, so this comes from ${best.vibe}.`]),
+    ...(best.nearCollisionRulesRelaxed
+      ? ["Every pool is used up under the near-collision rules; this name only avoids same-word matches."]
+      : []),
     "",
     `Reserve it with this comment on https://github.com/${args.repository}/issues/${args.issue}:`,
     "",

@@ -12,6 +12,7 @@ import {
   proposeCallsigns,
 } from "../src/callsign-namegen.ts";
 import {
+  formatProposal,
   parseNamegenArgs,
   registrySnapshotFromComments,
   resolveVibeChoice,
@@ -197,6 +198,18 @@ describe("namegen proposals", () => {
     expect(new Set(history.map(callsignCollisionKey)).size).toBe(1_000);
     expect(performance.now() - started).toBeLessThan(30_000);
   }, 60_000);
+
+  test("routes to the next vibe instead of failing when the requested one is used up", () => {
+    const history = [...namegenVibePools.cute.curated, ...coinedCallsigns("cute")];
+    const result = proposeCallsigns({ seed: "routed", vibe: "cute", history, count: 3 });
+    expect(result.vibe).toBe("cute");
+    expect(result.proposals.map((entry) => entry.vibe)).toEqual(["ops", "ops", "ops"]);
+    expect(result.proposals.every((entry) => !entry.nearCollisionRulesRelaxed)).toBe(true);
+
+    const args = parseNamegenArgs(["--offline", "--seed", "routed"], {});
+    const output = formatProposal(result, args, null);
+    expect(output).toContain("The cute pool is used up, so this comes from ops.");
+  });
 
   test.each([...namegenVibes])("%s moves to coined names once its curated pool is taken", (vibe) => {
     const curated = namegenVibePools[vibe].curated;
