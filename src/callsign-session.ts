@@ -14,8 +14,8 @@
  * A callsign remains presentation/attribution metadata only. Reserving one
  * grants no authority, capability, continuity, or approval.
  */
-import { homedir, hostname } from "node:os";
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { mkdir, open, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -67,9 +67,13 @@ interface PendingReservation {
   callsign: string;
   runId: string;
   sessionId: string;
-  requestCommentUrl: string;
+  /** Null between deciding to post and learning the comment URL. */
+  requestCommentUrl: string | null;
   postedAt: string;
 }
+
+/** A pending request older than this is abandoned; the registrar answers in about a minute. */
+const pendingAbandonMs = 30 * 60 * 1_000;
 
 type StoredState = SessionState | PendingReservation;
 
@@ -129,34 +133,48 @@ async function writeState(state: StoredState): Promise<void> {
 
 /**
  * Serialises start/end within one session (subagents share their parent's
- * session id), so two concurrent calls never reserve two names.
+ * session id), so two concurrent calls never reserve two names. The holder
+ * refreshes the lock while it works; only a lock nobody has refreshed for
+ * `lockStaleMs` is broken, and a holder only removes a lock it still owns.
  */
-async function withSessionLock<T>(sessionId: string, body: () => Promise<T>): Promise<T> {
+const lockStaleMs = 90_000;
+const lockHeartbeatMs = 15_000;
+
+export async function withSessionLock<T>(sessionId: string, body: () => Promise<T>): Promise<T> {
   const lockPath = `${statePath(sessionId)}.lock`;
   await mkdir(dirname(lockPath), { recursive: true });
-  const deadline = Date.now() + 2 * receiptTimeoutMs + 60_000;
+  const token = `${process.pid}:${randomBytes(8).toString("hex")}`;
   for (;;) {
     try {
       const handle = await open(lockPath, "wx");
-      await handle.writeFile(`${process.pid}\n`);
+      await handle.writeFile(token);
       await handle.close();
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const age = Date.now() - (await stat(lockPath).catch(() => null))?.mtimeMs!;
-      // A holder that crashed never releases; nothing legitimate runs this long.
-      if (Number.isFinite(age) && age > 2 * receiptTimeoutMs + 60_000) {
-        await rm(lockPath, { force: true });
+      const [held, info] = await Promise.all([
+        readFile(lockPath, "utf8").catch(() => null),
+        stat(lockPath).catch(() => null),
+      ]);
+      if (held !== null && info !== null && Date.now() - info.mtimeMs > lockStaleMs) {
+        // Break it only if it is still the same abandoned lock we just read.
+        const again = await readFile(lockPath, "utf8").catch(() => null);
+        if (again === held) await rm(lockPath, { force: true });
         continue;
       }
-      if (Date.now() > deadline) throw new Error(`Timed out waiting for ${lockPath}`);
       await Bun.sleep(500);
     }
   }
+  const heartbeat = setInterval(() => {
+    const now = new Date();
+    void utimes(lockPath, now, now).catch(() => undefined);
+  }, lockHeartbeatMs);
   try {
     return await body();
   } finally {
-    await rm(lockPath, { force: true });
+    clearInterval(heartbeat);
+    const held = await readFile(lockPath, "utf8").catch(() => null);
+    if (held === token) await rm(lockPath, { force: true });
   }
 }
 
@@ -222,14 +240,6 @@ export function deriveRunId(scope: string | undefined): string {
   return `run_${slug(scope ?? "worker")}_${stamp}_${randomBytes(4).toString("hex")}`;
 }
 
-export function deriveSessionId(scope: string | undefined): string {
-  const provided = sessionKey();
-  if (provided) return slug(provided).slice(0, 160) || "session";
-  // No session identity available: never reuse a name another worker could also
-  // derive, so fall back to something unique per invocation.
-  return `${slug(hostname())}-${slug(scope ?? "worker")}-${randomBytes(5).toString("hex")}`
-    .slice(0, 160);
-}
 
 async function postComment(
   repository: string,
@@ -261,10 +271,13 @@ async function awaitReceipt(
       .find((receipt) => receipt.requestComment === requestCommentUrl);
   const glaeda = waitWithGlaeda(repository, issueNumber, requestCommentUrl);
   if (glaeda !== "unavailable") {
-    // The daemon already watched for the full timeout; one direct read settles it.
-    const match = await findReceipt();
-    if (match) return match;
-    if (glaeda === "timeout") throw receiptTimeout(requestCommentUrl);
+    // The daemon already did the waiting; a few direct reads settle it.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const match = await findReceipt();
+      if (match) return match;
+      await Bun.sleep(receiptPollIntervalMs);
+    }
+    throw receiptTimeout(requestCommentUrl);
   }
   const deadline = Date.now() + receiptTimeoutMs;
   while (Date.now() < deadline) {
@@ -293,6 +306,7 @@ function waitWithGlaeda(
 ): "matched" | "timeout" | "unavailable" {
   const requestId = requestCommentUrl.split("#issuecomment-")[1];
   if (!requestId) return "unavailable";
+  const startedAt = Date.now();
   try {
     execFileSync("glaeda-gh", [
       "wait",
@@ -309,7 +323,10 @@ function waitWithGlaeda(
     ], { stdio: ["ignore", "ignore", "ignore"] });
     return "matched";
   } catch (error) {
-    return (error as { status?: number }).status === 2 ? "timeout" : "unavailable";
+    // Exit 2 is a timeout only if it actually waited; an older glaeda-gh
+    // rejecting these flags also exits 2, at once.
+    const waited = Date.now() - startedAt > receiptTimeoutMs / 2;
+    return (error as { status?: number }).status === 2 && waited ? "timeout" : "unavailable";
   }
 }
 
@@ -340,10 +357,8 @@ async function startLocked(
   if (stored && "pending" in stored) {
     // An earlier call posted a reserve command and gave up waiting. Finish
     // that request instead of posting another name.
-    process.stderr.write(`Waiting for the receipt on ${stored.callsign}...\n`);
-    const receipt = await awaitReceipt(stored.repository, stored.issueNumber, stored.requestCommentUrl);
-    if (receipt.status === "accepted") return await adopt(receipt, stored);
-    process.stderr.write(`${stored.callsign} was rejected (${receipt.reason ?? "no reason given"}).\n`);
+    const receipt = await settlePending(stored, force);
+    if (receipt) return await adopt(receipt, stored);
     await clearState(sessionId);
   } else if (stored && Date.parse(stored.expiresAt) > Date.now()) {
     if (!force) {
@@ -372,11 +387,8 @@ async function startLocked(
 
   for (const callsign of candidates) {
     process.stderr.write(`Reserving ${callsign}...\n`);
-    const requestCommentUrl = await postComment(
-      repository,
-      issueNumber,
-      `/callsign reserve ${callsign}\nrun: ${runId}\nsession: ${sessionId}\nttl: ${ttl}`,
-    );
+    // Record the attempt before posting: if the post lands but gh fails to
+    // report it, the next call finds the receipt by this run id.
     const pending: PendingReservation = {
       version: 1,
       pending: true,
@@ -385,9 +397,16 @@ async function startLocked(
       callsign,
       runId,
       sessionId,
-      requestCommentUrl,
+      requestCommentUrl: null,
       postedAt: new Date().toISOString(),
     };
+    await writeState(pending);
+    const requestCommentUrl = await postComment(
+      repository,
+      issueNumber,
+      `/callsign reserve ${callsign}\nrun: ${runId}\nsession: ${sessionId}\nttl: ${ttl}`,
+    );
+    pending.requestCommentUrl = requestCommentUrl;
     await writeState(pending);
     const receipt = await awaitReceipt(repository, issueNumber, requestCommentUrl);
     if (receipt.status === "accepted") return await adopt(receipt, pending);
@@ -422,12 +441,46 @@ async function adopt(
     acceptedAt: receipt.acceptedAt,
     expiresAt: receipt.expiresAt,
     receiptCommentUrl: receipt.commentUrl,
-    requestCommentUrl: request.requestCommentUrl,
+    requestCommentUrl: receipt.requestComment,
   };
   await writeState(state);
   process.stderr.write(`Accepted, expires ${state.expiresAt}. Receipt ${state.receiptCommentUrl}\n`);
   process.stdout.write(`${signatureBlock(state)}\n`);
   return 0;
+}
+
+/**
+ * Settles a reservation an earlier call left pending: the accepted receipt,
+ * or null once it is known dead (rejected, never posted, abandoned).
+ */
+async function settlePending(
+  pending: PendingReservation,
+  abandon: boolean,
+): Promise<ParsedGitHubCallsignReceipt | null> {
+  const receipts = await fetchReceipts(pending.repository, pending.issueNumber);
+  const found = receipts.find((receipt) =>
+    pending.requestCommentUrl === null
+      ? receipt.runId === pending.runId && receipt.status !== "released"
+      : receipt.requestComment === pending.requestCommentUrl
+  );
+  if (found) {
+    if (found.status === "accepted") return found;
+    process.stderr.write(`${pending.callsign} was rejected (${found.reason ?? "no reason given"}).\n`);
+    return null;
+  }
+  const age = Date.now() - Date.parse(pending.postedAt);
+  if (abandon || !(age < pendingAbandonMs)) {
+    process.stderr.write(`Abandoning the unanswered request for ${pending.callsign}.\n`);
+    return null;
+  }
+  if (pending.requestCommentUrl === null) {
+    // The post never reported back; after the registrar's usual window it never landed.
+    if (age > receiptTimeoutMs) return null;
+    throw new Error(`The reserve request for ${pending.callsign} may still land; run again shortly.`);
+  }
+  process.stderr.write(`Waiting for the receipt on ${pending.callsign}...\n`);
+  const receipt = await awaitReceipt(pending.repository, pending.issueNumber, pending.requestCommentUrl);
+  return receipt.status === "accepted" ? receipt : null;
 }
 
 async function releaseLease(state: SessionState): Promise<boolean> {
@@ -449,36 +502,41 @@ async function releaseLease(state: SessionState): Promise<boolean> {
 }
 
 async function commandSign(): Promise<number> {
-  const sessionId = requireSessionId();
-  const state = await readState(sessionId);
-  if (!state) {
+  const stored = await readStored(requireSessionId());
+  if (stored && "pending" in stored) {
+    process.stdout.write(`— ${stored.callsign} · pending\nRun: ${stored.runId}\n`);
+    return 0;
+  }
+  if (!stored) {
     process.stderr.write("No callsign held. Run `callsign` first.\n");
     return 1;
   }
-  if (Date.parse(state.expiresAt) <= Date.now()) {
-    process.stderr.write(`Lease on ${state.callsign} expired at ${state.expiresAt}. Run \`callsign\` again.\n`);
+  if (Date.parse(stored.expiresAt) <= Date.now()) {
+    process.stderr.write(`Lease on ${stored.callsign} expired at ${stored.expiresAt}. Run \`callsign\` again.\n`);
     return 1;
   }
-  if (state.sessionId !== sessionId) {
-    process.stderr.write(
-      `Stored lease on ${state.callsign} belongs to session ${state.sessionId}, not this one. `
-        + "Refusing to sign another worker's callsign; run `callsign`.\n",
-    );
-    return 1;
-  }
-  process.stdout.write(`${signatureBlock(state)}\n`);
+  process.stdout.write(`${signatureBlock(stored)}\n`);
   return 0;
 }
 
 async function commandEnd(): Promise<number> {
   const sessionId = requireSessionId();
   return await withSessionLock(sessionId, async () => {
-    const state = await readState(sessionId);
-    if (!state) {
+    const stored = await readStored(sessionId);
+    if (!stored) {
       process.stderr.write("No callsign held; nothing to release.\n");
       return 0;
     }
-    return (await releaseLease(state)) ? 0 : 1;
+    if ("pending" in stored) {
+      // Settle the request first so an acceptance that lands later is not orphaned.
+      const receipt = await settlePending(stored, false);
+      await clearState(sessionId);
+      if (!receipt) return 0;
+      await adopt(receipt, stored);
+      const adopted = await readState(sessionId);
+      return adopted && (await releaseLease(adopted)) ? 0 : 1;
+    }
+    return (await releaseLease(stored)) ? 0 : 1;
   });
 }
 
@@ -487,7 +545,11 @@ async function commandStatus(args: Map<string, string>): Promise<number> {
   const issueNumber = Number(args.get("issue") ?? defaultIssueNumber);
   const receipts = await fetchReceipts(repository, issueNumber);
   const projection = projectGitHubCallsignRegistry(receipts, new Date().toISOString());
-  const state = sessionKey() ? await readState() : null;
+  const stored = sessionKey() ? await readStored() : null;
+  if (stored && "pending" in stored) {
+    process.stdout.write(`this session: ${stored.callsign} (reservation pending)\n\n`);
+  }
+  const state = stored && !("pending" in stored) ? stored : null;
   if (state) {
     const held = Date.parse(state.expiresAt) > Date.now() ? "held" : "EXPIRED";
     process.stdout.write(`this session: ${state.callsign} g${state.generation} ${state.sigil} (${held})\n\n`);

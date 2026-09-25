@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, utimesSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   deriveRunId,
-  deriveSessionId,
   proposeCallsigns,
   requireSessionId,
+  withSessionLock,
   sessionKey,
   signatureBlock,
   statePath,
@@ -65,7 +68,7 @@ describe("derived identifiers", () => {
   });
 
   test("session id satisfies the registry grammar", () => {
-    const sessionId = deriveSessionId("cmux ci");
+    const sessionId = requireSessionId("cmux ci: 01/α");
     expect(sessionId).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
     expect(sessionId.length).toBeLessThanOrEqual(160);
   });
@@ -134,7 +137,7 @@ describe("session isolation", () => {
     clear();
     try {
       process.env.CLAUDE_CODE_SESSION_ID = "c0ed5db7-a316-5df2-a099-c9a131135628";
-      expect(deriveSessionId("anything")).toBe("c0ed5db7_a316_5df2_a099_c9a131135628");
+      expect(requireSessionId()).toBe("c0ed5db7_a316_5df2_a099_c9a131135628");
     } finally {
       restore();
     }
@@ -176,12 +179,46 @@ describe("session isolation", () => {
     }
   });
 
-  test("identical scope and host still yield distinct ids with no session var", () => {
-    clear();
-    try {
-      expect(deriveSessionId("cmux-ci")).not.toBe(deriveSessionId("cmux-ci"));
-    } finally {
-      restore();
-    }
-  });
+});
+
+describe("withSessionLock", () => {
+  function isolated<T>(body: () => Promise<T>): Promise<T> {
+    const saved = process.env.CALLSIGN_STATE_DIR;
+    process.env.CALLSIGN_STATE_DIR = mkdtempSync(join(tmpdir(), "callsign-lock-"));
+    return body().finally(() => {
+      if (saved === undefined) delete process.env.CALLSIGN_STATE_DIR;
+      else process.env.CALLSIGN_STATE_DIR = saved;
+    });
+  }
+
+  test("concurrent holders in one session never overlap", () => isolated(async () => {
+    let inside = 0;
+    let overlapped = false;
+    const hold = () => withSessionLock("s1", async () => {
+      inside += 1;
+      if (inside > 1) overlapped = true;
+      await Bun.sleep(50);
+      inside -= 1;
+    });
+    await Promise.all([hold(), hold(), hold()]);
+    expect(overlapped).toBe(false);
+    expect(existsSync(`${statePath("s1")}.lock`)).toBe(false);
+  }));
+
+  test("breaks a lock nobody has refreshed, and never removes a lock it does not own", () => isolated(async () => {
+    const lockPath = `${statePath("s2")}.lock`;
+    await withSessionLock("s2", async () => {
+      // Another process takes over the path mid-hold; our release must leave it.
+      writeFileSync(lockPath, "someone-else");
+    });
+    expect(existsSync(lockPath)).toBe(true);
+
+    const old = new Date(Date.now() - 10 * 60 * 1_000);
+    utimesSync(lockPath, old, old);
+    let ran = false;
+    await withSessionLock("s2", async () => {
+      ran = true;
+    });
+    expect(ran).toBe(true);
+  }));
 });
