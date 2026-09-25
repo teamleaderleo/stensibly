@@ -67,7 +67,7 @@ concurrent and successive workers that use one GitHub account.
 
 ### Sigils
 
-`src/callsign-sigils.ts` returns one stable visual sigil for a callsign. A few familiar
+`src/callsign-sigils.ts` returns one stable visual sigil for a callsign, keyed by the collision key from `src/callsign-derivation.ts`. Those two files are the only definition of sigil and collision key: the registrar, hosted Convex leases, worker enrolment, and namegen all import them, and `test/fixtures/callsign-derivation-vectors.json` pins their output. A few familiar
 names have curated overrides, such as `Rook 🪶`; the rest use a deterministic hash into a
 bounded local emoji pool.
 

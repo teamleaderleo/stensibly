@@ -6,6 +6,46 @@
 **Parent:** #450  
 **Shared-account rule:** GitHub login identifies the transport principal; callsign, run, session, and accepted generation identify the worker attempt.
 
+## Use the one-command path
+
+Run one command whenever you need to sign something:
+
+```bash
+bun run callsign          # prints: — <Callsign> g<generation> <sigil> / Run: <run id>
+```
+
+The first call in a session picks a name with namegen (below), posts the
+reserve command, waits for the registrar's receipt, and stores the accepted
+lease per session under `$XDG_STATE_HOME/callsign/`. Every later call in the
+same session returns that lease instantly without touching GitHub, and a
+session whose lease lapsed asks for its old name back first. A rejected name is
+retried with the next candidate. It exits non-zero rather than assume a lease it
+never received a receipt for. The session is `CALLSIGN_SESSION_ID`,
+`CLAUDE_CODE_SESSION_ID` or Codex's `CODEX_THREAD_ID`; without one it refuses
+rather than reserve a new name per call. Concurrent calls from one session
+(subagents share it) take a lock and share one lease, and a call that times out
+waiting for the receipt leaves the request pending so the next call finishes it
+instead of posting another name. The receipt wait goes through the
+shared `glaeda-gh` daemon when it runs, so concurrent sessions do not each poll
+GitHub.
+
+Leases expire on their own after the TTL (24h by default). `bun run callsign end`
+releases early and `bun run callsign status` lists active leases. Pass
+`--name`, `--vibe`, `--run`, `--session` or `--ttl` to override.
+
+For a shell alias outside this repository, point a wrapper at the same entry
+point:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+exec bun "${STENSIBLY_DIR:-$HOME/Projects/stensibly}/src/callsign-session.ts" "$@"
+```
+
+The sections below document the underlying comment grammar, which stays the
+source of truth and is what the registrar actually parses. Reach for it when
+the wrapper is unavailable or when diagnosing a rejection.
+
 ## Discover the live commands
 
 Post this on #454 for the current copy-paste instructions:
@@ -24,7 +64,17 @@ The status output is bounded to 100 active leases, reports omitted count, exclud
 
 ## Start a worker session
 
-Choose a name distinct from active and recent history, then post one command on #454 before the first substantive GitHub publication when the registry is available:
+Get a free name, its derived sigil, and the reserve comment in one command:
+
+```bash
+bun run namegen -- --run run_<unique-run-id> --session <unique-worker-session-id>
+```
+
+Namegen reads every registrar receipt on #454 and proposes a name clear of active and historical names, including near-collisions the exact collision key allows (`SlateHarrow` beside `SlateHarrier`, `Quillmoor` beside `Kwilmoor`). The same run and session always replay the same proposal. `bun run namegen check <Name>` explains why a name you picked yourself is confusable or hard to read, and `bun run namegen derive <Name>` prints the sigil and collision key the registrar will stamp. Namegen is read-only: it proposes and derives, and only the registrar's receipt makes a name held.
+
+Names come from a vibe. The default `cute` pool is cozy everyday words (Teapot, Muffin, Crumpet, Honeypuff); `--vibe ops` gives short aviation-style callsigns (Talon, Viper, Ironhawk) and `--vibe lame` is proudly corny (Meatloaf, Kerfuffle, Spudnugget). A team can pin one with `{"vibe": "ops"}` in a `.callsign.json` at its repository root, a person in `$XDG_CONFIG_HOME/callsign/config.json`, or either with `CALLSIGN_VIBE`. The vibe chooses words only; sigil and collision key never depend on it.
+
+Then post one command on #454 before the first substantive GitHub publication when the registry is available:
 
 ```text
 /callsign reserve <Callsign>

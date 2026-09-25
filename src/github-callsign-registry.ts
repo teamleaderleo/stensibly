@@ -1,4 +1,4 @@
-import { callsignCollisionKey } from "./callsign-suggestions.ts";
+import { callsignCollisionKey, canonicalCallsignDisplay } from "./callsign-derivation.ts";
 import { callsignSigil } from "./callsign-sigils.ts";
 
 const unsafeTextPattern = /[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
@@ -525,9 +525,7 @@ function firstParagraph(value: string, label: string): string {
 
 function canonicalCallsign(value: string): string {
   assertSafeText(value, "Callsign");
-  const display = value.normalize("NFKC").trim().replace(/ {2,}/g, " ");
-  callsignCollisionKey(display);
-  return display;
+  return canonicalCallsignDisplay(value);
 }
 
 function canonicalRunId(value: string): string {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { callsignCollisionKey } from "./callsign-suggestions.js";
+import { callsignCollisionKey, canonicalCallsignDisplay } from "./callsign-derivation.js";
 
 const callsignSigilPool = [
   "🔹",
@@ -85,7 +85,7 @@ export interface CallsignSigilResult {
  * never receive a lease, generation, identity, responsibility, or authority.
  */
 export function callsignSigil(callsign: string): CallsignSigilResult {
-  const display = canonicalDisplay(callsign);
+  const display = canonicalCallsignDisplay(callsign);
   const collisionKey = callsignCollisionKey(display);
   const overridden = callsignSigilOverrides[collisionKey];
   const sigil = overridden ?? derivedSigil(collisionKey);
@@ -112,11 +112,4 @@ function derivedSigil(collisionKey: string): string {
   const sigil = callsignSigilPool[index];
   if (!sigil) throw new Error("Callsign sigil pool unexpectedly returned no entry");
   return sigil;
-}
-
-function canonicalDisplay(value: string): string {
-  if (typeof value !== "string") throw new RangeError("Callsign must be text");
-  const display = value.normalize("NFKC").trim().replace(/ {2,}/g, " ");
-  callsignCollisionKey(display);
-  return display;
 }
